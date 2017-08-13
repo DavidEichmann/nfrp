@@ -1,0 +1,171 @@
+
+==================== FINAL INTERFACE ====================
+2017-08-13 21:01:12.059478 UTC
+
+interface NFRP-0.1.0.0-1uCZbBiWnDm26NCBMdtewu:Lib 8002
+  interface hash: 7d7584c43293437d4ee3482b77faeb6a
+  ABI hash: 775dcb6420e1c7c2c6f7180b6f73f4ab
+  export-list hash: e98416891b0492954da4ecf67f80e6bc
+  orphan hash: 693e9af84d3dfcc71e640e005bdc5e2e
+  flag hash: 44de8a3655b570175cd08e2126e50851
+  sig of: Nothing
+  used TH splices: False
+  where
+exports:
+  Lib.clientBehavior
+  Lib.evaluate
+  Lib.localActuate
+  Lib.netActuateClient
+  Lib.netActuateServer
+  Lib.serverBehavior
+  Lib.Behavior{Lib.Lift1 Lib.Lift2 Lib.Poll}
+module dependencies:
+package dependencies: base-4.9.1.0* ghc-prim-0.5.0.0
+                      integer-gmp-1.0.0.1
+orphans: base-4.9.1.0:GHC.Base base-4.9.1.0:GHC.Float
+family instance modules: base-4.9.1.0:Control.Applicative
+                         base-4.9.1.0:Data.Either base-4.9.1.0:Data.Functor.Const
+                         base-4.9.1.0:Data.Monoid base-4.9.1.0:Data.Type.Equality
+                         base-4.9.1.0:GHC.Generics base-4.9.1.0:GHC.IO.Exception
+                         base-4.9.1.0:GHC.TypeLits
+import  -/  base-4.9.1.0:Data.Functor 5ab1dc703df5b482e77efb697833ca3c
+import  -/  base-4.9.1.0:GHC.Base c4231c43c07e46080a26bf94094c7aa1
+import  -/  base-4.9.1.0:GHC.Err 3bba35a16538d33d424682ce66876cdd
+import  -/  base-4.9.1.0:Prelude 22dd289b8469a8fa8dc81cab7b237771
+import  -/  ghc-prim-0.5.0.0:GHC.Types 89f8de4f08018c9177c98d979eae0e45
+7538f71e99f203ba2bb59ad79337f397
+  $tc'Lift1 :: GHC.Types.TyCon
+  {- HasNoCafRefs, Strictness: m,
+     Unfolding: (GHC.Types.TyCon
+                   10690383747702501364##
+                   6259026759796306999##
+                   Lib.$trModule
+                   Lib.$tc'Lift4) -}
+b9fed7dee7cf3ee8262c163095b73666
+  $tc'Lift2 :: GHC.Types.TyCon
+  {- HasNoCafRefs, Strictness: m,
+     Unfolding: (GHC.Types.TyCon
+                   17432453071712618968##
+                   8362962522479074457##
+                   Lib.$trModule
+                   Lib.$tc'Lift5) -}
+ceabd22a2722dca2137c9e0f329e7b92
+  $tc'Lift4 :: GHC.Types.TrName
+  {- HasNoCafRefs, Strictness: m1,
+     Unfolding: (GHC.Types.TrNameS "'Lift1"#) -}
+f3c58d9eeb37a72a43bd79b7bfd08299
+  $tc'Lift5 :: GHC.Types.TrName
+  {- HasNoCafRefs, Strictness: m1,
+     Unfolding: (GHC.Types.TrNameS "'Lift2"#) -}
+eef6a9b0f68e2f5a0ab6a5d08ac80bf0
+  $tc'Poll :: GHC.Types.TyCon
+  {- HasNoCafRefs, Strictness: m,
+     Unfolding: (GHC.Types.TyCon
+                   15677037921152603440##
+                   7291429334914794185##
+                   Lib.$trModule
+                   Lib.$tc'Poll1) -}
+1e61f7e58ffa27358c9678715ab074b0
+  $tc'Poll1 :: GHC.Types.TrName
+  {- HasNoCafRefs, Strictness: m1,
+     Unfolding: (GHC.Types.TrNameS "'Poll"#) -}
+0f55107155597cf5568bf8e862129593
+  $tcBehavior :: GHC.Types.TyCon
+  {- HasNoCafRefs, Strictness: m,
+     Unfolding: (GHC.Types.TyCon
+                   4203091426972120623##
+                   4170811856030615741##
+                   Lib.$trModule
+                   Lib.$tcBehavior1) -}
+499dd1cbd97a5e5189bd731f6fcfe0b8
+  $tcBehavior1 :: GHC.Types.TrName
+  {- HasNoCafRefs, Strictness: m1,
+     Unfolding: (GHC.Types.TrNameS "Behavior"#) -}
+cfc732f526c96653038501a9a135482c
+  $trModule :: GHC.Types.Module
+  {- HasNoCafRefs, Strictness: m,
+     Unfolding: (GHC.Types.Module Lib.$trModule2 Lib.$trModule1) -}
+c19eb551847ef2368c66d2bbaa8848e1
+  $trModule1 :: GHC.Types.TrName
+  {- HasNoCafRefs, Strictness: m1,
+     Unfolding: (GHC.Types.TrNameS "Lib"#) -}
+6bdb653d0472a066b3f72f0b666ff178
+  $trModule2 :: GHC.Types.TrName
+  {- HasNoCafRefs, Strictness: m1,
+     Unfolding: (GHC.Types.TrNameS
+                   "NFRP-0.1.0.0-1uCZbBiWnDm26NCBMdtewu"#) -}
+c0f95a585bf9354c82f6c33bd1580972
+  data Behavior a where
+    Poll :: (GHC.Types.IO a) -> Behavior a
+    Lift1 :: (b -> a) -> (Lib.Behavior b) -> Behavior a
+    Lift2 :: (b -> c -> a) -> (Lib.Behavior b) -> (Lib.Behavior c)
+             -> Behavior a
+8dd5536363ab1200669b9cd64b348b53
+  clientBehavior :: Lib.Behavior a
+  {- Strictness: x -}
+b7a331bfd6dba5c2fbe30faa6e27c88f
+  evaluate :: Lib.Behavior a -> GHC.Types.IO a
+  {- Arity: 2, HasNoCafRefs, Strictness: <S,1*U><S,U>,
+     Unfolding: InlineRule (0, True, True)
+                Lib.evaluate1
+                  `cast`
+                (forall (a :: <*>_N).
+                 <Lib.Behavior a>_R ->_R Sym (GHC.Types.N:IO[0] <a>_R)) -}
+136e3580c7812f616fca1dfc6c1494a9
+  evaluate1 ::
+    Lib.Behavior a
+    -> GHC.Prim.State# GHC.Prim.RealWorld
+    -> (# GHC.Prim.State# GHC.Prim.RealWorld, a #)
+  {- Arity: 2, HasNoCafRefs, Strictness: <S,1*U><S,U> -}
+36a3bc7b9ba8d1c0365d492d85c9d6e7
+  localActuate ::
+    Lib.Behavior a -> (a -> GHC.Types.IO ()) -> GHC.Types.IO ()
+  {- Arity: 3, HasNoCafRefs, Strictness: <S,U><L,C(C1(U(U,A)))><S,U>,
+     Unfolding: InlineRule (0, True, True)
+                Lib.localActuate1
+                  `cast`
+                (forall (a :: <*>_N).
+                 <Lib.Behavior a>_R
+                 ->_R <a -> GHC.Types.IO ()>_R
+                 ->_R Sym (GHC.Types.N:IO[0] <()>_R)) -}
+5b584db73f8efb496ff4a232c943dbbd
+  localActuate1 ::
+    Lib.Behavior a
+    -> (a -> GHC.Types.IO ())
+    -> GHC.Prim.State# GHC.Prim.RealWorld
+    -> (# GHC.Prim.State# GHC.Prim.RealWorld, () #)
+  {- Arity: 3, HasNoCafRefs,
+     Strictness: <S,U><L,C(C1(U(U,A)))><S,U> -}
+ff9bf61f58c6a602efa4e831a6a6ca24
+  netActuateClient ::
+    GHC.Types.Int -> Lib.Behavior a -> GHC.Types.IO ()
+  {- Arity: 2, Strictness: <B,A><B,A>x,
+     Unfolding: InlineRule (2, True, True)
+                (\ @ a
+                   (clientPort :: GHC.Types.Int)
+                   (serverPort :: Lib.Behavior a) ->
+                 Lib.netActuateClient1) -}
+650bcad277ef69ba500b9dd3b80e72ac
+  netActuateClient1 :: GHC.Types.IO ()
+  {- Strictness: x -}
+c44a41ce2d8190a85afe76acf2782bec
+  netActuateServer ::
+    GHC.Types.Int -> Lib.Behavior a -> GHC.Types.IO ()
+  {- Arity: 1, Strictness: <B,A>x,
+     Unfolding: InlineRule (1, True, True)
+                (\ @ a (serverPort :: GHC.Types.Int) ->
+                 Lib.netActuateServer1 @ a) -}
+23e632cfccc873ec07557234ceafcf7a
+  netActuateServer1 :: Lib.Behavior a -> GHC.Types.IO ()
+  {- Strictness: x -}
+84e8915fc2f52d239b7fb11f71512fd1
+  serverBehavior :: Lib.Behavior a
+  {- Strictness: x -}
+vectorised variables:
+vectorised tycons:
+vectorised reused tycons:
+parallel variables:
+parallel tycons:
+trusted: safe
+require own pkg trusted: False
+
