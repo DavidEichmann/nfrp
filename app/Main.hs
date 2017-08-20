@@ -4,6 +4,7 @@ module Main where
 
 import Control.Concurrent (forkIO)
 import Data.IORef
+import Data.Maybe (fromMaybe)
 import Data.List (foldl')
 import Graphics.UI.WX
 import Lib
@@ -27,7 +28,10 @@ main
   (bB, bS) <- mkSink Nothing
   let testBeh :: Behavior String
       testBeh =
-        Lift2 (\a b -> show a ++ " + " ++ show b ++ " = " ++ show ((+) <$> a <*> b)) aB bB
+        Lift2 (\a b -> fromMaybe "NaN" $ do
+          a' <- a
+          b' <- b
+          return $ show a' ++ " + " ++ show b' ++ " = " ++ show (a' + b')) aB bB
   start $ do
     -- Actuate
     outCtrl <- mkGui aS bS
@@ -52,7 +56,7 @@ mkGui aS bS = mdo
   outText <- staticText f [text := " "]
   set
     f
-    [ layout := column 0 $
+    [ layout := minsize (Size 250 400) $ column 0 $
       margin 10 <$>
       [floatCenter (widget aCtrl), floatCenter (widget bCtrl), widget outText]
     ]
