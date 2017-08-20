@@ -42,17 +42,17 @@ main
 
 mkGui :: BehaviorSink (Maybe Int) -> BehaviorSink (Maybe Int) -> IO (StaticText ())
 mkGui aS bS = mdo
-  a <- maybe "" show <$> getSink aS
-  b <- maybe "" show <$> getSink bS
   f <- frame []
   aCtrl <-
     textEntry
       f
-      [text := a, on update := (setSink aS =<< readMay <$> get aCtrl text)]
+      []
+  bindSinkMay aS aCtrl
   bCtrl <-
     textEntry
       f
-      [text := b, on update := (setSink bS =<< readMay <$> get bCtrl text)]
+      []
+  bindSinkMay bS bCtrl
   outText <- staticText f [text := " "]
   set
     f
@@ -62,6 +62,13 @@ mkGui aS bS = mdo
     ]
   refit f
   return outText
+
+bindSinkMay :: (Read a, Show a) => BehaviorSink (Maybe a) -> TextCtrl () -> IO ()
+bindSinkMay sink ctrl = do
+  initTextValue <- maybe "" show <$> getSink sink
+  set ctrl [text := initTextValue, on update := (setSink sink =<< readMay <$> get ctrl text)]
+  return ()
+
 
 data Options = Options
   { optionsMode :: Mode
