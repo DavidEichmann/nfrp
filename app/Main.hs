@@ -23,36 +23,48 @@ main
   -- Args
  = do
   (opts, []) <- argsToOpts =<< getArgs
-  -- FRP Behavior
-  (aB, aS) <- mkSink Nothing
-  (bB, bS) <- mkSink Nothing
-  let testBeh :: Behavior String
-      testBeh =
-        Lift2 (\a b -> fromMaybe "NaN" $ do
-          a' <- a
-          b' <- b
-          return $ show a' ++ " + " ++ show b' ++ " = " ++ show (a' + b')) aB bB
   start $ do
-    -- Actuate
-    outCtrl <- mkGui aS bS
-    localActuate testBeh (\o -> set outCtrl [text := o])
-    --case optionsMode opts of
-    --  Client srvPort -> netActuateClient srvPort clientBehavior
-    --  Server -> netActuateServer clientBehavior
+    case optionsMode opts of
+      Client srvPort -> do
+        let testBeh = mkSumBeh aB bB
+        outCtrl <- mkServerGui aS bS
+        localActuate testBeh (\o -> set outCtrl [text := o])
+      Server -> do
+        (aB, aS) <- mkSink Nothing
+        (bB, bS) <- mkSink Nothing
+        let testBeh = mkSumBeh aB bB
+        outCtrl <- mkServerGui aS bS
+        localActuate testBeh (\o -> set outCtrl [text := o])
 
-mkGui :: BehaviorSink (Maybe Int) -> BehaviorSink (Maybe Int) -> IO (StaticText ())
-mkGui aS bS = mdo
+mkSumBeh :: Behavior (Maybe Int) -> Behavior (Maybe Int) -> Behavior String
+mkSumBeh =
+  Lift2 (\a b -> fromMaybe "NaN" $ do
+    a' <- a
+    b' <- b
+    return $ show a' ++ " + " ++ show b' ++ " = " ++ show (a' + b'))
+
+mkServerGui :: BehaviorSink (Maybe Int) -> BehaviorSink (Maybe Int) -> IO (StaticText ())
+mkServerGui aS bS = mdo
   f <- frame []
-  aCtrl <-
-    textEntry
-      f
-      []
+  aCtrl <- textEntry f []
   bindSinkMay aS aCtrl
-  bCtrl <-
-    textEntry
-      f
-      []
+  bCtrl <- textEntry f []
   bindSinkMay bS bCtrl
+  outText <- staticText f [text := " "]
+  set
+    f
+    [ layout := minsize (Size 250 400) $ column 0 $
+      margin 10 <$>
+      [floatCenter (widget aCtrl), floatCenter (widget bCtrl), widget outText]
+    ]
+  refit f
+  return outText
+
+mkClientGui :: Behavior (Maybe Int) -> Behavior (Maybe Int) -> IO (StaticText ())
+mkClientGui aS bS = mdo
+  f <- frame []
+  aCtrl <- staticText f []
+  bCtrl <- staticText f []
   outText <- staticText f [text := " "]
   set
     f

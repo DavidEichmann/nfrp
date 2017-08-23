@@ -13,14 +13,31 @@ data Behavior a
                       (Behavior b)
                       (Behavior c)
 
+data BehaviorValue a
+  = BehaviorValue a
+  | forall b. BehaviorValue1 a
+                             (BehaviorValue b)
+  | forall b c. BehaviorValue2 a
+                               (BehaviorValue b)
+
 data BehaviorSink a =
   BehaviorSink (IORef a) -- ^Value
                (IORef [a -> IO ()]) -- ^Listeners
 
+bvValue :: BehaviorValue a -> a
+bvValue (BehaviorValue x) = x
+bvValue (BehaviorValue1 x _) = x
+bvValue (BehaviorValue2 x _) = x
+
+evaluateFull :: Behavior a -> IO (BehaviorValue a)
+evaluateFull (Sink (BehaviorSink v _)) = BehaviorValue <$> readIORef v
+evaluateFull (Lift1 f b) = do
+  e <- evaluateFull b
+  return (BehaviorValue1 (f (bvValue e)) e)
+
+-- evaluateFull (Lift2 f b c) = BehaviorValue2 . f <$> evaluate b <*> evaluate c
 evaluate :: Behavior a -> IO a
-evaluate (Sink (BehaviorSink v _)) = readIORef v
-evaluate (Lift1 f b) = f <$> evaluate b
-evaluate (Lift2 f b c) = f <$> evaluate b <*> evaluate c
+evaluate b = bvValue <$> evaluateFull b
 
 mkSink :: a -> IO (Behavior a, BehaviorSink a)
 mkSink a = do
