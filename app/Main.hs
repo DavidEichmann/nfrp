@@ -27,7 +27,7 @@ main
     case optionsMode opts of
       Client srvPort -> do
         let testBeh = mkSumBeh aB bB
-        outCtrl <- mkServerGui aS bS
+        outCtrl <- mkClientGui aB bB
         localActuate testBeh (\o -> set outCtrl [text := o])
       Server -> do
         (aB, aS) <- mkSink Nothing
@@ -35,6 +35,8 @@ main
         let testBeh = mkSumBeh aB bB
         outCtrl <- mkServerGui aS bS
         localActuate testBeh (\o -> set outCtrl [text := o])
+
+
 
 mkSumBeh :: Behavior (Maybe Int) -> Behavior (Maybe Int) -> Behavior String
 mkSumBeh =
