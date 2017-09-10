@@ -16,6 +16,7 @@ import Control.Monad.Trans.State.Strict
 import Data.Dynamic
 import Data.IORef
 import Data.Kind
+import Data.List (foldl')
 import qualified Data.Map as M
 import Data.Proxy
 import Data.Unique
@@ -71,7 +72,7 @@ data GateDescription node a
   | GateMergeE (a -> a -> a)
                (GateKey EventGate a)
                (GateKey EventGate a)
-  | forall b c. (Typeable b, Typeable c) =>
+  | forall c b. (Typeable b, Typeable c) =>
                 GateSample (b -> c -> a)
                            (GateKey BehaviorGate b)
                            (GateKey EventGate c)
@@ -79,7 +80,7 @@ data GateDescription node a
   | forall b. Typeable b =>
               GateLiftB1 (b -> a)
                          (GateKey BehaviorGate b)
-  | forall c b. (Typeable b, Typeable c) =>
+  | forall b c. (Typeable b, Typeable c) =>
                 GateLiftB2 (b -> c -> a)
                            (GateKey BehaviorGate b)
                            (GateKey BehaviorGate c)
@@ -97,15 +98,31 @@ data CircuitHistory node a =
 emptyCircuit :: Circuit node
 emptyCircuit = Circuit M.empty M.empty
 
+addChildToParents :: GateKey' -> [GateKey'] -> Circuit node -> Circuit node
+addChildToParents child parents (Circuit behaviorValues gates) =
+  Circuit
+    behaviorValues
+    (foldl'
+       (flip
+          (M.adjust
+             (\(Gate' (Gate children desc)) ->
+                Gate' (Gate (child : children) desc))))
+       gates
+       parents)
+
 addBehaviorGate ::
      Typeable a
   => GateKey BehaviorGate a
   -> a
   -> Gate node a
+  -> [GateKey']
   -> Circuit node
   -> Circuit node
-addBehaviorGate key value gate (Circuit behaviorValues gates) =
-  Circuit (M.insert key' value' behaviorValues) (M.insert key' gate' gates)
+addBehaviorGate key value gate parents (Circuit behaviorValues gates) =
+  addChildToParents
+    (gateKey' key)
+    parents
+    (Circuit (M.insert key' value' behaviorValues) (M.insert key' gate' gates))
   where
     key' = gateKey' key
     value' = toDyn value
@@ -115,10 +132,14 @@ addEventGate ::
      Typeable a
   => GateKey EventGate a
   -> Gate node a
+  -> [GateKey']
   -> Circuit node
   -> Circuit node
-addEventGate key gate (Circuit behaviorValues gates) =
-  Circuit behaviorValues (M.insert key' gate' gates)
+addEventGate key gate parents (Circuit behaviorValues gates) =
+  addChildToParents
+    (gateKey' key)
+    parents
+    (Circuit behaviorValues (M.insert key' gate' gates))
   where
     key' = gateKey' key
     gate' = Gate' gate
@@ -126,25 +147,25 @@ addEventGate key gate (Circuit behaviorValues gates) =
 buildCircuitB ::
      forall node a. Typeable a
   => RefBehavior node a
-  -> IO (GateKey BehaviorGate a, Circuit node)
-buildCircuitB b = runStateT (buildCircuitB' b) emptyCircuit
+  -> (GateKey BehaviorGate a, Circuit node)
+buildCircuitB b = runState (buildCircuitB' b) emptyCircuit
 
 buildCircuitB' ::
      forall node a. Typeable a
   => RefBehavior node a
-  -> StateT (Circuit node) IO (GateKey BehaviorGate a)
-buildCircuitB' (RefBehavior key behaviorRef)
+  -> State (Circuit node) (GateKey BehaviorGate a)
+buildCircuitB' (RefBehavior key behavior)
   -- Check if the gate already exists
  = do
   gateAlreadyCreated <- gets (\(Circuit _ gates) -> M.member key gates)
   let gateKey = GateKey key
-  unless gateAlreadyCreated $ do
-    behavior <- liftIO $ readIORef behaviorRef
+  unless gateAlreadyCreated $
+    modify =<<
     case behavior of
       (Stepper initialValue childE) -> do
         childKey <- buildCircuitE' childE
         let gate = Gate [] (GateStepper childKey)
-        modify (addBehaviorGate gateKey initialValue gate)
+        return (addBehaviorGate gateKey initialValue gate [gateKey' childKey])
       --
       --
       --
@@ -156,12 +177,12 @@ buildCircuitB' (RefBehavior key behaviorRef)
 buildCircuitE' ::
      forall node a. Typeable a
   => RefEvent node a
-  -> StateT (Circuit node) IO (GateKey EventGate a)
-buildCircuitE' (RefEvent key eventRef) = do
+  -> State (Circuit node) (GateKey EventGate a)
+buildCircuitE' (RefEvent key event) = do
   gateAlreadyCreated <- gets (\(Circuit _ gates) -> M.member key gates)
   let gateKey = GateKey key
-  unless gateAlreadyCreated $ do
-    event <- liftIO $ readIORef eventRef
+  unless gateAlreadyCreated $
+    modify =<<
     case event
       --
       --

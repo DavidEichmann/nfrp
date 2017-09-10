@@ -39,11 +39,11 @@ data RemoteValue =
 
 data RefEvent node a =
   RefEvent Unique
-           (IORef (Event node a))
+           (Event node a)
 
 data RefBehavior node a =
   RefBehavior Unique
-              (IORef (Behavior node a))
+              (Behavior node a)
 
 type family Inputs node (self :: node)
 
@@ -77,14 +77,12 @@ data Behavior node a
 newRefEvent :: Event node a -> IO (RefEvent node a)
 newRefEvent event = do
   key <- newUnique
-  ref <- newIORef event
-  return (RefEvent key ref)
+  return (RefEvent key event)
 
 newRefBehavior :: Behavior node a -> IO (RefBehavior node a)
 newRefBehavior behavior = do
   key <- newUnique
-  ref <- newIORef behavior
-  return (RefBehavior key ref)
+  return (RefBehavior key behavior)
 
 localE ::
      Proxy owner -> (Inputs node owner -> AddHandler a) -> IO (RefEvent node a)
