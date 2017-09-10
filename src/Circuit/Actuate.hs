@@ -1,28 +1,175 @@
- {-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE TypeInType #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- | Module to actuate a circuit description
 module Circuit.Actuate
-  ( ) where
+  ( actuate
+  ) where
 
 import Control.Monad
+import Control.Monad.IO.Class
+import Control.Monad.Trans.State.Strict
+
+import Data.Dynamic
 import Data.IORef
 import Data.Kind
+import qualified Data.Map as M
 import Data.Proxy
+import Data.Unique
 
 import Circuit.Description
 
+-- TODO Use a more type safe system rather than Data.Dynamic.
+-- Actuate a circuit, listening to input and calling the output handler.
 actuate ::
-  Proxy (owner :: node)
+     M.Map node Int -- ^ map from node to port number (TODO and IP address)
+  -> Proxy (owner :: node)
   -> Inputs node owner
-  -> IO (RefBehavior node output)
-  -> Handler output
-actuate ownerProxy inputs outputHandler = undefined
+  -> RefBehavior node output
+  -> IO (Handler output)
+actuate nodeAddresses ownerProxy inputs circuitDescription
+  -- TODO clock synchronization with other nodes
+  -- TODO agree on start time? Start actuation on all nodes at the same time.
+ = do
+  error "TODO Compile the circuit?"
+  error "TODO return the AddHandler for the circuit."
 
+type Time = Int -- Or long? or timestamp?
+
+-- | Key to gate in a circuit
+newtype GateKey (gateType :: GateType) a = GateKey
+  { gateKey' :: Unique
+  }
+
+type GateKey' = Unique
+
+data GateType
+  = BehaviorGate
+  | EventGate
+
+data Circuit node =
+  Circuit (M.Map GateKey' Dynamic) -- ^ value of all the behavior gates
+          (M.Map GateKey' (Gate' node)) -- ^ description of all gates
+
+data Gate' node =
+  forall a. Gate' (Gate node a)
+
+data Gate node a =
+  Gate [GateKey'] -- ^ children
+       (GateDescription node a)
+
+-- TODO separate Behaviors/events?
+data GateDescription node a
+  = forall (owner :: node). GateLocalE (Proxy owner)
+                                       (Inputs node owner -> AddHandler a)
+  | forall b. Typeable b =>
+              GateLiftE (b -> a)
+                        (GateKey BehaviorGate b)
+  | GateMergeE (a -> a -> a)
+               (GateKey EventGate a)
+               (GateKey EventGate a)
+  | forall b c. (Typeable b, Typeable c) =>
+                GateSample (b -> c -> a)
+                           (GateKey BehaviorGate b)
+                           (GateKey EventGate c)
+  | GateStepper (GateKey EventGate a)
+  | forall b. Typeable b =>
+              GateLiftB1 (b -> a)
+                         (GateKey BehaviorGate b)
+  | forall c b. (Typeable b, Typeable c) =>
+                GateLiftB2 (b -> c -> a)
+                           (GateKey BehaviorGate b)
+                           (GateKey BehaviorGate c)
+
+data Transaction =
+  Transaction Time
+              (M.Map GateKey' Dynamic)
+
+-- TODO could separate out the circuit state (M.Map GateKey' Dynamic) from the circuit description (M.Map GateKey' (Gate' node))
+--      then the history would be a single circuit description and many states. Unless the circuitry changes!!!!!! Thats future work
+data CircuitHistory node a =
+  CircuitHistory [(Transaction, Circuit node)] -- ^ update and result (most recent is at the front)
+                 (Circuit node) -- ^ initial state.
+
+emptyCircuit :: Circuit node
+emptyCircuit = Circuit M.empty M.empty
+
+addBehaviorGate ::
+     Typeable a
+  => GateKey BehaviorGate a
+  -> a
+  -> Gate node a
+  -> Circuit node
+  -> Circuit node
+addBehaviorGate key value gate (Circuit behaviorValues gates) =
+  Circuit (M.insert key' value' behaviorValues) (M.insert key' gate' gates)
+  where
+    key' = gateKey' key
+    value' = toDyn value
+    gate' = Gate' gate
+
+addEventGate ::
+     Typeable a
+  => GateKey EventGate a
+  -> Gate node a
+  -> Circuit node
+  -> Circuit node
+addEventGate key gate (Circuit behaviorValues gates) =
+  Circuit behaviorValues (M.insert key' gate' gates)
+  where
+    key' = gateKey' key
+    gate' = Gate' gate
+
+buildCircuitB ::
+     forall node a. Typeable a
+  => RefBehavior node a
+  -> IO (GateKey BehaviorGate a, Circuit node)
+buildCircuitB b = runStateT (buildCircuitB' b) emptyCircuit
+
+buildCircuitB' ::
+     forall node a. Typeable a
+  => RefBehavior node a
+  -> StateT (Circuit node) IO (GateKey BehaviorGate a)
+buildCircuitB' (RefBehavior key behaviorRef)
+  -- Check if the gate already exists
+ = do
+  gateAlreadyCreated <- gets (\(Circuit _ gates) -> M.member key gates)
+  let gateKey = GateKey key
+  unless gateAlreadyCreated $ do
+    behavior <- liftIO $ readIORef behaviorRef
+    case behavior of
+      (Stepper initialValue childE) -> do
+        childKey <- buildCircuitE' childE
+        let gate = Gate [] (GateStepper childKey)
+        modify (addBehaviorGate gateKey initialValue gate)
+      --
+      --
+      --
+      -- TODO
+      (LiftB1 pattern1 pattern2) -> undefined
+      (LiftB2 pattern1 pattern2 pattern3) -> undefined
+  return gateKey
+
+buildCircuitE' ::
+     forall node a. Typeable a
+  => RefEvent node a
+  -> StateT (Circuit node) IO (GateKey EventGate a)
+buildCircuitE' (RefEvent key eventRef) = do
+  gateAlreadyCreated <- gets (\(Circuit _ gates) -> M.member key gates)
+  let gateKey = GateKey key
+  unless gateAlreadyCreated $ do
+    event <- liftIO $ readIORef eventRef
+    case event
+      --
+      --
+      --
+      -- TODO
+          of
+      x -> undefined
+  return gateKey
 {-
 type Handler a = a -> IO ()
 

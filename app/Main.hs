@@ -7,10 +7,12 @@ import Data.IORef
 import Data.Maybe (fromMaybe)
 import Data.List (foldl')
 import Graphics.UI.WX
-import Lib
 import Safe
 import System.Console.GetOpt
 import System.Environment (getArgs)
+
+import Lib
+import SumExample
 
 defaultServerPort :: Int
 defaultServerPort = 10000
@@ -25,27 +27,18 @@ main
   (opts, []) <- argsToOpts =<< getArgs
   start $ do
     case optionsMode opts of
-      Client srvPort -> do
+      ClientMode srvPort -> do
         let testBeh = mkSumBeh aB bB
         outCtrl <- mkClientGui aB bB
         localActuate testBeh (\o -> set outCtrl [text := o])
-      Server -> do
+      ServerMode -> do
         (aB, aS) <- mkSink Nothing
         (bB, bS) <- mkSink Nothing
         let testBeh = mkSumBeh aB bB
         outCtrl <- mkServerGui aS bS
         localActuate testBeh (\o -> set outCtrl [text := o])
 
-
-
-mkSumBeh :: Behavior (Maybe Int) -> Behavior (Maybe Int) -> Behavior String
-mkSumBeh =
-  Lift2 (\a b -> fromMaybe "NaN" $ do
-    a' <- a
-    b' <- b
-    return $ show a' ++ " + " ++ show b' ++ " = " ++ show (a' + b'))
-
-mkServerGui :: BehaviorSink (Maybe Int) -> BehaviorSink (Maybe Int) -> IO (StaticText ())
+mkServerGui :: Handler (Maybe Int) -> BehaviorSink (Maybe Int) -> IO (StaticText ())
 mkServerGui aS bS = mdo
   f <- frame []
   aCtrl <- textEntry f []
@@ -90,13 +83,13 @@ data Options = Options
   }
 
 data Mode
-  = Client Int -- ^Port of the server
-  | Server
+  = ClientMode Int -- ^Port of the server
+  | ServerMode
   deriving (Show)
 
 defaultOptions =
   Options
-  {optionsMode = Client defaultServerPort, optionsPort = defaultClientPort}
+  {optionsMode = ClientMode defaultServerPort, optionsPort = defaultClientPort}
 
 options :: [OptDescr (Options -> Options)]
 options =
@@ -106,13 +99,13 @@ options =
       (OptArg
          (\serverPortMay opts ->
             opts
-            {optionsMode = Client (maybe defaultServerPort read serverPortMay)})
+            {optionsMode = ClientMode (maybe defaultServerPort read serverPortMay)})
          "Server port")
-      "Client mode"
+      "ClientMode mode"
   , Option
       ['s']
       ["server"]
-      (NoArg (\opts -> opts {optionsMode = Server}))
+      (NoArg (\opts -> opts {optionsMode = ServerMode}))
       "Server mode"
   , Option
       ['p']
