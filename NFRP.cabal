@@ -31,7 +31,7 @@ executable Main
   build-depends:       base
                      , NFRP
                      , safe
-                     , wx
+                     , gtk
   default-language:    Haskell2010
 
 test-suite NFRP-test

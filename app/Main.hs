@@ -2,11 +2,13 @@
 
 module Main where
 
+Use gtk instead of wx. it is probably better supported!
+
+
 import Control.Concurrent (forkIO)
 import Data.IORef
 import Data.Maybe (fromMaybe)
 import Data.List (foldl')
-import Graphics.UI.WX
 import Safe
 import System.Console.GetOpt
 import System.Environment (getArgs)

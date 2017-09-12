@@ -25,7 +25,6 @@ module Circuit.Description
 
 import Control.Monad
 import Data.Dynamic
-import Data.IORef
 import Data.Kind
 import Data.Proxy
 import Data.Unique
@@ -56,7 +55,7 @@ data Event node a
   | MergeE (a -> a -> a)
            (RefEvent node a)
            (RefEvent node a)
-  | forall b c. (Typeable b, Typeable c) =>
+  | forall c b. (Typeable b, Typeable c) =>
                 Sample (b -> c -> a)
                        (RefBehavior node b)
                        (RefEvent node c)
@@ -69,7 +68,7 @@ data Behavior node a
   | forall b. Typeable b =>
               LiftB1 (b -> a)
                      (RefBehavior node b)
-  | forall c b. (Typeable b, Typeable c) =>
+  | forall b c. (Typeable b, Typeable c) =>
                 LiftB2 (b -> c -> a)
                        (RefBehavior node b)
                        (RefBehavior node c)

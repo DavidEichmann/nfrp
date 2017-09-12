@@ -40,6 +40,13 @@ actuate nodeAddresses ownerProxy inputs circuitDescription
 
 type Time = Int -- Or long? or timestamp?
 
+-- TODO
+-- TODO
+-- TODO
+-- All this crazy stuff is just to convert Circuit.Description stuff to a Circuit.
+-- It is probably possible to combine this directly into Circuit.Description and
+-- use a CircuitBuilder monad. Could get rid of IO altogether perhaps. Just need to
+-- get a non-IO alternative to Data.Unique.
 -- | Key to gate in a circuit
 newtype GateKey (gateType :: GateType) a = GateKey
   { gateKey' :: Unique
@@ -62,7 +69,6 @@ data Gate node a =
   Gate [GateKey'] -- ^ children
        (GateDescription node a)
 
--- TODO separate Behaviors/events?
 data GateDescription node a
   = forall (owner :: node). GateLocalE (Proxy owner)
                                        (Inputs node owner -> AddHandler a)
@@ -97,6 +103,12 @@ data CircuitHistory node a =
 
 emptyCircuit :: Circuit node
 emptyCircuit = Circuit M.empty M.empty
+
+behaviorValue :: Typeable a => GateKey BehaviorGate a -> Circuit node -> a
+behaviorValue key (Circuit behaviorValues _) =
+  fromDyn
+    (behaviorValues M.! gateKey' key)
+    (error "Type mismatch when getting behavior value")
 
 addChildToParents :: GateKey' -> [GateKey'] -> Circuit node -> Circuit node
 addChildToParents child parents (Circuit behaviorValues gates) =
@@ -166,12 +178,29 @@ buildCircuitB' (RefBehavior key behavior)
         childKey <- buildCircuitE' childE
         let gate = Gate [] (GateStepper childKey)
         return (addBehaviorGate gateKey initialValue gate [gateKey' childKey])
-      --
-      --
-      --
       -- TODO
-      (LiftB1 pattern1 pattern2) -> undefined
-      (LiftB2 pattern1 pattern2 pattern3) -> undefined
+      (LiftB1 f childB) -> do
+        childKey <- buildCircuitB' childB
+        childInitialValue <- gets (behaviorValue childKey)
+        let gate = Gate [] (GateLiftB1 f childKey)
+        return
+          (addBehaviorGate
+             gateKey
+             (f childInitialValue)
+             gate
+             [gateKey' childKey])
+      (LiftB2 f childAB childBB) -> do
+        childAKey <- buildCircuitB' childAB
+        childBKey <- buildCircuitB' childBB
+        childAInitialValue <- gets (behaviorValue childAKey)
+        childBInitialValue <- gets (behaviorValue childBKey)
+        let gate = Gate [] (GateLiftB2 f childAKey childBKey)
+        return
+          (addBehaviorGate
+             gateKey
+             (f childAInitialValue childBInitialValue)
+             gate
+             [gateKey' childAKey, gateKey' childBKey])
   return gateKey
 
 buildCircuitE' ::
@@ -183,12 +212,7 @@ buildCircuitE' (RefEvent key event) = do
   let gateKey = GateKey key
   unless gateAlreadyCreated $
     modify =<<
-    case event
-      --
-      --
-      --
-      -- TODO
-          of
+    case event of
       x -> undefined
   return gateKey
 {-
