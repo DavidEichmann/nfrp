@@ -30,17 +30,22 @@ newtype ClientInputs = ClientInputs
   }
 
 data SumOuts = SumOuts
-  { serverInt :: Int
-  , clientInt :: Int
-  , sum :: Int
+  { serverInt :: GateKey BehaviorGate Int
+  , clientInt :: GateKey BehaviorGate Int
+  , sum :: GateKey BehaviorGate Int
   }
 
-mkSumBeh :: IO (RefBehavior Node SumOuts)
-mkSumBeh
+sumOuts :: SumOuts
+sumCircuit :: Circuit Node
+(sumOuts, sumCircuit) = mkCircuit $ do
   -- Setup network
- = do
+ =
   serverIntB <- stepper 0 =<< localE (Proxy @Server) serverIntAddHandler
   clientIntB <- stepper 0 =<< localE (Proxy @Client) clientIntAddHandler
   sumB <- liftB2 (+) serverIntB clientIntB
   -- return observations
-  liftB3 SumOuts serverIntB clientIntB sumB
+  return SumOuts
+  { serverInt = serverB
+  , clientInt = clientB
+  , sum = sumB
+  }
