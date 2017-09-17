@@ -1,7 +1,6 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE TypeInType #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
 module SumExample where
@@ -9,43 +8,75 @@ module SumExample where
 import Control.Monad
 import Data.IORef
 import Data.Kind
+import qualified Data.Map as M
 import Data.Proxy
+import qualified Graphics.UI.Gtk as Gtk
 
-import Circuit.Description
+import Circuit.Actuate
 
 data Node
   = Server
   | Client
 
-type instance Inputs Node Server = ServerInputs
-
 newtype ServerInputs = ServerInputs
-  { serverIntAddHandler :: AddHandler Int
+  { serverIntAddHandler :: E Int
   }
 
-type instance Inputs Node Client = ClientInputs
-
 newtype ClientInputs = ClientInputs
-  { clientIntAddHandler :: AddHandler Int
+  { clientIntAddHandler :: E Int
   }
 
 data SumOuts = SumOuts
-  { serverInt :: GateKey BehaviorGate Int
-  , clientInt :: GateKey BehaviorGate Int
-  , sum :: GateKey BehaviorGate Int
+  { serverIntB :: B Int
+  , clientIntB :: B Int
+  , sumB :: B Int
   }
 
+clientInputs :: ClientInputs
+serverInputs :: ServerInputs
 sumOuts :: SumOuts
 sumCircuit :: Circuit Node
-(sumOuts, sumCircuit) = mkCircuit $ do
-  -- Setup network
- =
-  serverIntB <- stepper 0 =<< localE (Proxy @Server) serverIntAddHandler
-  clientIntB <- stepper 0 =<< localE (Proxy @Client) clientIntAddHandler
-  sumB <- liftB2 (+) serverIntB clientIntB
+((clientInputs, serverInputs, sumOuts), sumCircuit) =
+  mkCircuit $
+  -- Define inputs
+   do
+    clientInt <- localE Client
+    serverInt <- localE Server
+    serverIntB <- stepper 0 serverInt
+    clientIntB <- stepper 0 clientInt
+    sumB <- liftB2 (+) serverIntB clientIntB
   -- return observations
-  return SumOuts
-  { serverInt = serverB
-  , clientInt = clientB
-  , sum = sumB
-  }
+    return
+      ( ClientInputs clientInt
+      , ServerInputs serverInt
+      , SumOuts {serverIntB = serverIntB, clientIntB = clientIntB, sumB = sumB})
+
+runClient :: M.Map Node Int -> IO ()
+runClient nodeAddresses
+  -- Initialize Gtk.
+ = do
+  _args <- Gtk.initGUI
+  -- Create the window.
+  window <- Gtk.windowNew
+  Gtk.containerSetBorderWidth window 10
+  Gtk.windowSetDefaultSize window 300 300
+  Gtk.onDelete
+    window
+    (\_ -> do
+       Gtk.mainQuit
+       return False)
+  -- Create the text entry.
+  entry <- Gtk.entryNew
+  Gtk.entrySetText entry "Hello World!"
+  Gtk.containerAdd window entry
+  Gtk.widgetShow entry
+  -- Create text widget
+  serverTextView <- Gtk.textViewNew
+  Gtk.containerAdd window serverTextView
+  Gtk.widgetShow serverTextView
+  -- Display window
+  Gtk.widgetShow window
+  -- Actuate the FRP circuit
+  circuit <- actuate sumCircuit Client
+  -- Start main loop.
+  Gtk.mainGUI

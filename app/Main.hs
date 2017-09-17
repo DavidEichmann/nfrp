@@ -1,14 +1,14 @@
-{-# LANGUAGE RecursiveDo #-}
-
 module Main where
 
 import Control.Concurrent (forkIO)
 import Data.IORef
-import Data.Maybe (fromMaybe)
 import Data.List (foldl')
+import Data.Maybe (fromMaybe)
 import Safe
 import System.Console.GetOpt
 import System.Environment (getArgs)
+
+import qualified Data.Map as M
 
 import Lib
 import SumExample
@@ -24,6 +24,8 @@ main
   -- Args
  = do
   (opts, []) <- argsToOpts =<< getArgs
+  runClient (M.fromList [(Client, defaultClientPort), (Server, defaultServerPort)])
+  {-
   start $ do
     case optionsMode opts of
       ClientMode srvPort -> do
@@ -74,11 +76,11 @@ bindSinkMay sink ctrl = do
   initTextValue <- maybe "" show <$> getSink sink
   set ctrl [text := initTextValue, on update := (setSink sink =<< readMay <$> get ctrl text)]
   return ()
-
+-}
 
 data Options = Options
   { optionsMode :: Mode
-  , optionsPort :: Int
+  -- , optionsPort :: Int
   }
 
 data Mode
@@ -98,7 +100,9 @@ options =
       (OptArg
          (\serverPortMay opts ->
             opts
-            {optionsMode = ClientMode (maybe defaultServerPort read serverPortMay)})
+            { optionsMode =
+                ClientMode (maybe defaultServerPort read serverPortMay)
+            })
          "Server port")
       "ClientMode mode"
   , Option
@@ -106,11 +110,11 @@ options =
       ["server"]
       (NoArg (\opts -> opts {optionsMode = ServerMode}))
       "Server mode"
-  , Option
-      ['p']
-      ["port"]
-      (ReqArg (\port opts -> opts {optionsPort = read port}) "port")
-      "port"
+  --, Option
+  --    ['p']
+  --    ["port"]
+  --    (ReqArg (\port opts -> opts {optionsPort = read port}) "port")
+  --    "port"
   ]
 
 argsToOpts :: [String] -> IO (Options, [String])
