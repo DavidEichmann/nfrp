@@ -8,5 +8,4 @@ module Lib
   ) where
 
 import Circuit.Actuate as ReExport
-
-f a = a + 1
+import Circuit.Description as ReExport

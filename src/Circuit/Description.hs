@@ -8,6 +8,7 @@
 module Circuit.Description
   ( Circuit
   , CircuitBuilder
+  , behaviorValue
   , mkCircuit
   , E
   , localE
@@ -18,7 +19,7 @@ module Circuit.Description
   , stepper
   , liftB1
   , liftB2
-  , GateType (..)
+  , GateType(..)
   , GateKey
   , GateKey'(..)
   ) where
@@ -38,7 +39,7 @@ newtype GateKey (gateType :: GateType) a =
   deriving (Ord, Eq)
 
 data GateKey' =
-  forall a (gateType :: GateType). GateKey' (GateKey gateType a)
+  forall (gateType :: GateType) a. GateKey' (GateKey gateType a)
 
 instance Eq GateKey' where
   GateKey' (GateKey a) == GateKey' (GateKey b) = a == b
@@ -71,7 +72,7 @@ data GateDescription node a
   | GateMergeE (a -> a -> a)
                (E a)
                (E a)
-  | forall c b. (Typeable b, Typeable c) =>
+  | forall b c. (Typeable b, Typeable c) =>
                 GateSample (b -> c -> a)
                            (B b)
                            (E c)
@@ -79,7 +80,7 @@ data GateDescription node a
   | forall b. Typeable b =>
               GateLiftB1 (b -> a)
                          (B b)
-  | forall b c. (Typeable b, Typeable c) =>
+  | forall c b. (Typeable b, Typeable c) =>
                 GateLiftB2 (b -> c -> a)
                            (B b)
                            (B c)

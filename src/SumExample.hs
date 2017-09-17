@@ -12,7 +12,7 @@ import qualified Data.Map as M
 import Data.Proxy
 import qualified Graphics.UI.Gtk as Gtk
 
-import Circuit.Actuate
+import Lib
 
 data Node
   = Server
@@ -77,6 +77,7 @@ runClient nodeAddresses
   -- Display window
   Gtk.widgetShow window
   -- Actuate the FRP circuit
-  circuit <- actuate sumCircuit Client
+  circuit <- actuate nodeAddresses Client sumCircuit
+  subscribe circuit (serverIntB sumCircuit)
   -- Start main loop.
   Gtk.mainGUI

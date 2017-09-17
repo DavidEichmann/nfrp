@@ -10,7 +10,7 @@
 module Circuit.Actuate
   ( ActuatedCircuit
   , actuate
-  , addListenerB
+  , subscribeB
   , applyTransaction
   ) where
 
@@ -54,16 +54,24 @@ actuate _nodeAddresses _ownerNode _circuit
   -- TODO agree on start time? Start actuation on all nodes at the same time.
  = error "TODO return the AddHandler for the circuit."
 
--- addListenerB :: ActuatedCircuit node -> B a -> (a -> IO ()) -> IO ()
-addListenerB ::
-     Typeable a
-  => ActuatedCircuit node
-  -> GateKey gateType a
-  -> (a -> IO ())
-  -> IO ()
-addListenerB circuit behavior listener =
+currentCircuitState :: ActuatedCircuit node -> IO (Circuit node)
+currentCircuitState aCircuit = do
+  CircuitHistory transactions initialState <- readIORef (circuitHitory aCircuit)
+  return $
+    case transactions of
+      [] -> initialState
+      (_, state):_ -> state
+
+-- subscribeB :: ActuatedCircuit node -> B a -> (a -> IO ()) -> IO ()
+subscribeB :: Typeable a => ActuatedCircuit node -> B a -> (a -> IO ()) -> IO ()
+subscribeB aCircuit behavior listener
+  -- Initial call to listener.
+ = do
+  circuitState <- currentCircuitState aCircuit
+  listener (behaviorValue behavior circuitState)
+  -- Add listener for further changes.
   modifyIORef
-    (listeners circuit)
+    (listeners aCircuit)
     (M.alter
        (\case
           Just ls -> Just (listener' : ls)
@@ -74,14 +82,14 @@ addListenerB circuit behavior listener =
 
 -- TODO make this thread safe!! Many applyTransactions happening at about the same time.
 applyTransaction :: ActuatedCircuit node -> Transaction -> IO ()
-applyTransaction circuit (Transaction time updates) = do
-  CircuitHistory oldTransactions _ <- readIORef (circuitHitory circuit)
+applyTransaction aCircuit (Transaction time updates) = do
+  CircuitHistory oldTransactions _ <- readIORef (circuitHitory aCircuit)
   let latestTime =
         case oldTransactions of
           [] -> minBound
           (Transaction t _, _):_ -> t
   case time `compare` latestTime of
-    LT -> error "TODO roll back and replay circuit."
+    LT -> error "TODO roll back and replay aircuit."
     EQ ->
       error $
       "TODO Cannot currently apply multiple transactions at the same time." ++
