@@ -22,9 +22,10 @@ defaultClientPort = 10001
 main :: IO ()
 main
   -- Args
- = do
-  (opts, []) <- argsToOpts =<< getArgs
-  runClient (M.fromList [(Client, defaultClientPort), (Server, defaultServerPort)])
+  -- (opts, []) <- argsToOpts =<< getArgs
+ =
+  runClient
+    (M.fromList [(Client, defaultClientPort), (Server, defaultServerPort)])
   {-
   start $ do
     case optionsMode opts of
@@ -77,7 +78,7 @@ bindSinkMay sink ctrl = do
   set ctrl [text := initTextValue, on update := (setSink sink =<< readMay <$> get ctrl text)]
   return ()
 -}
-
+{-
 data Options = Options
   { optionsMode :: Mode
   -- , optionsPort :: Int
@@ -125,3 +126,4 @@ argsToOpts argv =
       ioError (userError (concat errs ++ usageInfo header options))
   where
     header = "Usage: [OPTION...]"
+-}

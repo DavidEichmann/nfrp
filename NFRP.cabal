@@ -32,6 +32,7 @@ executable Main
   main-is:             Main.hs
   ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
   build-depends:       base
+                     , containers
                      , NFRP
                      , safe
                      , gtk

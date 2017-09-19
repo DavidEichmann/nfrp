@@ -34,7 +34,7 @@ data CircuitHistory node =
                  (Circuit node) -- ^ initial state.
 
 data GateUpdate =
-  forall a (gateType :: GateType). GateUpdate (GateKey gateType a)
+  forall (gateType :: GateType) a. GateUpdate (GateKey gateType a)
                                               a
 
 data Transaction =
@@ -52,7 +52,7 @@ actuate ::
 actuate _nodeAddresses _ownerNode _circuit
   -- TODO clock synchronization with other nodes
   -- TODO agree on start time? Start actuation on all nodes at the same time.
- = error "TODO return the AddHandler for the circuit."
+ = error "TODO actuate a circuit."
 
 currentCircuitState :: ActuatedCircuit node -> IO (Circuit node)
 currentCircuitState aCircuit = do
