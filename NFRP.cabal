@@ -22,6 +22,10 @@ library
                      , Circuit.Description
   build-depends:       base >= 4.7 && < 5
                      , containers
+                     , network
+                     , async
+                     , bytestring
+                     , cereal
                      , vector
                      , gtk
                      , transformers
@@ -33,6 +37,7 @@ executable Main
   ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
   build-depends:       base
                      , containers
+                     , network
                      , NFRP
                      , safe
                      , gtk

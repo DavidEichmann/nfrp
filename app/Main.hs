@@ -19,13 +19,16 @@ defaultServerPort = 10000
 defaultClientPort :: Int
 defaultClientPort = 10001
 
+nodeAddresses :: M.Map Node Int
+nodeAddresses = M.fromList [(Client, defaultClientPort), (Server, defaultServerPort)]
+
 main :: IO ()
-main
+main = do
   -- Args
-  -- (opts, []) <- argsToOpts =<< getArgs
- =
-  runClient
-    (M.fromList [(Client, defaultClientPort), (Server, defaultServerPort)])
+  (Options mode, []) <- argsToOpts =<< getArgs
+  case mode of
+    ClientMode -> runClient nodeAddresses
+    ServerMode -> runServer nodeAddresses
   {-
   start $ do
     case optionsMode opts of
@@ -78,33 +81,25 @@ bindSinkMay sink ctrl = do
   set ctrl [text := initTextValue, on update := (setSink sink =<< readMay <$> get ctrl text)]
   return ()
 -}
-{-
+
 data Options = Options
   { optionsMode :: Mode
-  -- , optionsPort :: Int
   }
 
 data Mode
-  = ClientMode Int -- ^Port of the server
+  = ClientMode
   | ServerMode
   deriving (Show)
 
-defaultOptions =
-  Options
-  {optionsMode = ClientMode defaultServerPort, optionsPort = defaultClientPort}
+defaultOptions :: Options
+defaultOptions = Options {optionsMode = ClientMode}
 
 options :: [OptDescr (Options -> Options)]
 options =
   [ Option
       ['c']
       ["client"]
-      (OptArg
-         (\serverPortMay opts ->
-            opts
-            { optionsMode =
-                ClientMode (maybe defaultServerPort read serverPortMay)
-            })
-         "Server port")
+      (NoArg (\opts -> opts {optionsMode = ClientMode}))
       "ClientMode mode"
   , Option
       ['s']
@@ -126,4 +121,3 @@ argsToOpts argv =
       ioError (userError (concat errs ++ usageInfo header options))
   where
     header = "Usage: [OPTION...]"
--}
