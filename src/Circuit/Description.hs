@@ -2,6 +2,8 @@
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE TypeInType #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- | Module that the user uses to describing the NFRP circuit
@@ -29,6 +31,8 @@ import Control.Monad.Trans.State.Strict
 import Data.Dynamic
 import Data.List (foldl')
 import qualified Data.Map as M
+import Data.Serialize (Serialize)
+import GHC.Generics
 
 mkCircuit :: State (Circuit node) a -> (a, Circuit node)
 mkCircuit circuitBuilder = runState circuitBuilder emptyCircuit
@@ -36,10 +40,10 @@ mkCircuit circuitBuilder = runState circuitBuilder emptyCircuit
 -- | Key to gate in a circuit
 newtype GateKey (gateType :: GateType) a =
   GateKey Int
-  deriving (Ord, Eq)
+  deriving (Generic, Serialize, Ord, Eq)
 
 data GateKey' =
-  forall (gateType :: GateType) a. GateKey' (GateKey gateType a)
+  forall a (gateType :: GateType). GateKey' (GateKey gateType a)
 
 instance Eq GateKey' where
   GateKey' (GateKey a) == GateKey' (GateKey b) = a == b
@@ -72,7 +76,7 @@ data GateDescription node a
   | GateMergeE (a -> a -> a)
                (E a)
                (E a)
-  | forall b c. (Typeable b, Typeable c) =>
+  | forall c b. (Typeable b, Typeable c) =>
                 GateSample (b -> c -> a)
                            (B b)
                            (E c)
@@ -80,7 +84,7 @@ data GateDescription node a
   | forall b. Typeable b =>
               GateLiftB1 (b -> a)
                          (B b)
-  | forall c b. (Typeable b, Typeable c) =>
+  | forall b c. (Typeable b, Typeable c) =>
                 GateLiftB2 (b -> c -> a)
                            (B b)
                            (B c)

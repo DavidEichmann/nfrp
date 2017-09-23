@@ -20,11 +20,13 @@ defaultClientPort :: Int
 defaultClientPort = 10001
 
 nodeAddresses :: M.Map Node Int
-nodeAddresses = M.fromList [(Client, defaultClientPort), (Server, defaultServerPort)]
+nodeAddresses =
+  M.fromList [(Client, defaultClientPort), (Server, defaultServerPort)]
 
 main :: IO ()
-main = do
+main
   -- Args
+ = do
   (Options mode, []) <- argsToOpts =<< getArgs
   case mode of
     ClientMode -> runClient nodeAddresses

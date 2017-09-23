@@ -121,12 +121,16 @@ runServer nodeAddresses
   Gtk.widgetShow box
   Gtk.widgetShow window
   -- Actuate the FRP circuit
-  circuit <- actuate nodeAddresses Server sumCircuit
-  --subscribeB
-  --  circuit
-  --  (soServerIntB sumOuts)
-  --  (\serverInt -> do
-  --     textBuffer <- Gtk.textViewGetBuffer clientTextView
-  --     Gtk.textBufferSetText textBuffer (show serverInt))
+  circuit <-
+    actuate
+      nodeAddresses
+      Server
+      sumCircuit
+      [ Listener
+          (soServerIntB sumOuts)
+          (\serverInt -> do
+             textBuffer <- Gtk.textViewGetBuffer clientTextView
+             Gtk.textBufferSetText textBuffer (show serverInt))
+      ]
   -- Start main loop.
   Gtk.mainGUI
