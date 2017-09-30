@@ -1,0 +1,150 @@
+2017-09-27 20:54:19 [ThreadId 11] ERROR phoityne - "\"extractSourcePosition\" (line 2, column 6):\nunexpected end of input\nexpecting \"Stopped at \" or \"Stopped in \" [INPUT]<interactive>: signal: 15\nH>>= "
+2017-09-27 20:54:19 [ThreadId 11] ERROR phoityne - "\"extractSourcePosition\" (line 2, column 6):\nunexpected end of input\nexpecting \"Stopped at \" or \"Stopped in \" [INPUT]not stopped at a breakpoint\nH>>= "
+2017-09-27 20:54:19 [ThreadId 11] ERROR phoityne - "\"extractSourcePosition\" (line 2, column 6):\nunexpected end of input\nexpecting \"Stopped at \" or \"Stopped in \" [INPUT]not stopped at a breakpoint\nH>>= "
+2017-09-27 20:54:19 [ThreadId 11] ERROR phoityne - "\"extractSourcePosition\" (line 2, column 6):\nunexpected end of input\nexpecting \"Stopped at \" or \"Stopped in \" [INPUT]not stopped at a breakpoint\nH>>= "
+2017-09-27 20:54:19 [ThreadId 11] ERROR phoityne - "error: \8226 Variable not in scope: performTransaction \8226 Perhaps you meant one of these: \8216encodeTransaction\8217 (line 61), \8216decodeTransaction\8217 (line 69)"
+2017-09-27 20:54:19 [ThreadId 11] ERROR phoityne - "error: \8226 Variable not in scope: performTransaction \8226 Perhaps you meant one of these: \8216encodeTransaction\8217 (line 61), \8216decodeTransaction\8217 (line 69)"
+2017-09-27 20:54:19 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: listenForRemoteTransactions"
+2017-09-27 20:54:49 [ThreadId 11] ERROR phoityne - "error: \8226 Variable not in scope: broadcast \8226 Perhaps you meant data constructor \8216Net.Broadcast\8217 (imported from Network.Socket)"
+2017-09-27 20:54:51 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: the"
+2017-09-27 20:54:51 [ThreadId 11] ERROR phoityne - "error: \8226 Variable not in scope: sockets \8226 Perhaps you meant \8216Net.socket\8217 (imported from Network.Socket)"
+2017-09-27 20:54:52 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: via"
+2017-09-27 20:55:52 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: synchronization"
+2017-09-27 20:55:54 [ThreadId 11] ERROR phoityne - "error: \8226 Variable not in scope: transaction \8226 Perhaps you meant data constructor \8216Transaction\8217 (line 57)"
+2017-09-27 20:56:42 [ThreadId 11] ERROR phoityne - "\"extractSourcePosition\" (line 2, column 6):\nunexpected end of input\nexpecting \"Stopped at \" or \"Stopped in \" [INPUT]<interactive>: signal: 15\nH>>= "
+2017-09-27 20:56:42 [ThreadId 11] ERROR phoityne - "error: \8226 Variable not in scope: transaction \8226 Perhaps you meant data constructor \8216Transaction\8217 (line 57)"
+2017-09-27 20:56:42 [ThreadId 11] ERROR phoityne - "error: parse error (possibly incorrect indentation or mismatched brackets)"
+2017-09-27 20:58:47 [ThreadId 11] ERROR phoityne - "error: \8226 Variable not in scope: circuit \8226 Perhaps you meant data constructor \8216Circuit\8217 (line 65)"
+2017-09-27 20:58:47 [ThreadId 11] ERROR phoityne - "error: \8226 Variable not in scope: circuit \8226 Perhaps you meant data constructor \8216Circuit\8217 (line 65)"
+2017-09-27 20:58:50 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: latestTimeMay"
+2017-09-27 20:58:50 [ThreadId 11] ERROR phoityne - "\"extractBindingBindingDatas\" (line 8, column 1):\nunexpected end of input\nexpecting \" ::\" [INPUT]\n<interactive>:1:1: error:\n    \8226 No instance for (Show (Circuit node))\n        arising from a use of \8216show\8217\n    \8226 In the expression: show showme\n      In an equation for \8216_compileParsedExpr\8217:\n          _compileParsedExpr = show showme\n"
+2017-09-27 20:59:04 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: multiple"
+2017-09-27 20:59:06 [ThreadId 11] ERROR phoityne - "error: \8226 Variable not in scope: cifcuit \8226 Perhaps you meant data constructor \8216Circuit\8217 (line 65)"
+2017-09-27 20:59:13 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: new"
+2017-09-27 20:59:14 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: new"
+2017-09-27 20:59:16 [ThreadId 11] ERROR phoityne - "error: \8226 Variable not in scope: events \8226 Perhaps you meant \8216even\8217 (imported from Prelude)"
+2017-09-27 20:59:20 [ThreadId 11] ERROR phoityne - "error: \8226 Variable not in scope: actuatedCircuitInternal \8226 Perhaps you meant data constructor \8216ActuatedCircuitInternal\8217 (line 40)"
+2017-09-27 20:59:20 [ThreadId 11] ERROR phoityne - "error: \8226 Variable not in scope: actuatedCircuitInternal \8226 Perhaps you meant data constructor \8216ActuatedCircuitInternal\8217 (line 40)"
+2017-09-27 20:59:30 [ThreadId 11] ERROR phoityne - "\"extractBindingBindingDatas\" (line 8, column 1):\nunexpected end of input\nexpecting \" ::\" [INPUT]\n<interactive>:1:1: error:\n    \8226 No instance for (Show (Circuit node))\n        arising from a use of \8216show\8217\n    \8226 In the expression: show showme\n      In an equation for \8216_compileParsedExpr\8217:\n          _compileParsedExpr = show showme\n"
+2017-09-27 20:59:41 [ThreadId 11] ERROR phoityne - "\"extractBindingBindingDatas\" (line 8, column 1):\nunexpected end of input\nexpecting \" ::\" [INPUT]\n<interactive>:1:1: error:\n    \8226 No instance for (Show (Circuit node))\n        arising from a use of \8216show\8217\n    \8226 In the expression: show showme\n      In an equation for \8216_compileParsedExpr\8217:\n          _compileParsedExpr = show showme\n"
+2017-09-30 19:32:57 [ThreadId 11] ERROR phoityne - "error: \8226 Variable not in scope: transactions \8226 Perhaps you meant data constructor \8216Transaction\8217 (line 57)"
+2017-09-30 19:32:59 [ThreadId 11] ERROR phoityne - "error: \8226 Variable not in scope: transactions \8226 Perhaps you meant data constructor \8216Transaction\8217 (line 57)"
+2017-09-30 19:33:29 [ThreadId 11] ERROR phoityne - "error: \8226 Variable not in scope: resolve \8226 Perhaps you meant \8216Gtk.remove\8217 (imported from Graphics.UI.Gtk)"
+2017-09-30 19:33:30 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: order"
+2017-09-30 19:33:31 [ThreadId 11] ERROR phoityne - "error: \8226 Variable not in scope: listeners \8226 Perhaps you meant data constructor \8216Listener\8217 (line 52)"
+2017-09-30 19:33:38 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: latestTimeMay"
+2017-09-30 19:33:38 [ThreadId 11] ERROR phoityne - "\"extractBindingBindingDatas\" (line 8, column 1):\nunexpected end of input\nexpecting \" ::\" [INPUT]\n<interactive>:1:1: error:\n    \8226 No instance for (Show (Circuit node))\n        arising from a use of \8216show\8217\n    \8226 In the expression: show showme\n      In an equation for \8216_compileParsedExpr\8217:\n          _compileParsedExpr = show showme\n"
+2017-09-30 19:33:42 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: latestTimeMay"
+2017-09-30 19:33:51 [ThreadId 11] ERROR phoityne - "error: parse error (possibly incorrect indentation or mismatched brackets)"
+2017-09-30 19:33:53 [ThreadId 11] ERROR phoityne - "error: \8226 Variable not in scope: newCircuit \8226 Perhaps you meant one of these: data constructor \8216Circuit\8217 (line 65), \8216mkCircuit\8217 (line 44), \8216sumCircuit\8217 (line 44)"
+2017-09-30 19:33:53 [ThreadId 11] ERROR phoityne - "error: \8226 Variable not in scope: newCircuit \8226 Perhaps you meant one of these: data constructor \8216Circuit\8217 (line 65), \8216mkCircuit\8217 (line 44), \8216sumCircuit\8217 (line 44)"
+2017-09-30 19:34:10 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: latestTimeMay"
+2017-09-30 19:34:26 [ThreadId 11] ERROR phoityne - "error: Data constructor not in scope: M"
+2017-09-30 19:34:54 [ThreadId 11] ERROR phoityne - "error: \8226 Variable not in scope: updatesMap \8226 Perhaps you meant one of these: \8216M.updateMax\8217 (imported from Data.Map), \8216M.updateMin\8217 (imported from Data.Map)"
+2017-09-30 19:35:17 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: latestTimeMay"
+2017-09-30 19:35:17 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: latestTimeMay"
+2017-09-30 19:35:20 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: latestTimeMay"
+2017-09-30 19:35:20 [ThreadId 11] ERROR phoityne - "\"extractBindingBindingDatas\" (line 8, column 1):\nunexpected end of input\nexpecting \" ::\" [INPUT]\n<interactive>:1:1: error:\n    \8226 No instance for (Show (Circuit node))\n        arising from a use of \8216show\8217\n    \8226 In the expression: show showme\n      In an equation for \8216_compileParsedExpr\8217:\n          _compileParsedExpr = show showme\n"
+2017-09-30 19:35:20 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: latestTimeMay"
+2017-09-30 19:35:27 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: latestTimeMay"
+2017-09-30 19:35:27 [ThreadId 11] ERROR phoityne - "\"extractBindingBindingDatas\" (line 8, column 1):\nunexpected end of input\nexpecting \" ::\" [INPUT]\n<interactive>:1:1: error:\n    \8226 No instance for (Show (Circuit node))\n        arising from a use of \8216show\8217\n    \8226 In the expression: show showme\n      In an equation for \8216_compileParsedExpr\8217:\n          _compileParsedExpr = show showme\n"
+2017-09-30 19:35:27 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: latestTimeMay"
+2017-09-30 19:35:28 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: latestTimeMay"
+2017-09-30 19:35:28 [ThreadId 11] ERROR phoityne - "\"extractBindingBindingDatas\" (line 8, column 1):\nunexpected end of input\nexpecting \" ::\" [INPUT]\n<interactive>:1:1: error:\n    \8226 No instance for (Show (Circuit node))\n        arising from a use of \8216show\8217\n    \8226 In the expression: show showme\n      In an equation for \8216_compileParsedExpr\8217:\n          _compileParsedExpr = show showme\n"
+2017-09-30 19:35:28 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: latestTimeMay"
+2017-09-30 19:35:29 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: latestTimeMay"
+2017-09-30 19:35:29 [ThreadId 11] ERROR phoityne - "\"extractBindingBindingDatas\" (line 8, column 1):\nunexpected end of input\nexpecting \" ::\" [INPUT]\n<interactive>:1:1: error:\n    \8226 No instance for (Show (Circuit node))\n        arising from a use of \8216show\8217\n    \8226 In the expression: show showme\n      In an equation for \8216_compileParsedExpr\8217:\n          _compileParsedExpr = show showme\n"
+2017-09-30 19:35:29 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: latestTimeMay"
+2017-09-30 19:35:29 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: latestTimeMay"
+2017-09-30 19:35:29 [ThreadId 11] ERROR phoityne - "\"extractBindingBindingDatas\" (line 8, column 1):\nunexpected end of input\nexpecting \" ::\" [INPUT]\n<interactive>:1:1: error:\n    \8226 No instance for (Show (Circuit node))\n        arising from a use of \8216show\8217\n    \8226 In the expression: show showme\n      In an equation for \8216_compileParsedExpr\8217:\n          _compileParsedExpr = show showme\n"
+2017-09-30 19:35:29 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: latestTimeMay"
+2017-09-30 19:35:30 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: latestTimeMay"
+2017-09-30 19:35:30 [ThreadId 11] ERROR phoityne - "\"extractBindingBindingDatas\" (line 8, column 1):\nunexpected end of input\nexpecting \" ::\" [INPUT]\n<interactive>:1:1: error:\n    \8226 No instance for (Show (Circuit node))\n        arising from a use of \8216show\8217\n    \8226 In the expression: show showme\n      In an equation for \8216_compileParsedExpr\8217:\n          _compileParsedExpr = show showme\n"
+2017-09-30 19:36:16 [ThreadId 11] ERROR phoityne - "error: \8226 Variable not in scope: gate \8226 Perhaps you meant data constructor \8216Gate\8217 (line 76)"
+2017-09-30 19:36:33 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: possiblyAffectedGates"
+2017-09-30 19:36:44 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: accumulateAffectedGates"
+2017-09-30 19:37:04 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: accumulateAffectedGates"
+2017-09-30 19:37:06 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: visited"
+2017-09-30 19:37:11 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: visited"
+2017-09-30 19:37:29 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: visited"
+2017-09-30 19:37:34 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: accumulateAffectedGates"
+2017-09-30 19:39:30 [ThreadId 11] ERROR phoityne - [deleteBreakPointOnGHCi] invalid delete break point. BreakPointData {nameBreakPointData = "Circuit.Description", srcPosBreakPointData = SourcePosition {filePathSourcePosition = "/home/david/Documents/git/nfrp/src/Circuit/Description.hs", startLineNoSourcePosition = 273, startColNoSourcePosition = -1, endLineNoSourcePosition = -1, endColNoSourcePosition = -1}, breakNoBreakPointData = Nothing, conditionBreakPointData = Nothing, hitConditionBreakPointData = Nothing, hitCountBreakPointData = 0}
+2017-09-30 19:39:40 [ThreadId 11] ERROR phoityne - [disconnectRequestHandler] ghci quit error. <file descriptor: 107>: hPutChar: resource vanished (Broken pipe)
+2017-09-30 19:40:25 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: latestTimeMay"
+2017-09-30 19:40:52 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: latestTimeMay"
+2017-09-30 19:41:03 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: latestTimeMay"
+2017-09-30 19:41:12 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: latestTimeMay"
+2017-09-30 19:41:51 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: latestTimeMay"
+2017-09-30 19:41:56 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: latestTimeMay"
+2017-09-30 19:42:01 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: latestTimeMay"
+2017-09-30 19:42:44 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: latestTimeMay"
+2017-09-30 19:42:49 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: latestTimeMay"
+2017-09-30 19:43:09 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: latestTimeMay"
+2017-09-30 19:43:30 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: latestTimeMay"
+2017-09-30 19:43:43 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: latestTimeMay"
+2017-09-30 19:44:00 [ThreadId 11] ERROR phoityne - "error: parse error on input \8216->\8217"
+2017-09-30 19:44:03 [ThreadId 11] ERROR phoityne - "error: Data constructor not in scope: M"
+2017-09-30 19:44:06 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: desc"
+2017-09-30 19:44:13 [ThreadId 11] ERROR phoityne - "error: parse error (possibly incorrect indentation or mismatched brackets)"
+2017-09-30 19:44:25 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: latestTimeMay"
+2017-09-30 19:44:37 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: latestTimeMay"
+2017-09-30 19:44:37 [ThreadId 11] ERROR phoityne - "\"extractBindingBindingDatas\" (line 8, column 1):\nunexpected end of input\nexpecting \" ::\" [INPUT]\n<interactive>:1:1: error:\n    \8226 No instance for (Show (Circuit node))\n        arising from a use of \8216show\8217\n    \8226 In the expression: show showme\n      In an equation for \8216_compileParsedExpr\8217:\n          _compileParsedExpr = show showme\n"
+2017-09-30 19:44:37 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: latestTimeMay"
+2017-09-30 19:44:37 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: latestTimeMay"
+2017-09-30 19:44:38 [ThreadId 11] ERROR phoityne - "\"extractBindingBindingDatas\" (line 8, column 1):\nunexpected end of input\nexpecting \" ::\" [INPUT]\n<interactive>:1:1: error:\n    \8226 No instance for (Show (Circuit node))\n        arising from a use of \8216show\8217\n    \8226 In the expression: show showme\n      In an equation for \8216_compileParsedExpr\8217:\n          _compileParsedExpr = show showme\n"
+2017-09-30 19:44:41 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: possiblyAffectedGates"
+2017-09-30 19:45:06 [ThreadId 11] ERROR phoityne - "\"extractSourcePosition\" (line 5, column 1):\nunexpected end of input\nexpecting \"Stopped at \" or \"Stopped in \" [INPUT]<interactive>: Map.findMax: empty map has no maximal element\nCallStack (from HasCallStack):\n  error, called at libraries/containers/Data/Map/Base.hs:1087:31 in containers-0.5.7.1:Data.Map.Base\n<interactive>: interrupted\n"
+2017-09-30 19:45:06 [ThreadId 11] ERROR phoityne - [disconnectRequestHandler] ghci quit error. <file descriptor: 111>: hPutChar: resource vanished (Broken pipe)
+2017-09-30 19:45:48 [ThreadId 11] ERROR phoityne - "error: Not in scope: data constructor \8216M.Map\8217 Perhaps you meant one of these: variable \8216M.map\8217 (imported from Data.Map), variable \8216M.map\8217 (imported from Data.Map), variable \8216M.map\8217 (imported from Data.Map) No module named \8216M\8217 is imported."
+2017-09-30 19:45:53 [ThreadId 11] ERROR phoityne - "error: \8226 Variable not in scope: updatesMap \8226 Perhaps you meant one of these: \8216M.updateMax\8217 (imported from Data.Map), \8216M.updateMin\8217 (imported from Data.Map)"
+2017-09-30 19:45:54 [ThreadId 11] ERROR phoityne - "error: \8226 Variable not in scope: updatesMap \8226 Perhaps you meant one of these: \8216M.updateMax\8217 (imported from Data.Map), \8216M.updateMin\8217 (imported from Data.Map)"
+2017-09-30 19:45:54 [ThreadId 11] ERROR phoityne - "error: \8226 Variable not in scope: updatesMap \8226 Perhaps you meant one of these: \8216M.updateMax\8217 (imported from Data.Map), \8216M.updateMin\8217 (imported from Data.Map)"
+2017-09-30 19:45:57 [ThreadId 11] ERROR phoityne - "error: \8226 Variable not in scope: updates \8226 Perhaps you meant one of these: \8216M.update\8217 (imported from Data.Map), \8216M.updateAt\8217 (imported from Data.Map)"
+2017-09-30 19:45:57 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: possiblyAffectedGates"
+2017-09-30 19:46:01 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: accumulateAffectedGates"
+2017-09-30 19:46:03 [ThreadId 11] ERROR phoityne - "error: Data constructor not in scope: S"
+2017-09-30 19:46:04 [ThreadId 11] ERROR phoityne - "error: Not in scope: data constructor \8216M.Map\8217 Perhaps you meant one of these: variable \8216M.map\8217 (imported from Data.Map), variable \8216M.map\8217 (imported from Data.Map), variable \8216M.map\8217 (imported from Data.Map) No module named \8216M\8217 is imported."
+2017-09-30 19:46:05 [ThreadId 11] ERROR phoityne - "error: parse error on input \8216::\8217"
+2017-09-30 19:46:31 [ThreadId 11] ERROR phoityne - "\"extractSourcePosition\" (line 5, column 1):\nunexpected end of input\nexpecting \"Stopped at \" or \"Stopped in \" [INPUT]<interactive>: Map.findMax: empty map has no maximal element\nCallStack (from HasCallStack):\n  error, called at libraries/containers/Data/Map/Base.hs:1087:31 in containers-0.5.7.1:Data.Map.Base\n<interactive>: interrupted\n"
+2017-09-30 19:46:31 [ThreadId 11] ERROR phoityne - [disconnectRequestHandler] ghci quit error. <file descriptor: 88>: hPutChar: resource vanished (Broken pipe)
+2017-09-30 19:46:56 [ThreadId 11] ERROR phoityne - "error: Data constructor not in scope: Dynamic"
+2017-09-30 19:47:24 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: e2ValDyn"
+2017-09-30 19:47:35 [ThreadId 11] ERROR phoityne - "error: Variable not in scope: possiblyAffectedGates"
+2017-09-30 19:47:40 [ThreadId 11] ERROR phoityne - [disconnectRequestHandler] ghci quit error. <file descriptor: 88>: hPutChar: resource vanished (Broken pipe)
+2017-09-30 19:49:45 [ThreadId 11] ERROR phoityne - [disconnectRequestHandler] ghci quit error. <file descriptor: 135>: hPutChar: resource vanished (Broken pipe)
+2017-09-30 19:50:34 [ThreadId 11] ERROR phoityne - "\"extractBindingBindingDatas\" (line 7, column 1):\nunexpected end of input\nexpecting \" ::\" [INPUT]\n<interactive>:1:1: error:\n    \8226 No instance for (Show (Gate' node)) arising from a use of \8216show\8217\n    \8226 In the expression: show showme\n      In an equation for \8216_compileParsedExpr\8217:\n          _compileParsedExpr = show showme\n"
+2017-09-30 19:50:42 [ThreadId 11] ERROR phoityne - "\"extractBindingBindingDatas\" (line 7, column 1):\nunexpected end of input\nexpecting \" ::\" [INPUT]\n<interactive>:1:1: error:\n    \8226 No instance for (Show (Gate' node)) arising from a use of \8216show\8217\n    \8226 In the expression: show showme\n      In an equation for \8216_compileParsedExpr\8217:\n          _compileParsedExpr = show showme\n"
+2017-09-30 20:22:10 [ThreadId 11] ERROR phoityne - "error: \8226 Variable not in scope: connection \8226 Perhaps you meant \8216Net.connect\8217 (imported from Network.Socket)"
+2017-09-30 20:22:14 [ThreadId 11] ERROR phoityne - [disconnectRequestHandler] ghci quit error. <file descriptor: 103>: hPutChar: resource vanished (Broken pipe)
+2017-09-30 23:00:00 [ThreadId 17] ERROR phoityne - load file fail.[/home/david/Documents/git/nfrp/src/Circuit/Actuate.hs] <stdout>: hPutBuf: resource vanished (Broken pipe)
+2017-09-30 23:00:00 [ThreadId 18] ERROR phoityne - load file fail.[/home/david/Documents/git/nfrp/test/Spec.hs] <stdout>: hPutBuf: resource vanished (Broken pipe)
+2017-09-30 23:00:01 [ThreadId 19] ERROR phoityne - load file fail.[/home/david/Documents/git/nfrp/test/Spec.hs] <stdout>: hPutBuf: resource vanished (Broken pipe)
+2017-09-30 23:00:01 [ThreadId 20] ERROR phoityne - load file fail.[/home/david/Documents/git/nfrp/test/Spec.hs] <stdout>: hPutBuf: resource vanished (Broken pipe)
+2017-09-30 23:00:01 [ThreadId 21] ERROR phoityne - load file fail.[/home/david/Documents/git/nfrp/test/Spec.hs] <stdout>: hPutBuf: resource vanished (Broken pipe)
+2017-09-30 23:00:01 [ThreadId 22] ERROR phoityne - load file fail.[/home/david/Documents/git/nfrp/test/Spec.hs] <stdout>: hPutBuf: resource vanished (Broken pipe)
+2017-09-30 23:00:01 [ThreadId 23] ERROR phoityne - load file fail.[/home/david/Documents/git/nfrp/test/Spec.hs] <stdout>: hPutBuf: resource vanished (Broken pipe)
+2017-09-30 23:00:01 [ThreadId 24] ERROR phoityne - load file fail.[/home/david/Documents/git/nfrp/test/Spec.hs] <stdout>: hPutBuf: resource vanished (Broken pipe)
+2017-09-30 23:00:01 [ThreadId 25] ERROR phoityne - load file fail.[/home/david/Documents/git/nfrp/test/Spec.hs] <stdout>: hPutBuf: resource vanished (Broken pipe)
+2017-09-30 23:00:01 [ThreadId 26] ERROR phoityne - load file fail.[/home/david/Documents/git/nfrp/test/Spec.hs] <stdout>: hPutBuf: resource vanished (Broken pipe)
+2017-09-30 23:00:01 [ThreadId 27] ERROR phoityne - load file fail.[/home/david/Documents/git/nfrp/test/Spec.hs] <stdout>: hPutBuf: resource vanished (Broken pipe)
+2017-09-30 23:00:01 [ThreadId 28] ERROR phoityne - load file fail.[/home/david/Documents/git/nfrp/test/Spec.hs] <stdout>: hPutBuf: resource vanished (Broken pipe)
+2017-09-30 23:00:02 [ThreadId 29] ERROR phoityne - load file fail.[/home/david/Documents/git/nfrp/test/Spec.hs] <stdout>: hPutBuf: resource vanished (Broken pipe)
+2017-09-30 23:00:02 [ThreadId 30] ERROR phoityne - load file fail.[/home/david/Documents/git/nfrp/test/Spec.hs] <stdout>: hPutBuf: resource vanished (Broken pipe)
+2017-09-30 23:00:02 [ThreadId 31] ERROR phoityne - load file fail.[/home/david/Documents/git/nfrp/test/Spec.hs] <stdout>: hPutBuf: resource vanished (Broken pipe)
+2017-09-30 23:00:02 [ThreadId 32] ERROR phoityne - load file fail.[/home/david/Documents/git/nfrp/src/Circuit/Description.hs] <stdout>: hPutBuf: resource vanished (Broken pipe)
+2017-09-30 23:00:02 [ThreadId 33] ERROR phoityne - load file fail.[/home/david/Documents/git/nfrp/src/Circuit/Description.hs] <stdout>: hPutBuf: resource vanished (Broken pipe)
+2017-09-30 23:00:02 [ThreadId 34] ERROR phoityne - load file fail.[/home/david/Documents/git/nfrp/src/Circuit/Description.hs] <stdout>: hPutBuf: resource vanished (Broken pipe)
+2017-09-30 23:00:02 [ThreadId 35] ERROR phoityne - load file fail.[/home/david/Documents/git/nfrp/src/Circuit/Description.hs] <stdout>: hPutBuf: resource vanished (Broken pipe)
+2017-09-30 23:00:02 [ThreadId 36] ERROR phoityne - load file fail.[/home/david/Documents/git/nfrp/test/Spec.hs] <stdout>: hPutBuf: resource vanished (Broken pipe)
+2017-09-30 23:00:02 [ThreadId 37] ERROR phoityne - load file fail.[/home/david/Documents/git/nfrp/test/Spec.hs] <stdout>: hPutBuf: resource vanished (Broken pipe)
+2017-09-30 23:00:02 [ThreadId 38] ERROR phoityne - load file fail.[/home/david/Documents/git/nfrp/test/Spec.hs] <stdout>: hPutBuf: resource vanished (Broken pipe)
+2017-09-30 23:00:02 [ThreadId 39] ERROR phoityne - load file fail.[/home/david/Documents/git/nfrp/test/Spec.hs] <stdout>: hPutBuf: resource vanished (Broken pipe)
+2017-09-30 23:00:02 [ThreadId 40] ERROR phoityne - load file fail.[/home/david/Documents/git/nfrp/test/Spec.hs] <stdout>: hPutBuf: resource vanished (Broken pipe)
+2017-09-30 23:00:02 [ThreadId 41] ERROR phoityne - load file fail.[/home/david/Documents/git/nfrp/test/Spec.hs] <stdout>: hPutBuf: resource vanished (Broken pipe)
+2017-09-30 23:00:02 [ThreadId 42] ERROR phoityne - load file fail.[/home/david/Documents/git/nfrp/src/Circuit/Description.hs] <stdout>: hPutBuf: resource vanished (Broken pipe)
+2017-09-30 23:00:02 [ThreadId 43] ERROR phoityne - load file fail.[/home/david/Documents/git/nfrp/src/Circuit/Description.hs] <stdout>: hPutBuf: resource vanished (Broken pipe)
+2017-09-30 23:00:02 [ThreadId 44] ERROR phoityne - load file fail.[/home/david/Documents/git/nfrp/test/Spec.hs] <stdout>: hPutBuf: resource vanished (Broken pipe)
+2017-09-30 23:00:02 [ThreadId 45] ERROR phoityne - load file fail.[/home/david/Documents/git/nfrp/test/Spec.hs] <stdout>: hPutBuf: resource vanished (Broken pipe)
+2017-09-30 23:00:02 [ThreadId 46] ERROR phoityne - load file fail.[/home/david/Documents/git/nfrp/test/Spec.hs] <stdout>: hPutBuf: resource vanished (Broken pipe)
+2017-09-30 23:00:02 [ThreadId 47] ERROR phoityne - load file fail.[/home/david/Documents/git/nfrp/test/Spec.hs] <stdout>: hPutBuf: resource vanished (Broken pipe)
+2017-09-30 23:00:02 [ThreadId 48] ERROR phoityne - load file fail.[/home/david/Documents/git/nfrp/test/Spec.hs] <stdout>: hPutBuf: resource vanished (Broken pipe)

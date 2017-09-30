@@ -2,14 +2,16 @@
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE TypeInType #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE MultiWayIf #-}
-{-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- | Module to actuate a circuit description
 module Circuit.Actuate
   ( ActuatedCircuit
+  , Listener(..)
+  , Transaction(..)
   , actuate
   , applyTransaction
   ) where
@@ -19,14 +21,15 @@ import Control.Concurrent.Async (async, wait)
 import qualified Control.Concurrent.MVar as MV
 import Control.Monad (forM, forM_, unless)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as BS8
 import Data.Dynamic
 import Data.Either (either)
-import Data.IORef
 import Data.List (partition)
 import qualified Data.Map as M
 import Data.Maybe (fromMaybe)
-import Data.Serialize (Serialize(..), decode, encode)
-import GHC.Generics
+import Data.Serialize
+       (Get, Result(..), Serialize(..), decode, encode, runGetPartial,
+        runPut)
 import qualified Network.Socket as Net
 import qualified Network.Socket.ByteString as NetBS
 
@@ -46,31 +49,47 @@ newtype ActuatedCircuit node =
   ActuatedCircuit (MV.MVar (ActuatedCircuitInternal node))
 
 data Listener =
-  forall gateType a. Typeable a =>
+  forall a gateType. (GateValue a) =>
                      Listener (GateKey gateType a)
                               (a -> IO ())
-
-data GateUpdate =
-  forall a (gateType :: GateType). (Serialize a) =>
-                                   GateUpdate (GateKey gateType a)
-                                              a
-
-instance Serialize GateUpdate where
-  put (GateUpdate k a) = put k >> put a
-  get = get >> get
-
-  RRRRRRRR we need to some how serialize transactions, but we can't do that for
-      existentially quuantified types :-( a solution may be to store an exhaustive list
-      of possible types in a type level list and use the index of that list type to access
-      the type
-
-      You would expect that the data holds the gate index first, then the type of the
-      data could be infurd from that *given the circuit*!
 
 data Transaction =
   Transaction Time
               [GateUpdate]
-  deriving (Generic, Serialize)
+
+encodeTransaction :: Transaction -> BS.ByteString
+encodeTransaction (Transaction time updates) =
+  runPut $ do
+    put time
+    forM_ updates $ \(GateUpdate key a) -> do
+      put key
+      put a
+
+decodeTransaction :: Circuit node -> BS.ByteString -> Either String Transaction
+decodeTransaction circuit fullStr = do
+  (time, updatesStr) <- runGetPartial' (get @Time) fullStr
+  updates <- decodeGateUpdates updatesStr
+  return (Transaction time updates)
+  where
+    gateKeys = circuitGateKeysByInt circuit
+    decodeGateUpdates :: BS.ByteString -> Either String [GateUpdate]
+    decodeGateUpdates str
+      | BS.null str = Right []
+      | otherwise
+        -- Parse gate index
+       = do
+        (gateInt, str') <- runGetPartial' (get @Int) str
+        -- Infer the type, a, by looking up the GateKey' from gateKeys.
+        case gateKeys M.! gateInt of
+          GateKey' (gateKey :: GateKey gateType a) -> do
+            (a, str'') <- runGetPartial' (get :: Get a) str'
+            otherUpdates <- decodeGateUpdates str''
+            return (GateUpdate gateKey a : otherUpdates)
+    runGetPartial' getter str =
+      case runGetPartial getter str of
+        Fail err _ -> Left $ "Failed to parse a transaction: " ++ err
+        Partial _ -> Left "Only managed to partially parse a transaction."
+        Done time remainingStr -> Right (time, remainingStr)
 
 -- TODO is there a more optimal way to get a safe buffer size?
 --      Could make this much smaller then read further if necessary, but this
@@ -83,41 +102,13 @@ acCurrentState (ActuatedCircuitInternal _ ((_, currentState):_) _) =
   currentState
 acCurrentState (ActuatedCircuitInternal _ [] currentState) = currentState
 
----- subscribeB :: ActuatedCircuit node -> B a -> (a -> IO ()) -> IO ()
---subscribeB :: Typeable a => ActuatedCircuit node -> B a -> (a -> IO ()) -> IO ()
---subscribeB (ActuatedCircuit aCircuit) behavior listener
--- -- Initial call to listener.
--- = do
---  circuitState <- acCurrentState aCircuit
---  listener (behaviorValue behavior circuitState)
--- -- Add listener for further changes.
---  modifyIORef
---    (acListeners aCircuit)
---    (M.alter
---       (\case
---          Just ls -> Just (listener' : ls)
---          Nothing -> Just [listener'])
---       (GateKey' behavior))
---  where
---    listener' = toDyn listener
--- import Circuit.Description
--- TODO Use a more type safe system rather than Data.Dynamic.
--- Actuate a circuit, listening to input and calling the output handler.
--- Protocol:
---  - Open designated socket
---  - in parallel:
---    - Connect to all lesser nodes
---      - On connecting, send ownerNode to identify self.
---    - accept connection to designated socket from greater nodes
---  - All nodes are connected to all other nodes now.
---  - ???
 actuate ::
      forall node. (Ord node, Serialize node, Show node)
   => M.Map node Int -- ^ map from node to port number (TODO and IP address)
   -> node -- ^ what node this is.
   -> Circuit node -- ^ The circuit to actuate
   -> [Listener] -- ^ Listeners the will be called whenever the freshest values (includes roll back values!?).
-  -> IO (Transaction -> IO ()) -- ^ Returns the function to perform local transcations.
+  -> IO (Transaction -> IO (), IO ()) -- ^ (Returns the function to perform local transcations, close sockets)
 actuate nodeAddresses ownerNode circuit listeners
   -- See http://www.linuxhowtos.org/C_C++/socket.htm for some networking help.
   -- Open socket
@@ -147,7 +138,16 @@ actuate nodeAddresses ownerNode circuit listeners
     fmap forkIO . M.mapWithKey (listenForRemoteTransactions performTransaction) $
     sockets
   -- |Listen for circuit transactions from the given node via the given socket.
-  return (error ":-(")
+  return
+    ( (\transaction
+        -- perform the transaction.
+        -> do
+          performTransaction transaction
+          -- broadcast the transaction.
+          forM_ sockets $ \socket ->
+            NetBS.send socket (encodeTransaction transaction))
+    , mapM_ Net.close sockets
+    )
   where
     listenForRemoteTransactions ::
          (Transaction -> IO ()) -> node -> Net.Socket -> IO ()
@@ -159,14 +159,14 @@ actuate nodeAddresses ownerNode circuit listeners
           msg <- NetBS.recv socket recvBufferSize
           let connectionClosed = BS.null msg
           unless connectionClosed $ do
-            let transaction = decode msg
+            let transaction = decodeTransaction circuit msg
             either
               (\errorMsg -> do
                  putStrLn
                    ("Failed to decode transaction from \"" ++ show node ++ "\":")
                  putStrLn ("Error Message: " ++ errorMsg)
-                 putStr ("Data: ")
-                 BS.putStrLn msg)
+                 putStr "Data: "
+                 BS8.putStrLn msg)
               performTransaction
               transaction
             loop
@@ -230,7 +230,7 @@ actuate nodeAddresses ownerNode circuit listeners
 -- |Apply the transaction (with possible rollback and replay), updating the internal
 -- state and calling listeners.
 applyTransaction :: forall node. ActuatedCircuit node -> Transaction -> IO ()
-applyTransaction (ActuatedCircuit aCircuitMV) (Transaction time updates) =
+applyTransaction (ActuatedCircuit aCircuitMV) transaction@(Transaction time updates) =
   MV.modifyMVar_ aCircuitMV applyTransaction'
   where
     applyTransaction' ::
@@ -242,11 +242,32 @@ applyTransaction (ActuatedCircuit aCircuitMV) (Transaction time updates) =
               [] -> Nothing
               (Transaction t _, _):_ -> Just t
       case fromMaybe GT (compare time <$> latestTimeMay) of
-        LT -> error "TODO roll back and replay aircuit."
+        LT -> error "TODO roll back and replay circuit."
         EQ ->
           error $
           "TODO Cannot currently apply multiple transactions at the same time." ++
           "Need a way to resolve order that is unambiguous accross nodes."
-        GT ->
-          error
-            "TODO all the crazy code to update the circuit and fire listeners."
+        GT
+          -- Get the next cifcuit state.
+         -> do
+          let (newCircuit, behaviorUpdates, events) =
+                applyUpdates (acCurrentState actuatedCircuitInternal) updates
+          -- Call behavior/event listeners.
+          let callListeners changes =
+                forM_ (M.assocs changes) $ \(key', valDyn) ->
+                  case M.lookup key' (acListeners actuatedCircuitInternal) of
+                    Nothing -> return ()
+                    Just listeners ->
+                      forM_ listeners $ \listener ->
+                        fromDyn
+                          (dynApp listener valDyn)
+                          (error "Expected listener of type \"a -> IO ()\"") :: IO ()
+          callListeners behaviorUpdates
+          callListeners events
+          -- Define the new states by setting the affected states
+          return
+            ActuatedCircuitInternal
+            { acListeners = acListeners actuatedCircuitInternal
+            , acHistory = (transaction, newCircuit) : transactions
+            , acInitialState = acInitialState actuatedCircuitInternal
+            }

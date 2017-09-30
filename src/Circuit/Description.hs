@@ -1,5 +1,7 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE TypeInType #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -9,6 +11,8 @@
 -- | Module that the user uses to describing the NFRP circuit
 module Circuit.Description
   ( Circuit
+  , circuitGateKeysByInt
+  , applyUpdates
   , CircuitBuilder
   , behaviorValue
   , mkCircuit
@@ -21,29 +25,42 @@ module Circuit.Description
   , stepper
   , liftB1
   , liftB2
+  , GateValue
+  , GateUpdate(..)
+  , gateUpdate
   , GateType(..)
   , GateKey
+  , gateKeyToInt
   , GateKey'(..)
+  , gateKey'ToInt
   ) where
 
 import Control.Monad.Trans.State.Strict
 
+import Control.Monad (join)
 import Data.Dynamic
+import Data.Kind (Type)
 import Data.List (foldl')
 import qualified Data.Map as M
+import Data.Maybe (catMaybes)
 import Data.Serialize (Serialize)
+import qualified Data.Set as S
 import GHC.Generics
 
 mkCircuit :: State (Circuit node) a -> (a, Circuit node)
 mkCircuit circuitBuilder = runState circuitBuilder emptyCircuit
 
 -- | Key to gate in a circuit
-newtype GateKey (gateType :: GateType) a =
-  GateKey Int
-  deriving (Generic, Serialize, Ord, Eq)
+newtype GateKey (gateType :: GateType) (a :: Type) = GateKey
+  { gateKeyToInt :: Int
+  } deriving (Generic, Serialize, Ord, Eq, Show)
+
+class (Typeable a, Serialize a, Eq a) => GateValue a where
+instance (Typeable a, Serialize a, Eq a) => GateValue a where
 
 data GateKey' =
-  forall a (gateType :: GateType). GateKey' (GateKey gateType a)
+  forall (a :: Type) (gateType :: GateType). (GateValue a) =>
+                                             GateKey' (GateKey gateType a)
 
 instance Eq GateKey' where
   GateKey' (GateKey a) == GateKey' (GateKey b) = a == b
@@ -59,6 +76,7 @@ data Circuit node = Circuit
   -- TODO use "forall a. GateKey *BehaviorGate* a" for behavior values
   { circuitBehaviorValues :: M.Map GateKey' Dynamic -- ^ value of all the behavior gates
   , circuitGates :: M.Map GateKey' (Gate' node) -- ^ description of all gates
+  , circuitGateKeysByInt :: M.Map Int GateKey' -- ^ all gate keys indexed by their internal int value.
   }
 
 data Gate' node =
@@ -70,36 +88,52 @@ data Gate node a =
 
 data GateDescription node a
   = GateLocalE node
-  | forall b. Typeable b =>
+  | forall b. (GateValue a, GateValue b) =>
               GateLiftE (b -> a)
-                        (B b)
-  | GateMergeE (a -> a -> a)
+                        (E b)
+  | (GateValue a) =>
+    GateMergeE (a -> a -> a)
                (E a)
                (E a)
-  | forall c b. (Typeable b, Typeable c) =>
+  | forall c b. ( GateValue a
+                , GateValue b
+                , GateValue c
+                ) =>
                 GateSample (b -> c -> a)
                            (B b)
                            (E c)
-  | GateStepper (E a)
-  | forall b. Typeable b =>
+  | (GateValue a) =>
+    GateStepper (E a)
+  | forall b. (GateValue a, GateValue b) =>
               GateLiftB1 (b -> a)
                          (B b)
-  | forall b c. (Typeable b, Typeable c) =>
+  | forall b c. ( GateValue a
+                , GateValue b
+                , GateValue c
+                ) =>
                 GateLiftB2 (b -> c -> a)
                            (B b)
                            (B c)
 
-emptyCircuit :: Circuit node
-emptyCircuit = Circuit M.empty M.empty
+data GateUpdate =
+  forall (gateType :: GateType) a. GateValue a =>
+                                   GateUpdate (GateKey gateType a)
+                                              a
 
-behaviorValue :: Typeable a => B a -> Circuit node -> a
-behaviorValue key (Circuit behaviorValues _) =
+gateUpdate :: GateValue a => GateKey gt a -> a -> GateUpdate
+gateUpdate = GateUpdate
+
+emptyCircuit :: Circuit node
+emptyCircuit = Circuit M.empty M.empty M.empty
+
+behaviorValue :: (GateValue a) => B a -> Circuit node -> a
+behaviorValue key (Circuit behaviorValues _ _) =
   fromDyn
     (behaviorValues M.! GateKey' key)
     (error "Type mismatch when getting behavior value")
 
 addChildToParents :: GateKey' -> [GateKey'] -> Circuit node -> Circuit node
-addChildToParents child parents (Circuit behaviorValues gates) =
+addChildToParents child parents (Circuit behaviorValues gates gateKeys) =
   Circuit
     behaviorValues
     (foldl'
@@ -109,15 +143,23 @@ addChildToParents child parents (Circuit behaviorValues gates) =
                 Gate' (Gate (child : children) desc))))
        gates
        parents)
+    gateKeys
 
 addBehaviorGate ::
-     Typeable a => a -> Gate node a -> [GateKey'] -> CircuitBuilder node (B a)
+     (GateValue a)
+  => a
+  -> Gate node a
+  -> [GateKey']
+  -> CircuitBuilder node (B a)
 addBehaviorGate value gate parents = do
-  Circuit behaviorValues gates <- get
+  Circuit behaviorValues gates gateKeys <- get
   key <- unsafeNextGateKey
   let key' = GateKey' key
   put
-    (Circuit (M.insert key' value' behaviorValues) (M.insert key' gate' gates))
+    (Circuit
+       (M.insert key' value' behaviorValues)
+       (M.insert key' gate' gates)
+       (M.insert (gateKeyToInt key) key' gateKeys))
   modify' (addChildToParents key' parents)
   return key
   where
@@ -125,12 +167,19 @@ addBehaviorGate value gate parents = do
     gate' = Gate' gate
 
 addEventGate ::
-     Typeable a => Gate node a -> [GateKey'] -> CircuitBuilder node (E a)
+     (GateValue a)
+  => Gate node a
+  -> [GateKey']
+  -> CircuitBuilder node (E a)
 addEventGate gate parents = do
-  Circuit behaviorValues gates <- get
+  Circuit behaviorValues gates gateKeys <- get
   key <- unsafeNextGateKey
   let key' = GateKey' key
-  put (Circuit behaviorValues (M.insert key' gate' gates))
+  put
+    (Circuit
+       behaviorValues
+       (M.insert key' gate' gates)
+       (M.insert (gateKeyToInt key) key' gateKeys))
   modify' (addChildToParents (GateKey' key) parents)
   return key
   where
@@ -139,7 +188,10 @@ addEventGate gate parents = do
 -- Create a gate key. It is unsafe because the resulting key must immediatelly be added before calling again.
 unsafeNextGateKey :: CircuitBuilder nodes (GateKey (gateType :: GateType) a)
 unsafeNextGateKey = do
-  GateKey' (GateKey maxGateKey) <- gets (fst . M.findMax . circuitGates)
+  maxGateKey <- gets
+    (maybe 0 (\(GateKey' (GateKey k), _) -> k)
+    . M.lookupMax
+    . circuitGates)
   return (GateKey (maxGateKey + 1))
 
 -- Exported functions to build the circuit
@@ -149,14 +201,17 @@ type E a = GateKey 'EventGate a
 
 type B a = GateKey 'BehaviorGate a
 
-stepper :: Typeable a => a -> E a -> CircuitBuilder node (B a)
+stepper :: (GateValue a) => a -> E a -> CircuitBuilder node (B a)
 stepper initialValue childEvent = do
   assertContainsGate childEvent
   let gate = Gate [] (GateStepper childEvent)
   addBehaviorGate initialValue gate [GateKey' childEvent]
 
 liftB1 ::
-     (Typeable a, Typeable b) => (a -> b) -> B a -> CircuitBuilder node (B b)
+     (GateValue a, GateValue b)
+  => (a -> b)
+  -> B a
+  -> CircuitBuilder node (B b)
 liftB1 f childBehavior = do
   assertContainsGate childBehavior
   childInitialValue <- gets (behaviorValue childBehavior)
@@ -164,7 +219,7 @@ liftB1 f childBehavior = do
   addBehaviorGate (f childInitialValue) gate [GateKey' childBehavior]
 
 liftB2 ::
-     (Typeable a, Typeable b, Typeable c)
+     (GateValue a, GateValue b, GateValue c)
   => (a -> b -> c)
   -> B a
   -> B b
@@ -187,14 +242,21 @@ localE ownder = do
   addEventGate gate []
 
 liftE ::
-     (Typeable a, Typeable b) => (a -> b) -> B a -> CircuitBuilder node (E b)
+     (GateValue a, GateValue b)
+  => (a -> b)
+  -> E a
+  -> CircuitBuilder node (E b)
 liftE f event = do
   assertContainsGate event
   let gate = Gate [] (GateLiftE f event)
   addEventGate gate [GateKey' event]
 
 mergeE ::
-     Typeable a => (a -> a -> a) -> E a -> E a -> CircuitBuilder nodes (E a)
+     (GateValue a)
+  => (a -> a -> a)
+  -> E a
+  -> E a
+  -> CircuitBuilder nodes (E a)
 mergeE combine eventA eventB = do
   assertContainsGate eventA
   assertContainsGate eventB
@@ -202,7 +264,7 @@ mergeE combine eventA eventB = do
   addEventGate gate [GateKey' eventA, GateKey' eventB]
 
 sample ::
-     (Typeable a, Typeable b, Typeable c)
+     (GateValue a, GateValue b, GateValue c)
   => (a -> b -> c)
   -> B a
   -> E b
@@ -213,207 +275,94 @@ sample combine behavior event = do
   let gate = Gate [] (GateSample combine behavior event)
   addEventGate gate [GateKey' behavior, GateKey' event]
 
-{-
-buildCircuitB ::
-     forall node a. Typeable a
-  => RefBehavior node a
-  -> (GateKey BehaviorGate a, Circuit node)
-buildCircuitB b = runState (buildCircuitB' b) emptyCircuit
+-- |Returns the (new circuit, behavior value changes, events).
+applyUpdates ::
+     Circuit node
+  -> [GateUpdate]
+  -> (Circuit node, M.Map GateKey' Dynamic, M.Map GateKey' Dynamic)
+applyUpdates circuit updates
+  -- TODO affected gates may actually a smaller subset due to event filtering (once that is supported)!
+ =
+  let updatesMap :: M.Map GateKey' Dynamic
+      updatesMap =
+        M.fromList [(GateKey' key, toDyn val) | GateUpdate key val <- updates]
+      possiblyAffectedGates :: S.Set GateKey'
+      possiblyAffectedGates =
+        foldl'
+          accumulateAffectedGates
+          S.empty
+          [GateKey' key | GateUpdate key _ <- updates]
+      events :: M.Map GateKey' (Maybe Dynamic)
+      behaviorUpdates :: M.Map GateKey' (Maybe Dynamic)
+      (events, behaviorUpdates) = M.mapEither id eventAndBehaviorUpdates
+      eventAndBehaviorUpdates :: M.Map GateKey' (Either (Maybe Dynamic) (Maybe Dynamic))
+      eventAndBehaviorUpdates =
+        M.fromList $
+        flip map (S.toList possiblyAffectedGates) $ \key' ->
+          ( key'
+          , case circuitGates circuit M.! key' of
+              Gate' (Gate _ desc) ->
+                case desc of
+                  GateLocalE _ -> Left (M.lookup key' updatesMap)
+                  GateLiftE f e -> Left (toDyn . f . fromDyn' <$> join (M.lookup (GateKey' e) events))
+                  GateMergeE merge e1 e2 -> Left $ do
+                    e1ValueMay <- M.lookup (GateKey' e1) events
+                    e2ValueMay <- M.lookup (GateKey' e2) events
+                    case (e1ValueMay, e2ValueMay) of
+                      (Nothing, Nothing) -> Nothing
+                      (Just eValDyn, Nothing) -> Just eValDyn
+                      (Nothing, Just eValDyn) -> Just eValDyn
+                      (Just e1ValDyn, Just e2ValDyn) ->
+                        Just . toDyn $ merge (fromDyn' e1ValDyn) (fromDyn' e2ValDyn)
+                  GateSample f b e -> Right (do
+                      let bVal = fromDyn' (behaviorValues M.! GateKey' b)
+                      eventValueMay <- M.lookup (GateKey' e) events
+                      toDyn . f bVal . fromDyn' <$> eventValueMay)
+                  GateStepper e -> Right (join $ M.lookup (GateKey' e) events)
+                  GateLiftB1 f b ->
+                    Right. Just . toDyn . f . fromDyn' $
+                    behaviorValues M.! GateKey' b
+                  GateLiftB2 f b1 b2 ->
+                    Right. Just . toDyn $
+                    f
+                      (fromDyn' $ behaviorValues M.! GateKey' b1)
+                      (fromDyn' $ behaviorValues M.! GateKey' b2)
+          )
+      behaviorValues :: M.Map GateKey' Dynamic
+      behaviorValues =
+        M.mapMaybe id $ M.unionWith const behaviorUpdates (Just <$> circuitBehaviorValues circuit)
+  in ( Circuit
+       { circuitBehaviorValues = behaviorValues
+       , circuitGates = circuitGates circuit
+       , circuitGateKeysByInt = circuitGateKeysByInt circuit
+       }
+     , M.mapMaybe id behaviorUpdates
+     , M.mapMaybe id events)
+  where
+    fromDyn' :: Typeable a => Dynamic -> a
+    fromDyn' = flip fromDyn (error "Unexpected event type!")
+    accumulateAffectedGates :: S.Set GateKey' -> GateKey' -> S.Set GateKey'
+    accumulateAffectedGates visited gate
+      | S.member gate visited = visited
+      | otherwise =
+        foldl' accumulateAffectedGates (S.insert gate visited) (childGates circuit gate)
 
-buildCircuitB' ::
-     forall node a. Typeable a
-  => RefBehavior node a
-  -> State (Circuit node) (GateKey BehaviorGate a)
-buildCircuitB' (RefBehavior key behavior)
-  -- Check if the gate already exists
- = do
-  gateAlreadyCreated <- gets (\(Circuit _ gates) -> M.member key gates)
-  let gateKey = GateKey key
-  unless gateAlreadyCreated $
-    modify =<<
-    case behavior of
-      (Stepper initialValue childE) -> do
-        childKey <- buildCircuitE' childE
-        let gate = Gate [] (GateStepper childKey)
-        return (addBehaviorGate gateKey initialValue gate [GateKey' childKey])
-      -- TODO
-      (LiftB1 f childB) -> do
-        childKey <- buildCircuitB' childB
-        childInitialValue <- gets (behaviorValue childKey)
-        let gate = Gate [] (GateLiftB1 f childKey)
-        return
-          (addBehaviorGate
-             gateKey
-             (f childInitialValue)
-             gate
-             [GateKey' childKey])
-      (LiftB2 f childAB childBB) -> do
-        childAKey <- buildCircuitB' childAB
-        childBKey <- buildCircuitB' childBB
-        childAInitialValue <- gets (behaviorValue childAKey)
-        childBInitialValue <- gets (behaviorValue childBKey)
-        let gate = Gate [] (GateLiftB2 f childAKey childBKey)
-        return
-          (addBehaviorGate
-             gateKey
-             (f childAInitialValue childBInitialValue)
-             gate
-             [GateKey' childAKey, GateKey' childBKey])
-  return gateKey
+childGates :: Circuit node -> GateKey' -> [GateKey']
+childGates circuit key =
+  case circuitGates circuit M.! key of
+    Gate' (Gate children _) -> children
 
-buildCircuitE' ::
-     forall node a. Typeable a
-  => RefEvent node a
-  -> State (Circuit node) (GateKey EventGate a)
-buildCircuitE' (RefEvent key event) = do
-  gateAlreadyCreated <- gets (\(Circuit _ gates) -> M.member key gates)
-  let gateKey = GateKey key
-  unless gateAlreadyCreated $
-    modify =<<
-    case event of
-      (LocalE ownerProxy) -> error "TODO"
-      (LiftE x1 x2) -> undefined
-      (MergeE x1 x2 x3) -> undefined
-      (Sample x1 x2 x3) -> undefined
-  return gateKey
--}
-assertContainsGate :: GateKey gateType a -> CircuitBuilder nodes ()
+assertContainsGate ::
+     (GateValue a) => GateKey gateType a -> CircuitBuilder nodes ()
 assertContainsGate key =
   modify'
-    (\circuit@(Circuit _ gates) ->
-       if M.member (GateKey' key) gates
+    (\circuit@(Circuit _ gates gateKeys) ->
+       if M.member (GateKey' key) gates && M.member (gateKeyToInt key) gateKeys
          then circuit
          else error "Key is not part of the circuit.")
-{-
-type Handler a = a -> IO ()
 
-type AddHandler a = Handler a -> IO ()
+instance Show GateKey' where
+  show (GateKey' gk) = show gk
 
--- c -> current node
--- o -> owner node
--- a -> value type
-type family LocalInput (node :: nodes) (owner :: nodes) a where
-  LocalInput owner owner a = AddHandler a
-  LocalInput _ owner a = ()
-
-data PNEvent (ins :: nodes -> *) (outs :: nodes -> *) a
-  = forall (owner :: nodes) (node :: nodes). LocalE (Proxy owner)
-                                                   (ins node -> AddHandler a)
-  | forall b. LiftE (b -> a) (PNEvent ins outs b)
-  | MergeE (a -> a -> a) (PNBehavior ins outs a) (PNBehavior ins outs a)
-
--- PNBehavior inputAddHandlerCollection behavoirCollection ValueType
--- This is a description of a networked behavior
-data PNBehavior (ins :: nodes -> *) (outs :: nodes -> *) a
-  = forall b. LiftB1 (b -> a)
-                    (NBehavior ins outs b)
-  | forall b c. LiftB2 (b -> c -> a)
-                      (NBehavior ins outs b)
-                      (NBehavior ins outs c)
-
-newtype NBehavior (ins :: nodes -> *) (outs :: nodes -> *) a =
-  NBehavior (IORef (PNBehavior ins outs a))
-
-nBeh :: PNBehavior ins outs a -> IO (NBehavior ins outs a)
-nBeh pnbeh = NBehavior <$> newIORef pnbeh
-
-lift1 :: (a -> b) -> NBehavior ins outs a -> IO (NBehavior ins outs b)
-lift1 f ba = nBeh $ LiftB1 f ba
-
-lift2 ::
-     (a -> b -> c)
-  -> NBehavior ins outs a
-  -> NBehavior ins outs b
-  -> IO (NBehavior ins outs c)
-lift2 f ba bb = nBeh $ LiftB2 f ba bb
-
-data Behavior' =
-  forall a. Behavior' (Behavior a)
-
-newtype Behavior a =
-  Behavior (Node a)
-
-newtype BehaviorSink a =
-  BehaviorSink (Node a)
-
-data BehaviorSinkUpdate a =
-  BehaviorSinkUpdate (BehaviorSink a)
-                     a
-
-data BehaviorSinkUpdate' =
-  forall a. BehaviorSinkUpdate' (BehaviorSinkUpdate a)
-
-data Node a =
-  Node (IORef a) -- ^ value.
-       (IORef Bool) -- ^ is valid.
-       (IO a) -- ^ calculate the value.
-       [Behavior'] -- ^ parent behaviors.
-       [Behavior'] -- ^ child behaviors.
-       (IORef [a -> IO ()]) -- ^ listeners.
-
-data Node' =
-  forall a. Node' (Node a)
-
-addHandler :: Node a -> Handler a -> IO ()
-addHandler (Node _ _ _ _ _ lsR) handler = modifyIORef' lsR (handler :)
-
-fromLocalInput ::
-     forall (node :: nodes) (owner :: nodes) a (ins :: nodes -> *) (outs :: nodes -> *).
-     (ins node -> AddHandler a)
-  -> IO (NBehavior ins outs a)
-fromLocalInput addH = nBeh (Local (Proxy @owner) addH)
-
-getBeh :: Node a -> IO a
-getBeh (Node valueR isValidR calc _ _ _) = do
-  isValid <- readIORef isValidR
-  if isValid
-    then readIORef valueR
-    else do
-      newValue <- calc
-      writeIORef valueR newValue
-      writeIORef isValidR True
-      return newValue
-
--- Invalidate the node and its children.
--- returns newly invalidated nodes that have listeners
-invalidate :: Node' -> IO [Node']
-invalidate node@(Node' (Node _ isValidR _ _ cs lsR)) = do
-  isValid <- readIORef isValidR
-  if not isValid
-    then return []
-    else do
-      writeIORef isValidR False
-      ls <- readIORef lsR
-      childInvalidations <-
-        concat <$>
-        mapM (invalidate . (\(Behavior' (Behavior node)) -> Node' node)) cs
-      return $
-        if null ls
-          then childInvalidations
-          else node : childInvalidations
-
-transaction :: [BehaviorSinkUpdate'] -> IO ()
-transaction updates
-  -- Invalidate recursivelly with early termination. Keep track of nodes with listeners.
- = do
-  observedNodes <-
-    concat <$>
-    forM
-      updates
-      (\(BehaviorSinkUpdate' (BehaviorSinkUpdate behaviorSink newValue)) ->
-         setBeh behaviorSink newValue)
-  -- Update nodes with listeners and fire all listeners.
-  -- TODO without events an explicite update is not needed
-  forM_ observedNodes $ \(Node' node@(Node _ _ _ _ _ lsR)) -> do
-    ls <- readIORef lsR
-    val <- getBeh node
-    forM_ ls (\l -> l val)
-
--- Returns newly invalidated nodes.
-setBeh :: BehaviorSink a -> a -> IO [Node']
-setBeh (BehaviorSink node) newValue = do
-  let (Node valueR _ _ _ _ _) = node
-  observedNodesCurrent <- invalidate (Node' node)
-  writeIORef valueR newValue
-  return observedNodesCurrent
--}
+gateKey'ToInt :: GateKey' -> Int
+gateKey'ToInt (GateKey' gk) = gateKeyToInt gk
