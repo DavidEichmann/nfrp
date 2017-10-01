@@ -14,10 +14,14 @@ module Circuit.Actuate
   , Transaction(..)
   , actuate
   , applyTransaction
+  , encodeTransaction
+  , decodeTransaction
   ) where
 
 import Control.Concurrent (forkIO)
 import Control.Concurrent.Async (async, wait)
+import Data.Time
+import Data.Word
 import qualified Control.Concurrent.MVar as MV
 import Control.Monad (forM, forM_, unless)
 import qualified Data.ByteString as BS
@@ -35,7 +39,11 @@ import qualified Network.Socket.ByteString as NetBS
 
 import Circuit.Description
 
-type Time = Int -- Or long? or timestamp?
+type Time = Word64
+
+-- | returns time in microseconds
+timeFromDiffTime :: NominalDiffTime -> Time
+timeFromDiffTime t = round (t * 1000000)
 
 data ActuatedCircuitInternal node = ActuatedCircuitInternal
   { acListeners :: M.Map GateKey' [Dynamic]
@@ -108,13 +116,12 @@ actuate ::
   -> node -- ^ what node this is.
   -> Circuit node -- ^ The circuit to actuate
   -> [Listener] -- ^ Listeners the will be called whenever the freshest values (includes roll back values!?).
-  -> IO (Transaction -> IO (), IO ()) -- ^ (Returns the function to perform local transcations, close sockets)
+  -> IO ([GateUpdate] -> IO (), IO ()) -- ^ (Returns the function to perform local transcations, close sockets)
 actuate nodeAddresses ownerNode circuit listeners
   -- See http://www.linuxhowtos.org/C_C++/socket.htm for some networking help.
   -- Open socket
   -- TODO clock synchronization with other nodes
   -- TODO agree on start time? Start actuation on all nodes at the same time.
-  -- Create ActuatedCircuit
  = do
   actuatedCircuitInternalMVar <-
     MV.newMVar
@@ -137,11 +144,18 @@ actuate nodeAddresses ownerNode circuit listeners
   sequence_ .
     fmap forkIO . M.mapWithKey (listenForRemoteTransactions performTransaction) $
     sockets
-  -- |Listen for circuit transactions from the given node via the given socket.
+  -- Get start time
+  startTime <- getCurrentTime
+  -- Listen for circuit transactions from the given node via the given socket.
   return
-    ( (\transaction
-        -- perform the transaction.
+    ( (\gateUpdates
         -> do
+          -- TODO account for drift in different node's clocks
+          -- Get current time and time since start.
+          currentTime <- getCurrentTime
+          let (timeElapsed :: Time) = timeFromDiffTime (currentTime `diffUTCTime` startTime)
+          -- perform the transaction.
+          let transaction = Transaction timeElapsed gateUpdates
           performTransaction transaction
           -- broadcast the transaction.
           forM_ sockets $ \socket ->
@@ -159,7 +173,7 @@ actuate nodeAddresses ownerNode circuit listeners
           msg <- NetBS.recv socket recvBufferSize
           let connectionClosed = BS.null msg
           unless connectionClosed $ do
-            let transaction = decodeTransaction circuit msg
+            let transactionOrErr = decodeTransaction circuit msg
             either
               (\errorMsg -> do
                  putStrLn
@@ -168,7 +182,7 @@ actuate nodeAddresses ownerNode circuit listeners
                  putStr "Data: "
                  BS8.putStrLn msg)
               performTransaction
-              transaction
+              transactionOrErr
             loop
     -- |Connect to all other nodes. Returns a map from nodes (excluding ownerNode)
     -- to a Socket used to comunicate with the node.

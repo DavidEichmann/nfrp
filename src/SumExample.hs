@@ -8,6 +8,7 @@
 
 module SumExample where
 
+import Control.Monad.Trans.Class (lift)
 import Control.Exception (finally)
 import qualified Data.Map as M
 import Data.Serialize (Serialize)
@@ -23,64 +24,71 @@ data Node
   | Client
   deriving (Generic, Serialize, Show, Eq, Ord)
 
-newtype ServerInputs = ServerInputs
-  { serverIntAddHandler :: E Int
-  }
 
-newtype ClientInputs = ClientInputs
-  { clientIntAddHandler :: E Int
-  }
 
-data SumOuts = SumOuts
-  { soServerIntB :: B Int
-  , soClientIntB :: B Int
-  , soSumB :: B Int
-  }
 
-clientInputs :: ClientInputs
-serverInputs :: ServerInputs
-sumOuts :: SumOuts
+
+
+
+
 sumCircuit :: Circuit Node
-((clientInputs, serverInputs, sumOuts), sumCircuit) =
+serverIntESinkKey :: E Int
+clientIntESinkKey :: E Int
+serverIntBKey :: B Int
+clientIntBKey :: B Int
+sumBKey :: B Int
+((serverIntESinkKey, clientIntESinkKey, serverIntBKey, clientIntBKey, sumBKey), sumCircuit) =
   mkCircuit $
-    -- Define inputs
    do
-    clientInt <- localE Client
-    serverInt <- localE Server
-    serverIntB <- stepper 0 serverInt
-    clientIntB <- stepper 0 clientInt
+    -- Input Int change events for client and for server.
+    serverIntESink <- localE Server
+    clientIntESink <- localE Client
+    -- Convert to behaviors (initially set to 0).
+    serverIntB <- stepper 0 serverIntESink
+    clientIntB <- stepper 0 clientIntESink
+    -- Sum the server and client ints.
     sumB <- liftB2 (+) serverIntB clientIntB
-    -- return observations
+    -- return events and behaviors.
     return
-      ( ClientInputs clientInt
-      , ServerInputs serverInt
-      , SumOuts
-        {soServerIntB = serverIntB, soClientIntB = clientIntB, soSumB = sumB})
+      ( serverIntESink
+      , clientIntESink
+      , serverIntB
+      , clientIntB
+      , sumB)
+
+
+
+
+
+
+
+
 
 run :: M.Map Node Int -> Node -> IO ()
 run nodeAddresses ownerNode
   -- Initialize Gtk.
  = do
-  let (ownerIntB, remoteIntB) =
+  let (ownerIntEKey, ownerIntBKey, remoteIntBKey) =
         case ownerNode of
-          Server -> (soServerIntB sumOuts, soClientIntB sumOuts)
-          Client -> (soClientIntB sumOuts, soServerIntB sumOuts)
+          Server -> (serverIntESinkKey, serverIntBKey, clientIntBKey)
+          Client -> (clientIntESinkKey, clientIntBKey, serverIntBKey)
   _args <- Gtk.initGUI
   -- Create the window.
   window <- Gtk.windowNew
   Gtk.set window [Gtk.windowTitle := show ownerNode]
   Gtk.containerSetBorderWidth window 10
   Gtk.windowSetDefaultSize window 300 300
-  --_onDeleteWindowConnectId <-
-  --  Gtk.onDestroy
-  --    window
-  --    (\_ -> do
-  --       Gtk.mainQuit
-  --       return False)
+  _ <-
+    Gtk.on
+      window
+      Gtk.destroyEvent
+      (do
+         lift Gtk.mainQuit
+         return False)
   -- Vertical layout.
   box <- Gtk.vBoxNew True 0
   -- Create label
-  remoteIntLabel <- Gtk.labelNew @String Nothing
+  remoteIntLabel <- Gtk.labelNew (Just "remote value")
   Gtk.boxPackStart box remoteIntLabel Gtk.PackGrow 0
   Gtk.widgetShow remoteIntLabel
   -- Create the text entry.
@@ -102,8 +110,11 @@ run nodeAddresses ownerNode
       nodeAddresses
       ownerNode
       sumCircuit
-      [ Listener remoteIntB (Gtk.labelSetText remoteIntLabel . show)
-      , Listener (soSumB sumOuts) (Gtk.labelSetText sumIntLabel . show)
+      [ Listener remoteIntBKey (Gtk.labelSetText remoteIntLabel . show)
+      , Listener sumBKey (Gtk.labelSetText sumIntLabel . show)
+      -- , Listener ownerIntBKey (\ownerInt -> putStrLn $ "OwnerInt: " ++ show ownerInt)
+      -- , Listener remoteIntBKey (\remoteInt -> putStrLn $ "RemoteInt: " ++ show remoteInt)
+      -- , Listener (soSumB sumOuts) (\sumInt -> putStrLn $ "SumInt: " ++ show sumInt)
       ]
   -- Transaction hooks.
   entryBuffer <- Gtk.entryGetBuffer entry
@@ -112,8 +123,8 @@ run nodeAddresses ownerNode
       entryBuffer
       (Gtk.entryBufferInsertedText @Gtk.EntryBuffer @String)
       (\_ _ _ -> do
-         putStrLn "-"
-         text <- readDef 0 <$> Gtk.entryGetText entry
-         performTransaction (Transaction 0 [GateUpdate ownerIntB text]))
+        -- perform transaction.
+        localInt <- readDef 0 <$> Gtk.entryGetText entry
+        performTransaction [GateUpdate ownerIntEKey localInt])
   -- Start main loop.
   Gtk.mainGUI `finally` closeSockets

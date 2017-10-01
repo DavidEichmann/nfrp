@@ -314,7 +314,7 @@ applyUpdates circuit updates
                       (Nothing, Just eValDyn) -> Just eValDyn
                       (Just e1ValDyn, Just e2ValDyn) ->
                         Just . toDyn $ merge (fromDyn' e1ValDyn) (fromDyn' e2ValDyn)
-                  GateSample f b e -> Right (do
+                  GateSample f b e -> Left (do
                       let bVal = fromDyn' (behaviorValues M.! GateKey' b)
                       eventValueMay <- M.lookup (GateKey' e) events
                       toDyn . f bVal . fromDyn' <$> eventValueMay)
@@ -330,7 +330,7 @@ applyUpdates circuit updates
           )
       behaviorValues :: M.Map GateKey' Dynamic
       behaviorValues =
-        M.mapMaybe id $ M.unionWith const behaviorUpdates (Just <$> circuitBehaviorValues circuit)
+        M.unionWith const (M.mapMaybe id behaviorUpdates) (circuitBehaviorValues circuit)
   in ( Circuit
        { circuitBehaviorValues = behaviorValues
        , circuitGates = circuitGates circuit
