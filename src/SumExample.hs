@@ -22,7 +22,7 @@ import Lib
 data Node
   = Server
   | Client
-  deriving (Generic, Serialize, Show, Eq, Ord)
+  deriving (Generic, Serialize, Show, Eq, Ord, Bounded, Enum)
 
 
 

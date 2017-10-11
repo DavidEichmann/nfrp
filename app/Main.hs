@@ -8,15 +8,8 @@ import qualified Data.Map as M
 
 import SumExample
 
-defaultServerPort :: Int
-defaultServerPort = 10000
-
-defaultClientPort :: Int
-defaultClientPort = 10001
-
 nodeAddresses :: M.Map Node Int
-nodeAddresses =
-  M.fromList [(Client, defaultClientPort), (Server, defaultServerPort)]
+nodeAddresses = M.fromList (zip [minBound..maxBound] [10000..])
 
 main :: IO ()
 main

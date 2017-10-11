@@ -20,7 +20,7 @@ module Circuit.Actuate
 
 import Control.Concurrent (forkIO)
 import Control.Concurrent.Async (async, wait)
-import Data.Time
+import qualified Data.Time as Time
 import Data.Word
 import qualified Control.Concurrent.MVar as MV
 import Control.Monad (forM, forM_, unless)
@@ -42,8 +42,11 @@ import Circuit.Description
 type Time = Word64
 
 -- | returns time in microseconds
-timeFromDiffTime :: NominalDiffTime -> Time
-timeFromDiffTime t = round (t * 1000000)
+getElapsedTimeMicroS :: Time.UTCTime -> IO Time
+getElapsedTimeMicroS startTime = do
+  t <- Time.getCurrentTime
+  return (round ((t `Time.diffUTCTime` startTime) * 1000000))
+
 
 data ActuatedCircuitInternal node = ActuatedCircuitInternal
   { acListeners :: M.Map GateKey' [Dynamic]
@@ -145,15 +148,14 @@ actuate nodeAddresses ownerNode circuit listeners
     fmap forkIO . M.mapWithKey (listenForRemoteTransactions performTransaction) $
     sockets
   -- Get start time
-  startTime <- getCurrentTime
+  startTime <- Time.getCurrentTime
   -- Listen for circuit transactions from the given node via the given socket.
   return
     ( (\gateUpdates
         -> do
           -- TODO account for drift in different node's clocks
           -- Get current time and time since start.
-          currentTime <- getCurrentTime
-          let (timeElapsed :: Time) = timeFromDiffTime (currentTime `diffUTCTime` startTime)
+          timeElapsed <- getElapsedTimeMicroS startTime
           -- perform the transaction.
           let transaction = Transaction timeElapsed gateUpdates
           performTransaction transaction
