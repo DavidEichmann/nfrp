@@ -42,7 +42,6 @@ import Data.Dynamic
 import Data.Kind (Type)
 import Data.List (foldl')
 import qualified Data.Map as M
-import Data.Maybe (catMaybes)
 import Data.Serialize (Serialize)
 import qualified Data.Set as S
 import GHC.Generics

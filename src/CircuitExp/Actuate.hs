@@ -1,8 +1,6 @@
 {-# LANGUAGE ExistentialQuantification #-}
-{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE TypeInType #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -54,6 +52,7 @@ data ActuatedCircuitInternal node = ActuatedCircuitInternal
   --      then the history would be a single circuit description and many states. Unless the circuitry changes!!!!!! Thats future work
   , acHistory :: [(Transaction, Circuit node)] -- ^ update and result (most recent is at the head)
   , acInitialState :: Circuit node -- ^ initial state.
+  , acClockSync :: Time -> Time -- ^ A method to estimate the global time from the local time.
   }
 
 newtype ActuatedCircuit node =
@@ -109,9 +108,15 @@ recvBufferSize :: Int
 recvBufferSize = 4096
 
 acCurrentState :: ActuatedCircuitInternal node -> Circuit node
-acCurrentState (ActuatedCircuitInternal _ ((_, currentState):_) _) =
+acCurrentState (ActuatedCircuitInternal _ ((_, currentState):_) _ _) =
   currentState
-acCurrentState (ActuatedCircuitInternal _ [] currentState) = currentState
+acCurrentState (ActuatedCircuitInternal _ [] currentState _) = currentState
+
+data Connection = Connection
+  { connTcpSock :: Net.Socket
+  , connUdpSock :: Net.Socket
+  , connSockAddr :: Net.SockAddr
+  }
 
 actuate ::
      forall node. (Ord node, Serialize node, Show node)
@@ -121,11 +126,14 @@ actuate ::
   -> [Listener] -- ^ Listeners the will be called whenever the freshest values (includes roll back values!?).
   -> IO ([GateUpdate] -> IO (), IO ()) -- ^ (Returns the function to perform local transcations, close sockets)
 actuate nodeAddresses ownerNode circuit listeners
+  = do
   -- See http://www.linuxhowtos.org/C_C++/socket.htm for some networking help.
   -- Open socket
-  -- TODO clock synchronization with other nodes
   -- TODO agree on start time? Start actuation on all nodes at the same time.
- = do
+  -- Connect to other nodes.
+  sockets <- connect
+  -- initial actuated circuit
+  initialClockSync <- clockSyncOnce ownerNode sockets
   actuatedCircuitInternalMVar <-
     MV.newMVar
       ActuatedCircuitInternal
@@ -137,21 +145,27 @@ actuate nodeAddresses ownerNode circuit listeners
             ]
       , acHistory = []
       , acInitialState = circuit
+      , acClockSync = initialClockSync
       }
   let actuatedCircuit = ActuatedCircuit actuatedCircuitInternalMVar
-  -- Connect to other nodes.
-  sockets <- connect
+  -- Start clock sync thread
+  -- TODO this should not run indefinetly?
+  forkClockSync ownerNode actuatedCircuitInternalMVar
   -- Create the transaction function.
   let performTransaction = applyTransaction actuatedCircuit
   -- Start threads that listens to other nodes and injects transactions
-  sequence_ .
-    fmap forkIO . M.mapWithKey (listenForRemoteTransactions performTransaction) $
-    sockets
+  sequence_
+    . fmap forkIO
+    . M.mapWithKey (\remoteNode conn -> listenForRemoteTransactions
+                                            performTransaction
+                                            remoteNode
+                                            (connTcpSock conn))
+    $ sockets
   -- Get start time
   startTime <- Time.getCurrentTime
   -- Listen for circuit transactions from the given node via the given socket.
   return
-    ( (\gateUpdates
+    ( \gateUpdates
         -> do
           -- TODO account for drift in different node's clocks
           -- Get current time and time since start.
@@ -160,9 +174,9 @@ actuate nodeAddresses ownerNode circuit listeners
           let transaction = Transaction timeElapsed gateUpdates
           performTransaction transaction
           -- broadcast the transaction.
-          forM_ sockets $ \socket ->
-            NetBS.send socket (encodeTransaction transaction))
-    , mapM_ Net.close sockets
+          forM_ sockets $ \conn ->
+            NetBS.send (connTcpSock conn) (encodeTransaction transaction)
+    , mapM_ (Net.close . connTcpSock) sockets
     )
   where
     listenForRemoteTransactions ::
@@ -187,8 +201,8 @@ actuate nodeAddresses ownerNode circuit listeners
               transactionOrErr
             loop
     -- |Connect to all other nodes. Returns a map from nodes (excluding ownerNode)
-    -- to a Socket used to comunicate with the node.
-    connect :: IO (M.Map node Net.Socket)
+    -- to a Socket (TCP, UDP, SocketAddr) used to comunicate with the node.
+    connect :: IO (M.Map node Connection)
     connect = do
       putStrLn ("Actuating as a \"" ++ show ownerNode ++ "\" node.")
       let ownerPort = fromIntegral (nodeAddresses M.! ownerNode)
@@ -207,10 +221,11 @@ actuate nodeAddresses ownerNode circuit listeners
       greaterSocketsMapAssocsAsync <-
         async $
         forM [1 .. greaterNodesCount] $ \_
-        -- Accept connection.
          -> do
-          (remoteSocket, _remoteSocketAddr) <- Net.accept socket
-        -- Read remote node type
+           -- Accept connection.
+          (remoteSocket, remoteSocketAddr) <- Net.accept socket
+          remoteSocketUDP <- Net.socket Net.AF_INET Net.Datagram 0
+          -- Read remote node type
           (remoteNode :: node) <-
             either
               (\str ->
@@ -218,7 +233,14 @@ actuate nodeAddresses ownerNode circuit listeners
               id .
             decode <$>
             NetBS.recv remoteSocket recvBufferSize :: IO node
-          return (remoteNode, remoteSocket)
+          return
+            ( remoteNode
+            , Connection
+              { connTcpSock  = remoteSocket
+              , connUdpSock  = remoteSocketUDP
+              , connSockAddr = remoteSocketAddr
+              }
+            )
           -- Connect to all lesser nodes
       lesserSocketsMapAssocsAsyncs <-
         forM lesserNodes $ \remoteNode
@@ -230,11 +252,19 @@ actuate nodeAddresses ownerNode circuit listeners
                   Net.SockAddrInet
                     remotePort
                     (Net.tupleToHostAddress (127, 0, 0, 1))
-            remoteSocket <- Net.socket Net.AF_INET Net.Stream 0
+            remoteSocket    <- Net.socket Net.AF_INET Net.Stream   0
+            remoteSocketUDP <- Net.socket Net.AF_INET Net.Datagram 0
             Net.connect remoteSocket remoteSockAddr
             -- Send owner node type.
             _bytesSent <- NetBS.send remoteSocket (encode ownerNode)
-            return (remoteNode, remoteSocket)
+            return
+              ( remoteNode
+              , Connection
+                { connTcpSock  = remoteSocket
+                , connUdpSock  = remoteSocketUDP
+                , connSockAddr = remoteSockAddr
+                }
+              )
       -- Wait for connections to be established.
       greaterSocketsMapAssocs <- wait greaterSocketsMapAssocsAsync
       lesserSocketsMapAssocs <- mapM wait lesserSocketsMapAssocsAsyncs
@@ -286,4 +316,29 @@ applyTransaction (ActuatedCircuit aCircuitMV) transaction@(Transaction time upda
             { acListeners = acListeners actuatedCircuitInternal
             , acHistory = (transaction, newCircuit) : transactions
             , acInitialState = acInitialState actuatedCircuitInternal
+            , acClockSync = acClockSync actuatedCircuitInternal
             }
+
+
+data UdpMessage
+  = SNTPRequest
+  | SNTPResponse Time
+  deriving (Generic, Serialize, Show)
+
+clockSyncOnce
+  :: Bounded node
+  => node
+  -> M.Map node Connection
+  -> IO (Time -> Time)
+clockSyncOnce ownerNode sockets
+  | ownerNode == serverNode = return id
+  | otherwise = do
+    let
+    serverConn = sockets M.! serverNode
+    NetBS.sendTo
+    (connUdpSock serverConn)
+    encode
+  where
+    serverNode = minBound
+
+forkClockSync :: node -> M.Map node Connection
