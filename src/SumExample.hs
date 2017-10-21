@@ -8,6 +8,7 @@
 
 module SumExample where
 
+import qualified Network.Socket as Net
 import Control.Monad.Trans.Class (lift)
 import Control.Exception (finally)
 import qualified Data.Map as M
@@ -64,7 +65,7 @@ sumBKey :: B Int
 
 
 
-run :: M.Map Node Int -> Node -> IO ()
+run :: M.Map Node Net.SockAddr -> Node -> IO ()
 run nodeAddresses ownerNode
   -- Initialize Gtk.
  = do

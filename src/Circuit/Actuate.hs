@@ -116,7 +116,7 @@ data Connection = Connection
 
 actuate ::
      forall node. (Ord node, Bounded node, Serialize node, Show node)
-  => M.Map node Int -- ^ map from node to port number (TODO and IP address)
+  => M.Map node Net.SockAddr -- ^ map from node to address
   -> node -- ^ what node this is.
   -> Circuit node -- ^ The circuit to actuate
   -> [Listener] -- ^ Listeners the will be called whenever the freshest values (includes roll back values!?).
@@ -132,9 +132,7 @@ actuate nodeAddresses ownerNode circuit listeners
   socketUDP <- Net.socket Net.AF_INET Net.Datagram 0
   Net.bind
     socketUDP
-    (Net.SockAddrInet
-      (fromIntegral (nodeAddresses M.! ownerNode))
-      (Net.tupleToHostAddress (127, 0, 0, 1)))
+    (nodeAddresses M.! ownerNode)
   -- start clock sync
   when (ownerNode == minBound) (forkStartClockSyncServer socketUDP)
   forkRequestClockSync ownerNode socketUDP sockets
@@ -225,9 +223,7 @@ actuate nodeAddresses ownerNode circuit listeners
     connect :: IO (M.Map node Connection)
     connect = do
       putStrLn ("Actuating as a \"" ++ show ownerNode ++ "\" node.")
-      let ownerPort = fromIntegral (nodeAddresses M.! ownerNode)
-      let ownerSockAddr =
-            Net.SockAddrInet ownerPort (Net.tupleToHostAddress (127, 0, 0, 1))
+      let ownerSockAddr = nodeAddresses M.! ownerNode
       putStrLn $ "Opening TCP port: " ++ show ownerSockAddr
       socket <- Net.socket Net.AF_INET Net.Stream 0
       Net.bind socket ownerSockAddr
@@ -265,11 +261,7 @@ actuate nodeAddresses ownerNode circuit listeners
         -- Connect to remote node.
          ->
           async $ do
-            let remotePort = fromIntegral (nodeAddresses M.! remoteNode)
-            let remoteSockAddr =
-                  Net.SockAddrInet
-                    remotePort
-                    (Net.tupleToHostAddress (127, 0, 0, 1))
+            let remoteSockAddr = nodeAddresses M.! remoteNode
             remoteSocket    <- Net.socket Net.AF_INET Net.Stream   0
             Net.connect remoteSocket remoteSockAddr
             -- Send owner node type.

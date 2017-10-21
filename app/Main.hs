@@ -1,5 +1,6 @@
 module Main where
 
+import qualified Network.Socket as Net
 import Data.List (foldl')
 import System.Console.GetOpt
 import System.Environment (getArgs)
@@ -8,8 +9,10 @@ import qualified Data.Map as M
 
 import SumExample
 
-nodeAddresses :: M.Map Node Int
-nodeAddresses = M.fromList (zip [minBound..maxBound] [10000..])
+nodeAddresses :: M.Map Node Net.SockAddr
+nodeAddresses = M.fromList (zip
+  [minBound..maxBound]
+  [Net.SockAddrInet port (Net.tupleToHostAddress (127, 0, 0, 1)) | port <- [10000..]])
 
 main :: IO ()
 main
