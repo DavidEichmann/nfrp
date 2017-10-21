@@ -1,6 +1,5 @@
 module Main where
 
-import qualified Network.Socket as Net
 import Data.List (foldl')
 import System.Console.GetOpt
 import System.Environment (getArgs)
@@ -8,11 +7,6 @@ import System.Environment (getArgs)
 import qualified Data.Map as M
 
 import SumExample
-
-defaultNodeAddresses :: M.Map Node Net.SockAddr
-defaultNodeAddresses = M.fromList (zip
-  [minBound..maxBound]
-  [Net.SockAddrInet port (Net.tupleToHostAddress (127, 0, 0, 1)) | port <- [10000..]])
 
 main :: IO ()
 main
@@ -24,15 +18,12 @@ main
         = case mode of
           ClientMode -> (Server, Client)
           ServerMode -> (Client, Server)
-  let Net.SockAddrInet remotePort _ = defaultNodeAddresses M.! remote
-  remoteAddrInfo : _ <- Net.getAddrInfo
-    Nothing
-    (Just remoteHostName)
-    (Just (show remotePort))
-  let nodeAddresses
-        = M.insert remote (Net.addrAddress remoteAddrInfo) defaultNodeAddresses
-  print nodeAddresses
-  run nodeAddresses owner
+  let nodeHostNames = M.fromList
+        [ (remote, remoteHostName)
+        , (owner, "localhost")
+        ]
+  print nodeHostNames
+  run nodeHostNames owner
 
 data Options = Options
   { optionsMode :: Mode

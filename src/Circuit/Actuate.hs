@@ -19,6 +19,7 @@ module Circuit.Actuate
   , applyTransaction
   , encodeTransaction
   , decodeTransaction
+  , nfrpPort
   ) where
 
 import Control.Concurrent (forkIO, threadDelay)
@@ -41,6 +42,9 @@ import qualified Network.Socket.ByteString as NetBS
 import GHC.Generics
 
 import Circuit.Description hiding (sample)
+
+nfrpPort :: Int
+nfrpPort = 23789
 
 data ActuatedCircuitInternal node = ActuatedCircuitInternal
   { acListeners :: M.Map GateKey' [Dynamic]
@@ -116,12 +120,12 @@ data Connection = Connection
 
 actuate ::
      forall node. (Ord node, Bounded node, Serialize node, Show node)
-  => M.Map node Net.SockAddr -- ^ map from node to address
+  => M.Map node Net.HostName -- ^ map from node to address info
   -> node -- ^ what node this is.
   -> Circuit node -- ^ The circuit to actuate
   -> [Listener] -- ^ Listeners the will be called whenever the freshest values (includes roll back values!?).
   -> IO ([GateUpdate] -> IO (), IO ()) -- ^ (Returns the function to perform local transcations, close sockets)
-actuate nodeAddresses ownerNode circuit listeners
+actuate hostNames ownerNode circuit listeners
   = do
   -- See http://www.linuxhowtos.org/C_C++/socket.htm for some networking help.
   -- Open socket
@@ -129,10 +133,12 @@ actuate nodeAddresses ownerNode circuit listeners
   -- Connect to other nodes.
   sockets <- connect
   -- Open UDP socket
-  socketUDP <- Net.socket Net.AF_INET Net.Datagram 0
-  Net.bind
-    socketUDP
-    (nodeAddresses M.! ownerNode)
+  udpPortInfo <- head <$> Net.getAddrInfo
+          (Just (Net.defaultHints { Net.addrFlags = [Net.AI_PASSIVE] }))
+          Nothing
+          (Just (show nfrpPort))
+  socketUDP <- Net.socket (Net.addrFamily udpPortInfo) Net.Datagram 0
+  Net.bind socketUDP (Net.addrAddress udpPortInfo)
   -- start clock sync
   when (ownerNode == minBound) (forkStartClockSyncServer socketUDP)
   forkRequestClockSync ownerNode socketUDP sockets
@@ -223,16 +229,19 @@ actuate nodeAddresses ownerNode circuit listeners
     connect :: IO (M.Map node Connection)
     connect = do
       putStrLn ("Actuating as a \"" ++ show ownerNode ++ "\" node.")
-      let ownerSockAddr = nodeAddresses M.! ownerNode
-      putStrLn $ "Opening TCP port: " ++ show ownerSockAddr
-      socket <- Net.socket Net.AF_INET Net.Stream 0
-      Net.bind socket ownerSockAddr
+      serverAddrInfo <- head <$> Net.getAddrInfo
+              (Just (Net.defaultHints { Net.addrFlags = [Net.AI_PASSIVE] }))
+              Nothing
+              (Just (show nfrpPort))
+      putStrLn $ "Opening TCP port: " ++ show (Net.addrAddress serverAddrInfo)
+      socket <- Net.socket (Net.addrFamily serverAddrInfo) Net.Stream 0
+      Net.bind socket (Net.addrAddress serverAddrInfo)
       Net.listen socket 5
       -- Accept connection to designated socket from greater nodes.
       putStrLn "Connecting to remote nodes..."
       let (lesserNodes, greaterNodes) =
             partition (< ownerNode) . filter (/= ownerNode) $
-            M.keys nodeAddresses
+            M.keys hostNames
       let greaterNodesCount = length greaterNodes
       greaterSocketsMapAssocsAsync <-
         async $
@@ -255,14 +264,19 @@ actuate nodeAddresses ownerNode circuit listeners
               , connSockAddr = remoteSocketAddr
               }
             )
-          -- Connect to all lesser nodes
+      -- Connect to all lesser nodes
       lesserSocketsMapAssocsAsyncs <-
         forM lesserNodes $ \remoteNode
         -- Connect to remote node.
          ->
           async $ do
-            let remoteSockAddr = nodeAddresses M.! remoteNode
-            remoteSocket <- Net.socket Net.AF_INET Net.Stream 0
+            remoteAddrInfo <- head <$> Net.getAddrInfo
+                  Nothing
+                  (Just (hostNames M.! remoteNode))
+                  (Just (show nfrpPort))
+            let remoteSockAddr = Net.addrAddress remoteAddrInfo
+            putStrLn $ "connecting to: " ++ show remoteSockAddr
+            remoteSocket <- Net.socket (Net.addrFamily remoteAddrInfo) Net.Stream 0
             Net.connect remoteSocket remoteSockAddr
             -- Send owner node type.
             _bytesSent <- NetBS.send remoteSocket (encode ownerNode)

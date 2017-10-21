@@ -65,8 +65,8 @@ sumBKey :: B Int
 
 
 
-run :: M.Map Node Net.SockAddr -> Node -> IO ()
-run nodeAddresses ownerNode
+run :: M.Map Node Net.HostName -> Node -> IO ()
+run hostNames ownerNode
   -- Initialize Gtk.
  = do
   let (ownerIntEKey, ownerIntBKey, remoteIntBKey) =
@@ -108,7 +108,7 @@ run nodeAddresses ownerNode
   -- Actuate the FRP circuit
   (performTransaction, closeSockets) <-
     actuate
-      nodeAddresses
+      hostNames
       ownerNode
       sumCircuit
       [ Listener remoteIntBKey (Gtk.labelSetText remoteIntLabel . show)
