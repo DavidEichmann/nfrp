@@ -262,7 +262,7 @@ actuate nodeAddresses ownerNode circuit listeners
          ->
           async $ do
             let remoteSockAddr = nodeAddresses M.! remoteNode
-            remoteSocket    <- Net.socket Net.AF_INET Net.Stream   0
+            remoteSocket <- Net.socket Net.AF_INET Net.Stream 0
             Net.connect remoteSocket remoteSockAddr
             -- Send owner node type.
             _bytesSent <- NetBS.send remoteSocket (encode ownerNode)

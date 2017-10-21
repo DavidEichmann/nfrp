@@ -9,8 +9,8 @@ import qualified Data.Map as M
 
 import SumExample
 
-nodeAddresses :: M.Map Node Net.SockAddr
-nodeAddresses = M.fromList (zip
+defaultNodeAddresses :: M.Map Node Net.SockAddr
+defaultNodeAddresses = M.fromList (zip
   [minBound..maxBound]
   [Net.SockAddrInet port (Net.tupleToHostAddress (127, 0, 0, 1)) | port <- [10000..]])
 
@@ -18,10 +18,21 @@ main :: IO ()
 main
   -- Args
  = do
-  (Options mode, []) <- argsToOpts =<< getArgs
-  case mode of
-    ClientMode -> run nodeAddresses Client
-    ServerMode -> run nodeAddresses Server
+  remoteHostName : args <- getArgs
+  (Options mode, []) <- argsToOpts args
+  let (remote, owner)
+        = case mode of
+          ClientMode -> (Server, Client)
+          ServerMode -> (Client, Server)
+  let Net.SockAddrInet remotePort _ = defaultNodeAddresses M.! remote
+  remoteAddrInfo : _ <- Net.getAddrInfo
+    Nothing
+    (Just remoteHostName)
+    (Just (show remotePort))
+  let nodeAddresses
+        = M.insert remote (Net.addrAddress remoteAddrInfo) defaultNodeAddresses
+  print nodeAddresses
+  run nodeAddresses owner
 
 data Options = Options
   { optionsMode :: Mode
