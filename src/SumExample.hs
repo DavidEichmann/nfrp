@@ -64,8 +64,8 @@ sumBKey :: B Int
 
 
 
-
-run :: M.Map Node Net.HostName -> Node -> IO ()
+ TODO accept port (I changed the type already)
+run :: M.Map Node (Net.HostName, Int) -> Node -> IO ()
 run hostNames ownerNode
   -- Initialize Gtk.
  = do

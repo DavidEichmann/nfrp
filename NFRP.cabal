@@ -40,6 +40,8 @@ executable Main
   ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
   build-depends:       base
                      , containers >= 0.5.9
+                     , async
+                     , regex
                      , network
                      , NFRP
                      , safe
