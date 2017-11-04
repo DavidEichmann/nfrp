@@ -19,13 +19,14 @@ module Circuit.Actuate
   , applyTransaction
   , encodeTransaction
   , decodeTransaction
-  , nfrpPort
+  , baseNfrpPort
   ) where
 
 import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.Async (async, wait)
 import qualified Data.Time as Time
 import qualified Control.Concurrent.STM as STM
+import Control.Exception (IOException, catch)
 import Control.Monad (forM, forM_, when, unless, forever, void, join)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
@@ -43,8 +44,8 @@ import GHC.Generics
 
 import Circuit.Description hiding (sample)
 
-nfrpPort :: Int
-nfrpPort = 23789
+baseNfrpPort :: Int
+baseNfrpPort = 23789
 
 data ActuatedCircuitInternal node = ActuatedCircuitInternal
   { acListeners :: M.Map GateKey' [Dynamic]
@@ -120,12 +121,12 @@ data Connection = Connection
 
 actuate ::
      forall node. (Ord node, Bounded node, Serialize node, Show node)
-  => M.Map node Net.HostName -- ^ map from node to address info
+  => M.Map node (Net.HostName, Int) -- ^ map from node to address info
   -> node -- ^ what node this is.
   -> Circuit node -- ^ The circuit to actuate
   -> [Listener] -- ^ Listeners the will be called whenever the freshest values (includes roll back values!?).
   -> IO ([GateUpdate] -> IO (), IO ()) -- ^ (Returns the function to perform local transcations, close sockets)
-actuate hostNames ownerNode circuit listeners
+actuate hostNamesAndPorts ownerNode circuit listeners
   = do
   -- See http://www.linuxhowtos.org/C_C++/socket.htm for some networking help.
   -- Open socket
@@ -136,7 +137,7 @@ actuate hostNames ownerNode circuit listeners
   udpPortInfo <- head <$> Net.getAddrInfo
           (Just (Net.defaultHints { Net.addrFlags = [Net.AI_PASSIVE] }))
           Nothing
-          (Just (show nfrpPort))
+          (Just (show ownerNodePort))
   socketUDP <- Net.socket (Net.addrFamily udpPortInfo) Net.Datagram 0
   Net.bind socketUDP (Net.addrAddress udpPortInfo)
   -- start clock sync
@@ -203,6 +204,8 @@ actuate hostNames ownerNode circuit listeners
     , mapM_ (Net.close . connTcpSock) sockets
     )
   where
+    (_, ownerNodePort) = hostNamesAndPorts M.! ownerNode
+
     listenForRemoteTransactions ::
          (Transaction -> IO ()) -> node -> Net.Socket -> IO ()
     listenForRemoteTransactions performTransaction node socket = loop
@@ -232,7 +235,7 @@ actuate hostNames ownerNode circuit listeners
       serverAddrInfo <- head <$> Net.getAddrInfo
               (Just (Net.defaultHints { Net.addrFlags = [Net.AI_PASSIVE] }))
               Nothing
-              (Just (show nfrpPort))
+              (Just (show ownerNodePort))
       putStrLn $ "Opening TCP port: " ++ show (Net.addrAddress serverAddrInfo)
       socket <- Net.socket (Net.addrFamily serverAddrInfo) Net.Stream 0
       Net.bind socket (Net.addrAddress serverAddrInfo)
@@ -241,7 +244,7 @@ actuate hostNames ownerNode circuit listeners
       putStrLn "Connecting to remote nodes..."
       let (lesserNodes, greaterNodes) =
             partition (< ownerNode) . filter (/= ownerNode) $
-            M.keys hostNames
+            M.keys hostNamesAndPorts
       let greaterNodesCount = length greaterNodes
       greaterSocketsMapAssocsAsync <-
         async $
@@ -270,14 +273,25 @@ actuate hostNames ownerNode circuit listeners
         -- Connect to remote node.
          ->
           async $ do
+            let (remoteHostName, remotPort) = hostNamesAndPorts M.! remoteNode
             remoteAddrInfo <- head <$> Net.getAddrInfo
                   Nothing
-                  (Just (hostNames M.! remoteNode))
-                  (Just (show nfrpPort))
+                  (Just remoteHostName)
+                  (Just (show remotPort))
             let remoteSockAddr = Net.addrAddress remoteAddrInfo
             putStrLn $ "connecting to: " ++ show remoteSockAddr
             remoteSocket <- Net.socket (Net.addrFamily remoteAddrInfo) Net.Stream 0
-            Net.connect remoteSocket remoteSockAddr
+            -- Connect (with retry)
+            let retryWait = 500000
+                tryConnect :: IO ()
+                tryConnect =
+                  catch
+                    (Net.connect remoteSocket remoteSockAddr)
+                    (\(_ :: IOException) -> do
+                      threadDelay retryWait
+                      tryConnect
+                    )
+            tryConnect
             -- Send owner node type.
             _bytesSent <- NetBS.send remoteSocket (encode ownerNode)
             return
@@ -403,12 +417,12 @@ recvClockSyncOnce udpSocket = do
     estimatedTransmitionDelay = pingTime / 2
     estimatedTime = estimatedTransmitionDelay `Time.addUTCTime` serverRecvTime
   -- Debug output
-  let
-    pingMs = (realToFrac pingTime :: Double) * 1000
-    offsetMs = (realToFrac (estimatedTime `Time.diffUTCTime` clientRecvTime) :: Double) * 1000
-  putStrLn $ "Clock Sync received."
-           ++ "\n\tPing:   " ++ show pingMs
-           ++ "\n\tOffset: " ++ show offsetMs
+  -- let
+  --   pingMs = (realToFrac pingTime :: Double) * 1000
+  --   offsetMs = (realToFrac (estimatedTime `Time.diffUTCTime` clientRecvTime) :: Double) * 1000
+  -- putStrLn $ "Clock Sync received."
+  --          ++ "\n\tPing:   " ++ show pingMs
+  --          ++ "\n\tOffset: " ++ show offsetMs
   return (clientRecvTime, estimatedTime)
 
 forkRecvClockSync
