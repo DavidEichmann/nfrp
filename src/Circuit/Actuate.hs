@@ -7,7 +7,6 @@
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Module to actuate a circuit description
@@ -24,10 +23,10 @@ module Circuit.Actuate
 
 import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.Async (async, wait)
-import qualified Data.Time as Time
 import qualified Control.Concurrent.STM as STM
 import Control.Exception (IOException, catch)
-import Control.Monad (forM, forM_, when, unless, forever, void, join)
+import Control.Monad
+       (forM, forM_, forever, join, unless, void, when)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
 import Data.Dynamic
@@ -38,9 +37,11 @@ import Data.Maybe (fromMaybe)
 import Data.Serialize
        (Get, Result(..), Serialize(..), decode, encode, runGetPartial,
         runPut)
+import qualified Data.Set as S
+import qualified Data.Time as Time
+import GHC.Generics
 import qualified Network.Socket as Net
 import qualified Network.Socket.ByteString as NetBS
-import GHC.Generics
 
 import Circuit.Description hiding (sample)
 
@@ -51,7 +52,7 @@ data ActuatedCircuitInternal node = ActuatedCircuitInternal
   { acListeners :: M.Map GateKey' [Dynamic]
   -- TODO could separate out the circuit state (M.Map GateKey' Dynamic) from the circuit description (M.Map GateKey' (Gate' node))
   --      then the history would be a single circuit description and many states. Unless the circuitry changes!!!!!! Thats future work
-  , acHistory :: [(Transaction, Circuit node)] -- ^ update and result (most recent is at the head)
+  , acHistory :: [(Transaction, Circuit node, S.Set GateKey')] -- ^ (update, result, changed gates) (most recent is at the head)
   , acInitialState :: Circuit node -- ^ initial state.
   , acTimeEstimator :: TimeEstimator -- ^ A method to estimate the server time from the local time.
   , acDoOnListenersThread :: IO () -> STM.STM ()
@@ -61,9 +62,14 @@ newtype ActuatedCircuit node =
   ActuatedCircuit (STM.TVar (ActuatedCircuitInternal node))
 
 data Listener =
-  forall a gateType. (GateValue a) =>
-                     Listener (GateKey gateType a)
-                              (a -> IO ())
+  forall a. (GateValue a
+                     -- A listener that is called whenever the underlying value has changed.
+                     -- On rollback, this will be called with the newest value if any of the
+                     -- rolled back transaction or the new transactions affected the
+                     -- underlying behavior.
+             ) =>
+            Setter (GateKey 'BehaviorGate a)
+                   (a -> IO ())
 
 data Transaction =
   Transaction Time.UTCTime
@@ -110,7 +116,7 @@ recvBufferSize :: Int
 recvBufferSize = 4096
 
 acCurrentState :: ActuatedCircuitInternal node -> Circuit node
-acCurrentState (ActuatedCircuitInternal _ ((_, currentState):_) _ _ _) =
+acCurrentState (ActuatedCircuitInternal _ ((_, currentState, _):_) _ _ _) =
   currentState
 acCurrentState (ActuatedCircuitInternal _ [] currentState _ _) = currentState
 
@@ -127,17 +133,19 @@ actuate ::
   -> [Listener] -- ^ Listeners the will be called whenever the freshest values (includes roll back values!?).
   -> IO ([GateUpdate] -> IO (), IO ()) -- ^ (Returns the function to perform local transcations, close sockets)
 actuate hostNamesAndPorts ownerNode circuit listeners
-  = do
   -- See http://www.linuxhowtos.org/C_C++/socket.htm for some networking help.
   -- Open socket
   -- TODO agree on start time? Start actuation on all nodes at the same time.
   -- Connect to other nodes.
+ = do
   sockets <- connect
   -- Open UDP socket
-  udpPortInfo <- head <$> Net.getAddrInfo
-          (Just (Net.defaultHints { Net.addrFlags = [Net.AI_PASSIVE] }))
-          Nothing
-          (Just (show ownerNodePort))
+  udpPortInfo <-
+    head <$>
+    Net.getAddrInfo
+      (Just (Net.defaultHints {Net.addrFlags = [Net.AI_PASSIVE]}))
+      Nothing
+      (Just (show ownerNodePort))
   socketUDP <- Net.socket (Net.addrFamily udpPortInfo) Net.Datagram 0
   Net.bind socketUDP (Net.addrAddress udpPortInfo)
   -- start clock sync
@@ -145,19 +153,20 @@ actuate hostNamesAndPorts ownerNode circuit listeners
   forkRequestClockSync ownerNode socketUDP sockets
   initialTimeEstimator <- timeEstimator <$> clockSyncOnce ownerNode socketUDP
   -- initial actuated circuit
-  doOnListenersThread <- do
-    chan <- STM.newTChanIO
+  doOnListenersThread <-
+    do chan <- STM.newTChanIO
     -- Start listener thread
-    void . forkIO . forever . join . STM.atomically . STM.readTChan $ chan
-    return (STM.writeTChan chan)
+       void . forkIO . forever . join . STM.atomically . STM.readTChan $ chan
+       return (STM.writeTChan chan)
   actuatedCircuitInternalMVar <-
-    STM.atomically $ STM.newTVar
+    STM.atomically $
+    STM.newTVar
       ActuatedCircuitInternal
       { acListeners =
           M.fromListWith
             (++)
             [ (GateKey' key, [toDyn callback])
-            | Listener key callback <- listeners
+            | Setter key callback <- listeners
             ]
       , acHistory = []
       , acInitialState = circuit
@@ -170,42 +179,40 @@ actuate hostNamesAndPorts ownerNode circuit listeners
   -- Create the transaction function.
   let performTransaction = applyTransaction actuatedCircuit
   -- Start threads that listens to other nodes and injects transactions
-  sequence_
-    . fmap forkIO
-    . M.mapWithKey (\remoteNode conn -> listenForRemoteTransactions
-                                            (STM.atomically . performTransaction)
-                                            remoteNode
-                                            (connTcpSock conn))
-    $ sockets
+  sequence_ .
+    fmap forkIO .
+    M.mapWithKey
+      (\remoteNode conn ->
+         listenForRemoteTransactions
+           (STM.atomically . performTransaction)
+           remoteNode
+           (connTcpSock conn)) $
+    sockets
   -- Listen for circuit transactions from the given node via the given socket.
   return
     ( \gateUpdates
-        -> do
           -- Get current time.
-          localTime <- Time.getCurrentTime
-          transaction <- STM.atomically $ do
+       -> do
+        localTime <- Time.getCurrentTime
+        transaction <-
+          STM.atomically $ do
             acCircuit <- STM.readTVar actuatedCircuitInternalMVar
             -- Get the estimated server time.
-            let (estimatedTime, newTimeEstimator)
-                  = estimateTime
-                    (acTimeEstimator acCircuit)
-                    localTime
+            let (estimatedTime, newTimeEstimator) =
+                  estimateTime (acTimeEstimator acCircuit) localTime
             -- perform the transaction.
-            STM.writeTVar actuatedCircuitInternalMVar acCircuit {
-              acTimeEstimator = newTimeEstimator
-            }
+            STM.writeTVar
+              actuatedCircuitInternalMVar
+              acCircuit {acTimeEstimator = newTimeEstimator}
             let transaction = Transaction estimatedTime gateUpdates
             performTransaction transaction
             return transaction
           -- broadcast the transaction.
-          forM_ sockets $ \conn ->
-            NetBS.send (connTcpSock conn) (encodeTransaction transaction)
-
-    , mapM_ (Net.close . connTcpSock) sockets
-    )
+        forM_ sockets $ \conn ->
+          NetBS.send (connTcpSock conn) (encodeTransaction transaction)
+    , mapM_ (Net.close . connTcpSock) sockets)
   where
     (_, ownerNodePort) = hostNamesAndPorts M.! ownerNode
-
     listenForRemoteTransactions ::
          (Transaction -> IO ()) -> node -> Net.Socket -> IO ()
     listenForRemoteTransactions performTransaction node socket = loop
@@ -232,10 +239,12 @@ actuate hostNamesAndPorts ownerNode circuit listeners
     connect :: IO (M.Map node Connection)
     connect = do
       putStrLn ("Actuating as a \"" ++ show ownerNode ++ "\" node.")
-      serverAddrInfo <- head <$> Net.getAddrInfo
-              (Just (Net.defaultHints { Net.addrFlags = [Net.AI_PASSIVE] }))
-              Nothing
-              (Just (show ownerNodePort))
+      serverAddrInfo <-
+        head <$>
+        Net.getAddrInfo
+          (Just (Net.defaultHints {Net.addrFlags = [Net.AI_PASSIVE]}))
+          Nothing
+          (Just (show ownerNodePort))
       putStrLn $ "Opening TCP port: " ++ show (Net.addrAddress serverAddrInfo)
       socket <- Net.socket (Net.addrFamily serverAddrInfo) Net.Stream 0
       Net.bind socket (Net.addrAddress serverAddrInfo)
@@ -249,8 +258,8 @@ actuate hostNamesAndPorts ownerNode circuit listeners
       greaterSocketsMapAssocsAsync <-
         async $
         forM [1 .. greaterNodesCount] $ \_
-         -> do
            -- Accept connection.
+         -> do
           (remoteSocket, remoteSocketAddr) <- Net.accept socket
           -- Read remote node type
           (remoteNode :: node) <-
@@ -263,10 +272,7 @@ actuate hostNamesAndPorts ownerNode circuit listeners
           return
             ( remoteNode
             , Connection
-              { connTcpSock  = remoteSocket
-              , connSockAddr = remoteSocketAddr
-              }
-            )
+              {connTcpSock = remoteSocket, connSockAddr = remoteSocketAddr})
       -- Connect to all lesser nodes
       lesserSocketsMapAssocsAsyncs <-
         forM lesserNodes $ \remoteNode
@@ -274,13 +280,16 @@ actuate hostNamesAndPorts ownerNode circuit listeners
          ->
           async $ do
             let (remoteHostName, remotPort) = hostNamesAndPorts M.! remoteNode
-            remoteAddrInfo <- head <$> Net.getAddrInfo
-                  Nothing
-                  (Just remoteHostName)
-                  (Just (show remotPort))
+            remoteAddrInfo <-
+              head <$>
+              Net.getAddrInfo
+                Nothing
+                (Just remoteHostName)
+                (Just (show remotPort))
             let remoteSockAddr = Net.addrAddress remoteAddrInfo
             putStrLn $ "connecting to: " ++ show remoteSockAddr
-            remoteSocket <- Net.socket (Net.addrFamily remoteAddrInfo) Net.Stream 0
+            remoteSocket <-
+              Net.socket (Net.addrFamily remoteAddrInfo) Net.Stream 0
             -- Connect (with retry)
             let retryWait = 500000
                 tryConnect :: IO ()
@@ -288,19 +297,15 @@ actuate hostNamesAndPorts ownerNode circuit listeners
                   catch
                     (Net.connect remoteSocket remoteSockAddr)
                     (\(_ :: IOException) -> do
-                      threadDelay retryWait
-                      tryConnect
-                    )
+                       threadDelay retryWait
+                       tryConnect)
             tryConnect
             -- Send owner node type.
             _bytesSent <- NetBS.send remoteSocket (encode ownerNode)
             return
               ( remoteNode
               , Connection
-                { connTcpSock  = remoteSocket
-                , connSockAddr = remoteSockAddr
-                }
-              )
+                {connTcpSock = remoteSocket, connSockAddr = remoteSockAddr})
       -- Wait for connections to be established.
       greaterSocketsMapAssocs <- wait greaterSocketsMapAssocsAsync
       lesserSocketsMapAssocs <- mapM wait lesserSocketsMapAssocsAsyncs
@@ -311,7 +316,8 @@ actuate hostNamesAndPorts ownerNode circuit listeners
 
 -- |Apply the transaction (with possible rollback and replay), updating the internal
 -- state and calling listeners.
-applyTransaction :: forall node. ActuatedCircuit node -> Transaction -> STM.STM ()
+applyTransaction ::
+     forall node. ActuatedCircuit node -> Transaction -> STM.STM ()
 applyTransaction (ActuatedCircuit aCircuitMV) transaction@(Transaction time updates) = do
   newCircuit <- applyTransaction' =<< STM.readTVar aCircuitMV
   STM.writeTVar aCircuitMV newCircuit
@@ -323,13 +329,24 @@ applyTransaction (ActuatedCircuit aCircuitMV) transaction@(Transaction time upda
       let latestTimeMay =
             case transactions of
               [] -> Nothing
-              (Transaction t _, _):_ -> Just t
+              (Transaction t _, _, _):_ -> Just t
       case fromMaybe GT (compare time <$> latestTimeMay) of
-        LT -> error "TODO roll back and replay circuit."
         EQ ->
           error $
           "TODO Cannot currently apply multiple transactions at the same time." ++
           "Need a way to resolve order that is unambiguous accross nodes."
+        LT
+           -- Rolling back and recreating the circuit state is realtivelly simple,
+           -- but how to correctly call the listeners is more a more complicated issue.
+           -- In general listeners may have done some IO that needs to be undone,
+           -- e.g. started playing a sound file, which should be cancelled with the
+           -- current roll back. It should be up to the listener to decide how best
+           -- to performe the rollback. For the time being, we assume that no
+           -- rollback is required, i.e. listeners will always be called with the
+           -- latest value (if cahnged) exactly once per transaction even if a
+           -- rollback occured.
+         -> do
+          error "TODO roll back and replay circuit."
         GT
           -- Get the next cifcuit state.
          -> do
@@ -348,38 +365,46 @@ applyTransaction (ActuatedCircuit aCircuitMV) transaction@(Transaction time upda
           acDoOnListenersThread actuatedCircuitInternal $ do
             callListeners behaviorUpdates
             callListeners events
+          let affectedGates =
+                M.keysSet behaviorUpdates `S.union` M.keysSet events
           -- Define the new states by setting the affected states
           return
             ActuatedCircuitInternal
             { acListeners = acListeners actuatedCircuitInternal
-            , acHistory = (transaction, newCircuit) : transactions
+            , acHistory =
+                (transaction, newCircuit, affectedGates) : transactions
             , acInitialState = acInitialState actuatedCircuitInternal
             , acTimeEstimator = acTimeEstimator actuatedCircuitInternal
-            , acDoOnListenersThread = acDoOnListenersThread actuatedCircuitInternal
+            , acDoOnListenersThread =
+                acDoOnListenersThread actuatedCircuitInternal
             }
 
-
 deriving instance Generic Time.Day
+
 instance Serialize Time.Day
+
 instance Serialize Time.DiffTime where
   put = put . Time.diffTimeToPicoseconds
   get = Time.picosecondsToDiffTime <$> get
+
 deriving instance Generic Time.UTCTime
+
 instance Serialize Time.UTCTime
 
 data UdpMessage
   = SNTPRequest Time.UTCTime
-  | SNTPResponse Time.UTCTime Time.UTCTime
+  | SNTPResponse Time.UTCTime
+                 Time.UTCTime
   deriving (Generic, Serialize, Show)
 
 clockSyncIntervalMicroS :: Int
 clockSyncIntervalMicroS = 1000000
 
-forkStartClockSyncServer
-  :: Net.Socket
-  -> IO ()
-forkStartClockSyncServer udpSocket = void . forkIO . forever $ do
+forkStartClockSyncServer :: Net.Socket -> IO ()
+forkStartClockSyncServer udpSocket =
+  void . forkIO . forever $
     -- Listen and respond to SNTPRequests.
+   do
     (recvStr, clientSockAddr) <- NetBS.recvFrom udpSocket recvBufferSize
     -- Note the receive time.
     serverRecvTime <- Time.getCurrentTime
@@ -389,8 +414,8 @@ forkStartClockSyncServer udpSocket = void . forkIO . forever $ do
     let response = SNTPResponse clientSendTime serverRecvTime
     NetBS.sendTo udpSocket (encode response) clientSockAddr
 
-clockSyncOnce
-  :: (Eq node, Bounded node)
+clockSyncOnce ::
+     (Eq node, Bounded node)
   => node
   -> Net.Socket
   -> IO (Time.UTCTime, Time.UTCTime)
@@ -400,22 +425,21 @@ clockSyncOnce ownerNode udpSocket
     return (serverTime, serverTime)
   | otherwise = recvClockSyncOnce udpSocket
 
-recvClockSyncOnce
-  :: Net.Socket
-  -> IO (Time.UTCTime, Time.UTCTime)
-recvClockSyncOnce udpSocket = do
+recvClockSyncOnce :: Net.Socket -> IO (Time.UTCTime, Time.UTCTime)
+recvClockSyncOnce udpSocket
   -- Receive response
-  putStrLn "Waiting for Clock Sync..."
+  -- putStrLn "Waiting for Clock Sync..."
+ = do
   (responseStr, _recvSockAddr) <- NetBS.recvFrom udpSocket recvBufferSize
   -- Note the response time.
   clientRecvTime <- Time.getCurrentTime
   -- Decode the message. Expect a valid SNTPResponse from the server.
-  let SNTPResponse clientSendTime serverRecvTime = either error id (decode responseStr)
+  let SNTPResponse clientSendTime serverRecvTime =
+        either error id (decode responseStr)
   -- update the circuit
-  let
-    pingTime = clientRecvTime `Time.diffUTCTime` clientSendTime
-    estimatedTransmitionDelay = pingTime / 2
-    estimatedTime = estimatedTransmitionDelay `Time.addUTCTime` serverRecvTime
+  let pingTime = clientRecvTime `Time.diffUTCTime` clientSendTime
+      estimatedTransmitionDelay = pingTime / 2
+      estimatedTime = estimatedTransmitionDelay `Time.addUTCTime` serverRecvTime
   -- Debug output
   -- let
   --   pingMs = (realToFrac pingTime :: Double) * 1000
@@ -425,8 +449,8 @@ recvClockSyncOnce udpSocket = do
   --          ++ "\n\tOffset: " ++ show offsetMs
   return (clientRecvTime, estimatedTime)
 
-forkRecvClockSync
-  :: (Ord node, Bounded node)
+forkRecvClockSync ::
+     (Ord node, Bounded node)
   => node
   -> Net.Socket
   -> STM.TVar (ActuatedCircuitInternal node)
@@ -435,30 +459,29 @@ forkRecvClockSync ownerNode udpSocket circuitMVar
   -- Server doesn't need to sync.
   | ownerNode == serverNode = return ()
   -- Client
-  | otherwise = void . forkIO . forever $ do
+  | otherwise =
+    void . forkIO . forever $
       -- Receive response
+     do
       sample <- recvClockSyncOnce udpSocket
       STM.atomically . STM.modifyTVar circuitMVar $ \circuit ->
-        circuit {
-          acTimeEstimator = setLatestSample (acTimeEstimator circuit) sample
-        }
+        circuit
+        {acTimeEstimator = setLatestSample (acTimeEstimator circuit) sample}
   where
     serverNode = minBound
 
-requestClockSyncOnce
-  :: Net.Socket
-  -> Net.SockAddr
-  -> IO ()
-requestClockSyncOnce udpSocket serverSockAddr = do
+requestClockSyncOnce :: Net.Socket -> Net.SockAddr -> IO ()
+requestClockSyncOnce udpSocket serverSockAddr
   -- Note the send time.
+ = do
   clientSendTime <- Time.getCurrentTime
   -- Send the request.
   let request = SNTPRequest clientSendTime
   _ <- NetBS.sendTo udpSocket (encode request) serverSockAddr
   return ()
 
-forkRequestClockSync
-  :: (Ord node, Bounded node)
+forkRequestClockSync ::
+     (Ord node, Bounded node)
   => node
   -> Net.Socket
   -> M.Map node Connection
@@ -467,26 +490,25 @@ forkRequestClockSync ownerNode udpSocket sockets
   -- Server doesn't need to sync.
   | ownerNode == serverNode = return ()
   -- Client
-  | otherwise = let
-    serverConn = sockets M.! serverNode
-    serverSockAddr = connSockAddr serverConn
-    in void . forkIO . forever $ do
+  | otherwise =
+    let serverConn = sockets M.! serverNode
+        serverSockAddr = connSockAddr serverConn
+    in void . forkIO . forever $
       -- Send SNTPRequests.
-      requestClockSyncOnce udpSocket serverSockAddr
+        do
+         requestClockSyncOnce udpSocket serverSockAddr
       -- Wait
-      threadDelay clockSyncIntervalMicroS
+         threadDelay clockSyncIntervalMicroS
   where
     serverNode = minBound
-
 
 -- TODO a more sufisticated clock estimator! Perhaps estimate clock drift.
 -- | Time Estimator assumes that:
 --      localClock = serverClock + offset
 -- where offset is constant
-data TimeEstimator
-  = TimeEstimator
-    (Time.UTCTime, Time.UTCTime) -- ^ latest sample used to adjust current estimate.
-    [(Time.UTCTime, Time.UTCTime)]       -- ^ Committed (local, estimated server time) samples, latest at head. All estimates before and equal the head local time are fixed.
+data TimeEstimator =
+  TimeEstimator (Time.UTCTime, Time.UTCTime) -- ^ latest sample used to adjust current estimate.
+                [(Time.UTCTime, Time.UTCTime)] -- ^ Committed (local, estimated server time) samples, latest at head. All estimates before and equal the head local time are fixed.
 
 timeEstimator :: (Time.UTCTime, Time.UTCTime) -> TimeEstimator
 timeEstimator initialSample = TimeEstimator initialSample []
@@ -501,25 +523,32 @@ maxSyncRate = 2
 
 -- | Estimate server time from client time and fix to that time
 estimateTime :: TimeEstimator -> Time.UTCTime -> (Time.UTCTime, TimeEstimator)
-estimateTime (TimeEstimator latestSample []) local = let
-  estimate = estimateTimeSimple latestSample local
+estimateTime (TimeEstimator latestSample []) local =
+  let estimate = estimateTimeSimple latestSample local
   in (estimate, TimeEstimator latestSample [(local, estimate)])
-estimateTime te@(TimeEstimator latestSample commited@(commit0@(local0, estimate0) : commitedRest)) local
+estimateTime te@(TimeEstimator latestSample commited@(commit0@(local0, estimate0):commitedRest)) local
   | local == local0 = (estimate0, te)
   -- time is before latest fixed time
-  | local < local0 = let
-    estimate = estimateTimeFromCommited local (local0, estimate0) commitedRest
+  | local < local0 =
+    let estimate =
+          estimateTimeFromCommited local (local0, estimate0) commitedRest
     in (estimate, TimeEstimator latestSample ((local, estimate) : commited))
   -- time is after latest fixed time. Estimate, smooth, and commit
-  | otherwise = let
-    sampleEstimateTime = estimateTimeSimple latestSample local
-    commitEstimateTime = estimateTimeSimple commit0 local
-    estimateFromCommitAWithRate rate = ((local `Time.diffUTCTime` local0) * rate) `Time.addUTCTime` estimate0
-    estimate = if commitEstimateTime < sampleEstimateTime
+  | otherwise =
+    let sampleEstimateTime = estimateTimeSimple latestSample local
+        commitEstimateTime = estimateTimeSimple commit0 local
+        estimateFromCommitAWithRate rate =
+          ((local `Time.diffUTCTime` local0) * rate) `Time.addUTCTime` estimate0
+        estimate =
+          if commitEstimateTime < sampleEstimateTime
       -- If behind, then move at maxSyncRate till synched
-      then min sampleEstimateTime (estimateFromCommitAWithRate maxSyncRate)
+            then min
+                   sampleEstimateTime
+                   (estimateFromCommitAWithRate maxSyncRate)
       -- Else move at minSyncRate till synched
-      else max sampleEstimateTime (estimateFromCommitAWithRate minSyncRate)
+            else max
+                   sampleEstimateTime
+                   (estimateFromCommitAWithRate minSyncRate)
     -- Get rate
     -- correctionTargetLocalTime = syncCorrectionTime `Time.addUTCTime` localSample
     -- correctionTargetEstimateTime = estimateTimeSimple latestSample correctionTargetLocalTime
@@ -527,24 +556,34 @@ estimateTime te@(TimeEstimator latestSample commited@(commit0@(local0, estimate0
     -- correctionRate = max minSyncRate (min unclampedCorrectionRate maxSyncRate)
     -- -- find time at which synch is achieved. a rate of 1 is used after this point.
     -- syncAchievedLocalTime =
-    in (estimate , TimeEstimator latestSample ((local, estimate) : commited))
+    in (estimate, TimeEstimator latestSample ((local, estimate) : commited))
 
-
-estimateTimeFromCommited :: Time.UTCTime -> (Time.UTCTime, Time.UTCTime) -> [(Time.UTCTime, Time.UTCTime)] -> Time.UTCTime
+estimateTimeFromCommited ::
+     Time.UTCTime
+  -> (Time.UTCTime, Time.UTCTime)
+  -> [(Time.UTCTime, Time.UTCTime)]
+  -> Time.UTCTime
 estimateTimeFromCommited local commitA [] = estimateTimeSimple commitA local
-estimateTimeFromCommited local (localB, estimateB) (commitA@(localA, estimateA) : commits)
-  | localA == local  = estimateA
-  | localA > local   = estimateTimeFromCommited local commitA commits
-  | localB < local   = error "estimateTimeFromCommited expects local to be within or before the committed estimates"
-  | otherwise        = let
-    dEstimatePerDLocal  = (estimateB `Time.diffUTCTime` estimateA) / (localB `Time.diffUTCTime` localA)
-    localTimePastA = local `Time.diffUTCTime` localA
+estimateTimeFromCommited local (localB, estimateB) (commitA@(localA, estimateA):commits)
+  | localA == local = estimateA
+  | localA > local = estimateTimeFromCommited local commitA commits
+  | localB < local =
+    error
+      "estimateTimeFromCommited expects local to be within or before the committed estimates"
+  | otherwise =
+    let dEstimatePerDLocal =
+          (estimateB `Time.diffUTCTime` estimateA) /
+          (localB `Time.diffUTCTime` localA)
+        localTimePastA = local `Time.diffUTCTime` localA
     in (dEstimatePerDLocal * localTimePastA) `Time.addUTCTime` estimateA
 
-estimateTimeSimple :: (Time.UTCTime, Time.UTCTime) -> Time.UTCTime -> Time.UTCTime
-estimateTimeSimple (local0, server0) local = let
-  offset = local0 `Time.diffUTCTime` server0
+estimateTimeSimple ::
+     (Time.UTCTime, Time.UTCTime) -> Time.UTCTime -> Time.UTCTime
+estimateTimeSimple (local0, server0) local =
+  let offset = local0 `Time.diffUTCTime` server0
   in (negate offset) `Time.addUTCTime` local
 
-setLatestSample :: TimeEstimator -> (Time.UTCTime, Time.UTCTime) -> TimeEstimator
-setLatestSample (TimeEstimator _ commited) sample = TimeEstimator sample commited
+setLatestSample ::
+     TimeEstimator -> (Time.UTCTime, Time.UTCTime) -> TimeEstimator
+setLatestSample (TimeEstimator _ commited) sample =
+  TimeEstimator sample commited
