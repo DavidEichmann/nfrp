@@ -20,6 +20,8 @@ library
                      , SumExample
                      , Circuit.Actuate
                      , Circuit.Description
+                     , Circuit.Net
+                     , Circuit.ClockSync
   build-depends:       base >= 4.7 && < 5
                      , containers >= 0.5.9
                      , network
