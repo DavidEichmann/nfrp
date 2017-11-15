@@ -4,7 +4,7 @@ Describe interactive programs using FRP constructs and let NFRP handle all the n
 
 ## Motivation
 
-Network programming is hard! Even when building upon reliable protocols like TCP, network latency is always an issue. As a result, the timing and ordering of events observed in a network will differ from node to node. Ideally we wan to be able to reason in terms of some globally correct state, but this is hard to do when timing/ordering is inconsisten. One solution is to use a Client-Server model where the server defines the global correct state and the clients are simply informed of updates. This is simple, but also means that all network packages must pass throught that server, potentially doubling latancy. A more distributed model could send messages directly between nodes, avoiding the extra latency, but it seems much harder to reason about a global correct state. NFRP aims at the distributed model while letting you easily reason about a global correct state.
+Network programming is hard! Even when building upon reliable protocols like TCP, network latency is always an issue. As a result, the timing and ordering of events observed in a network will differ from node to node. Ideally we want to be able to reason in terms of some globally correct state, but this is hard to do when timing/ordering is inconsistent. One solution is to use a Client-Server model where the server defines the global correct state and the clients are simply informed of updates. This is simple, but also means that all network packages must pass through that server, potentially doubling latency. A more distributed model could send messages directly between nodes, avoiding the extra latency, but it seems much harder to reason about a global correct state. NFRP aims at the distributed model while letting you easily reason about a global correct state.
 
 # Example
 
@@ -62,7 +62,7 @@ This is still very early and experimental. What I've done and wan to do:
 - [X] Simple Clock Synchronization.
 - [X] TCP based messaging.
 - [ ] Rollback/Replay (This should be easy).
-- [ ] Statefull FRP constructs (allow the ability to refer to the previous state).
+- [ ] Stateful FRP constructs (allow the ability to refer to the previous state).
 - [ ] Better Clock Synchronization (Perhaps using moving average and accounting for clock drift).
 - [ ] Account for floating point (non)determinism.
 - [ ] Control over which Behaviors/Events to broadcast. At the moment NFRP reduces to simply broadcasting all inputs (event sinks declared with ```localE```). This is an important non-trivial feature.
