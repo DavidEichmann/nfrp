@@ -10,6 +10,19 @@ Network programming is hard! Even when building upon reliable protocols like TCP
 
 A simple example can be found in src/SumExample.cs. The example uses 2 nodes. Each inputs an integer and a sum is computed. can be built using ```stack build``` and run using:
 
+```
+# On Node A
+stack exec Main -- NodeB <NodeB's address>
+
+# On Node B
+stack exec Main -- NodeA <NodeA's address>
+
+# OR run all nodes localy.
+stack exec Main
+```
+
+The code to describe the circuit is actually quite simple:
+
 ```Haskell
 -- |The network consists of two nodes.
 data Node
@@ -65,6 +78,7 @@ This is still very early and experimental. What I've done and wan to do:
 - [ ] Stateful FRP constructs (allow the ability to refer to the previous state).
 - [ ] Better Clock Synchronization (Perhaps using moving average and accounting for clock drift).
 - [ ] Account for floating point (non)determinism.
+- [ ] Improve ergonomics.
 - [ ] Control over which Behaviors/Events to broadcast. At the moment NFRP reduces to simply broadcasting all inputs (event sinks declared with ```localE```). This is an important non-trivial feature.
 - [ ] Custom prediction methods (client-side prediction): Allow the programmer e.g. predict the current value of a Behavior based on the latest correct global state.
 - [ ] UDP based messaging.
