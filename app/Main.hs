@@ -1,9 +1,7 @@
 module Main where
 
-import Data.List (foldl')
 import Control.Concurrent.Async
 import Control.Concurrent
-import System.Console.GetOpt
 import System.Environment (getArgs)
 import qualified Graphics.UI.Gtk as Gtk
 
@@ -53,38 +51,3 @@ main
 
   -- End GUI
   Gtk.mainQuit
-
-data Options = Options
-  { optionsMode :: [Node]
-  }
-
-defaultOptions :: Options
-defaultOptions = Options {optionsMode = [minBound .. maxBound]}
-
-options :: [OptDescr (Options -> Options)]
-options =
-  [ Option
-      ['c']
-      ["client"]
-      (NoArg (\opts -> opts {optionsMode = [Client]}))
-      "ClientMode mode"
-  , Option
-      ['s']
-      ["server"]
-      (NoArg (\opts -> opts {optionsMode = [Server]}))
-      "Server mode"
-  --, Option
-  --    ['p']
-  --    ["port"]
-  --    (ReqArg (\port opts -> opts {optionsPort = read port}) "port")
-  --    "port"
-  ]
-
-argsToOpts :: [String] -> IO (Options, [String])
-argsToOpts argv =
-  case getOpt Permute options argv of
-    (o, n, []) -> return (foldl' (flip ($)) defaultOptions o, n)
-    (_, _, errs) ->
-      ioError (userError (concat errs ++ usageInfo header options))
-  where
-    header = "Usage: [OPTION...]"
