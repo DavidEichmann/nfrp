@@ -8,7 +8,47 @@ Network programming is hard! Even when building upon reliable protocols like TCP
 
 # Example
 
-See SumExample.hs
+A simple example can be found in src/SumExample.cs. The example uses 2 nodes. Each inputs an integer and a sum is computed. can be built using ```stack build``` and run using:
+
+```Haskell
+-- |The network consists of two nodes.
+data Node
+  = NodeA
+  | NodeB
+  deriving (Generic, Serialize, Show, Read, Eq, Ord, Bounded, Enum)
+
+-- |NFRP circuit takes an Int from each node and sums them.
+sumCircuit :: Circuit Node
+-- |Event sink for changes to nodeA's Int.
+nodeAIntESink :: E Int
+-- |Event sink for changes to nodeB's Int.
+nodeBIntESink :: E Int
+-- |Behavior of node A's Int.
+nodeAIntB :: B Int
+-- |Behavior of node B's Int.
+nodeBIntB :: B Int
+-- |Behavior of the sum of both nodes' Ints.
+sumB :: B Int
+((nodeAIntESink, nodeBIntESink, nodeAIntB, nodeBIntB, sumB), sumCircuit) =
+  mkCircuit $
+   do
+    -- |Event sourced from NodeA
+    nodeAIntESink' <- localE NodeA
+     -- |Event sourced from NodeB
+    nodeBIntESink' <- localE NodeB
+    -- Convert to behaviors (initially set to 0).
+    nodeAIntB' <- stepper 0 nodeAIntESink'
+    nodeBIntB' <- stepper 0 nodeBIntESink'
+    -- Sum the nodeA and nodeB ints.
+    sumB' <- liftB2 (+) nodeAIntB' nodeBIntB'
+    -- return events and behaviors.
+    return
+      ( nodeAIntESink'
+      , nodeBIntESink'
+      , nodeAIntB'
+      , nodeBIntB'
+      , sumB')
+```
 
 # How
 
