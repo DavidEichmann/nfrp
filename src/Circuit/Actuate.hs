@@ -2,7 +2,7 @@
 {-# LANGUAGE TypeInType #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE MultiWayIf #-}
-{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -19,7 +19,9 @@ module Circuit.Actuate
   ) where
 
 import Circuit.ClockSync
+import Circuit.History
 import Circuit.Net
+
 import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.Async (async, wait)
 import qualified Control.Concurrent.STM as STM
@@ -32,45 +34,14 @@ import Data.Dynamic
 import Data.Either (either)
 import Data.List (partition)
 import qualified Data.Map as M
-import Data.Maybe (fromMaybe)
-import Data.Serialize
-       (Get, Result(..), Serialize(..), decode, encode, runGetPartial,
-        runPut)
+import Data.Maybe (mapMaybe)
+import Data.Serialize (Serialize(..), decode, encode)
 import qualified Data.Set as S
 import qualified Data.Time as Time
 import qualified Network.Socket as Net
 import qualified Network.Socket.ByteString as NetBS
 
 import Circuit.Description hiding (sample)
-
--- ^ (update, result, changed gates) (most recent is at the head)
-type HistoryD node = (Transaction, Circuit node, S.Set GateKey')
-
--- ^ (history deltas (most recent is at the head), initial state)
-type History node = ([HistoryD node], Circuit node)
-
-histCurrent :: History node -> Circuit node
-histCurrent (deltas, initialState) =
-  case deltas of
-    [] -> initialState
-    (_, current, _):_ -> current
-
--- TODO support splitting when equal times.... need some way to unambiguously resolve
--- order of transactions!!!
-histSplit :: Time.UTCTime -> History node -> ([HistoryD node], History node)
-histSplit time (deltas, initialState) =
-  case deltas of
-    [] -> ([], ([], initialState))
-    currentDelta@(Transaction currentTime _, _, _):prevDeltas ->
-      case currentTime `compare` time of
-        EQ ->
-          error
-            "need some way to unambiguously resolve order of transactions!!!"
-        LT -> ([], (deltas, initialState))
-        GT ->
-          let (splitDeltas', splitHist) =
-                histSplit time (prevDeltas, initialState)
-          in (currentDelta : splitDeltas', splitHist)
 
 data ActuatedCircuitInternal node = ActuatedCircuitInternal
   { acListeners :: M.Map GateKey' [Dynamic]
@@ -93,44 +64,6 @@ data Listener =
              ) =>
             Setter (GateKey 'BehaviorGate a)
                    (a -> IO ())
-
-data Transaction =
-  Transaction Time.UTCTime
-              [GateUpdate]
-
-encodeTransaction :: Transaction -> BS.ByteString
-encodeTransaction (Transaction time updates) =
-  runPut $ do
-    put time
-    forM_ updates $ \(GateUpdate key a) -> do
-      put key
-      put a
-
-decodeTransaction :: Circuit node -> BS.ByteString -> Either String Transaction
-decodeTransaction circuit fullStr = do
-  (time, updatesStr) <- runGetPartial' (get @Time.UTCTime) fullStr
-  updates <- decodeGateUpdates updatesStr
-  return (Transaction time updates)
-  where
-    gateKeys = circuitGateKeysByInt circuit
-    decodeGateUpdates :: BS.ByteString -> Either String [GateUpdate]
-    decodeGateUpdates str
-      | BS.null str = Right []
-      | otherwise
-        -- Parse gate index
-       = do
-        (gateInt, str') <- runGetPartial' (get @Int) str
-        -- Infer the type, a, by looking up the GateKey' from gateKeys.
-        case gateKeys M.! gateInt of
-          GateKey' (gateKey :: GateKey gateType a) -> do
-            (a, str'') <- runGetPartial' (get :: Get a) str'
-            otherUpdates <- decodeGateUpdates str''
-            return (GateUpdate gateKey a : otherUpdates)
-    runGetPartial' getter str =
-      case runGetPartial getter str of
-        Fail err _ -> Left $ "Failed to parse a transaction: " ++ err
-        Partial _ -> Left "Only managed to partially parse a transaction."
-        Done time remainingStr -> Right (time, remainingStr)
 
 actuate ::
      forall node. (Ord node, Bounded node, Serialize node, Show node)
@@ -176,7 +109,7 @@ actuate hostNamesAndPorts ownerNode circuit listeners
             [ (GateKey' key, [toDyn callback])
             | Setter key callback <- listeners
             ]
-      , acHistory = ([], circuit)
+      , acHistory = mkHistory circuit
       , acTimeEstimator = initialTimeEstimator
       , acDoOnListenersThread = doOnListenersThread
       }
@@ -331,69 +264,40 @@ actuate hostNamesAndPorts ownerNode circuit listeners
 -- state and calling listeners.
 applyTransaction ::
      forall node. ActuatedCircuit node -> Transaction -> STM.STM ()
-applyTransaction (ActuatedCircuit aCircuitMV) transaction@(Transaction time updates) = do
+applyTransaction (ActuatedCircuit aCircuitMV) transaction = do
   newCircuit <- applyTransaction' =<< STM.readTVar aCircuitMV
   STM.writeTVar aCircuitMV newCircuit
   where
     applyTransaction' ::
          ActuatedCircuitInternal node -> STM.STM (ActuatedCircuitInternal node)
-    applyTransaction' actuatedCircuitInternal = do
-      let hist = acHistory actuatedCircuitInternal
-          (newerDeltas, oldHistory) = histSplit time hist
-
-
-      TODO Start from oldHistory (roll back). Then apply the new update .
-        Then apply the the newerDeltas (replay)
-      let transactions = acHistory actuatedCircuitInternal
-      let latestTimeMay =
-            case transactions of
-              [] -> Nothing
-              (Transaction t _, _, _):_ -> Just t
-      case fromMaybe GT (compare time <$> latestTimeMay) of
-        EQ ->
-          error $
-          "TODO Cannot currently apply multiple transactions at the same time." ++
-          "Need a way to resolve order that is unambiguous accross nodes."
-        LT
-           -- Rolling back and recreating the circuit state is realtivelly simple,
-           -- but how to correctly call the listeners is more a more complicated issue.
-           -- In general listeners may have done some IO that needs to be undone,
-           -- e.g. started playing a sound file, which should be cancelled with the
-           -- current roll back. It should be up to the listener to decide how best
-           -- to performe the rollback. For the time being, we assume that no
-           -- rollback is required, i.e. listeners will always be called with the
-           -- latest value (if cahnged) exactly once per transaction even if a
-           -- rollback occured.
-         -> do
-          error "TODO roll back and replay circuit."
-        GT
-          -- Get the next cifcuit state.
-         -> do
-          let (newCircuit, behaviorUpdates, events) =
-                applyUpdates (acCurrentState actuatedCircuitInternal) updates
-          -- Call behavior/event listeners.
-          let callListeners changes =
-                forM_ (M.assocs changes) $ \(key', valDyn) ->
-                  case M.lookup key' (acListeners actuatedCircuitInternal) of
-                    Nothing -> return ()
-                    Just listeners ->
-                      forM_ listeners $ \listener ->
-                        fromDyn
-                          (dynApp listener valDyn)
-                          (error "Expected listener of type \"a -> IO ()\"") :: IO ()
-          acDoOnListenersThread actuatedCircuitInternal $ do
-            callListeners behaviorUpdates
-            callListeners events
-          let affectedGates =
-                M.keysSet behaviorUpdates `S.union` M.keysSet events
-          -- Define the new states by setting the affected states
-          return
-            ActuatedCircuitInternal
-            { acListeners = acListeners actuatedCircuitInternal
-            , acHistory =
-                ( (transaction, newCircuit, affectedGates) : transactions
-                , acInitialState actuatedCircuitInternal)
-            , acTimeEstimator = acTimeEstimator actuatedCircuitInternal
-            , acDoOnListenersThread =
-                acDoOnListenersThread actuatedCircuitInternal
-            }
+    applyTransaction' actuatedCircuitInternal
+      -- Split the history and insert the transaction
+     = do
+      let (hist', oldBranch, newBranch) =
+            histApplyTransaction (acHistory actuatedCircuitInternal) transaction
+          newCircuit = histCircuit hist'
+      -- Call all listeners for all affected gates on new AND OLD branch.
+      let affectedGates =
+            S.unions . fmap diffAffectedGates $ oldBranch ++ newBranch
+      -- Call behavior/event listeners.
+      let affectedGatesAndValues =
+            mapMaybe
+              (\gk -> (gk, ) <$> behaviorDynValueMay gk newCircuit)
+              (S.toList affectedGates)
+      acDoOnListenersThread actuatedCircuitInternal $
+        forM_ affectedGatesAndValues $ \(key', valDyn) ->
+          case M.lookup key' (acListeners actuatedCircuitInternal) of
+            Nothing -> return ()
+            Just listeners ->
+              forM_ listeners $ \listener ->
+                fromDyn
+                  (dynApp listener valDyn)
+                  (error "Expected listener of type \"a -> IO ()\"") :: IO ()
+      -- Define the new states by setting the affected states
+      return
+        ActuatedCircuitInternal
+        { acListeners = acListeners actuatedCircuitInternal
+        , acHistory = hist'
+        , acTimeEstimator = acTimeEstimator actuatedCircuitInternal
+        , acDoOnListenersThread = acDoOnListenersThread actuatedCircuitInternal
+        }

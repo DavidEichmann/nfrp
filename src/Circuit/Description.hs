@@ -1,6 +1,7 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE TypeInType #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -15,6 +16,7 @@ module Circuit.Description
   , applyUpdates
   , CircuitBuilder
   , behaviorValue
+  , behaviorDynValueMay
   , mkCircuit
   , E
   , localE
@@ -54,8 +56,10 @@ newtype GateKey (gateType :: GateType) (a :: Type) = GateKey
   { gateKeyToInt :: Int
   } deriving (Generic, Serialize, Ord, Eq, Show)
 
-class (Typeable a, Serialize a, Eq a) => GateValue a where
-instance (Typeable a, Serialize a, Eq a) => GateValue a where
+class (Typeable a, Serialize a, Eq a) =>
+      GateValue a
+
+instance (Typeable a, Serialize a, Eq a) => GateValue a
 
 data GateKey' =
   forall (a :: Type) (gateType :: GateType). (GateValue a) =>
@@ -94,10 +98,7 @@ data GateDescription node a
     GateMergeE (a -> a -> a)
                (E a)
                (E a)
-  | forall c b. ( GateValue a
-                , GateValue b
-                , GateValue c
-                ) =>
+  | forall c b. (GateValue a, GateValue b, GateValue c) =>
                 GateSample (b -> c -> a)
                            (B b)
                            (E c)
@@ -106,10 +107,7 @@ data GateDescription node a
   | forall b. (GateValue a, GateValue b) =>
               GateLiftB1 (b -> a)
                          (B b)
-  | forall b c. ( GateValue a
-                , GateValue b
-                , GateValue c
-                ) =>
+  | forall b c. (GateValue a, GateValue b, GateValue c) =>
                 GateLiftB2 (b -> c -> a)
                            (B b)
                            (B c)
@@ -130,6 +128,11 @@ behaviorValue key (Circuit behaviorValues _ _) =
   fromDyn
     (behaviorValues M.! GateKey' key)
     (error "Type mismatch when getting behavior value")
+
+-- | Nothing if an event (or an invalid key)
+behaviorDynValueMay :: GateKey' -> Circuit node -> Maybe Dynamic
+behaviorDynValueMay key (Circuit behaviorValues _ _) =
+  M.lookup key behaviorValues
 
 addChildToParents :: GateKey' -> [GateKey'] -> Circuit node -> Circuit node
 addChildToParents child parents (Circuit behaviorValues gates gateKeys) =
@@ -166,10 +169,7 @@ addBehaviorGate value gate parents = do
     gate' = Gate' gate
 
 addEventGate ::
-     (GateValue a)
-  => Gate node a
-  -> [GateKey']
-  -> CircuitBuilder node (E a)
+     (GateValue a) => Gate node a -> [GateKey'] -> CircuitBuilder node (E a)
 addEventGate gate parents = do
   Circuit behaviorValues gates gateKeys <- get
   key <- unsafeNextGateKey
@@ -187,10 +187,9 @@ addEventGate gate parents = do
 -- Create a gate key. It is unsafe because the resulting key must immediatelly be added before calling again.
 unsafeNextGateKey :: CircuitBuilder nodes (GateKey (gateType :: GateType) a)
 unsafeNextGateKey = do
-  maxGateKey <- gets
-    (maybe 0 (\(GateKey' (GateKey k), _) -> k)
-    . M.lookupMax
-    . circuitGates)
+  maxGateKey <-
+    gets
+      (maybe 0 (\(GateKey' (GateKey k), _) -> k) . M.lookupMax . circuitGates)
   return (GateKey (maxGateKey + 1))
 
 -- Exported functions to build the circuit
@@ -207,10 +206,7 @@ stepper initialValue childEvent = do
   addBehaviorGate initialValue gate [GateKey' childEvent]
 
 liftB1 ::
-     (GateValue a, GateValue b)
-  => (a -> b)
-  -> B a
-  -> CircuitBuilder node (B b)
+     (GateValue a, GateValue b) => (a -> b) -> B a -> CircuitBuilder node (B b)
 liftB1 f childBehavior = do
   assertContainsGate childBehavior
   childInitialValue <- gets (behaviorValue childBehavior)
@@ -241,21 +237,14 @@ localE ownder = do
   addEventGate gate []
 
 liftE ::
-     (GateValue a, GateValue b)
-  => (a -> b)
-  -> E a
-  -> CircuitBuilder node (E b)
+     (GateValue a, GateValue b) => (a -> b) -> E a -> CircuitBuilder node (E b)
 liftE f event = do
   assertContainsGate event
   let gate = Gate [] (GateLiftE f event)
   addEventGate gate [GateKey' event]
 
 mergeE ::
-     (GateValue a)
-  => (a -> a -> a)
-  -> E a
-  -> E a
-  -> CircuitBuilder nodes (E a)
+     (GateValue a) => (a -> a -> a) -> E a -> E a -> CircuitBuilder nodes (E a)
 mergeE combine eventA eventB = do
   assertContainsGate eventA
   assertContainsGate eventB
@@ -294,7 +283,8 @@ applyUpdates circuit updates
       events :: M.Map GateKey' (Maybe Dynamic)
       behaviorUpdates :: M.Map GateKey' (Maybe Dynamic)
       (events, behaviorUpdates) = M.mapEither id eventAndBehaviorUpdates
-      eventAndBehaviorUpdates :: M.Map GateKey' (Either (Maybe Dynamic) (Maybe Dynamic))
+      eventAndBehaviorUpdates ::
+           M.Map GateKey' (Either (Maybe Dynamic) (Maybe Dynamic))
       eventAndBehaviorUpdates =
         M.fromList $
         flip map (S.toList possiblyAffectedGates) $ \key' ->
@@ -303,33 +293,41 @@ applyUpdates circuit updates
               Gate' (Gate _ desc) ->
                 case desc of
                   GateLocalE _ -> Left (M.lookup key' updatesMap)
-                  GateLiftE f e -> Left (toDyn . f . fromDyn' <$> join (M.lookup (GateKey' e) events))
-                  GateMergeE merge e1 e2 -> Left $ do
-                    e1ValueMay <- M.lookup (GateKey' e1) events
-                    e2ValueMay <- M.lookup (GateKey' e2) events
-                    case (e1ValueMay, e2ValueMay) of
-                      (Nothing, Nothing) -> Nothing
-                      (Just eValDyn, Nothing) -> Just eValDyn
-                      (Nothing, Just eValDyn) -> Just eValDyn
-                      (Just e1ValDyn, Just e2ValDyn) ->
-                        Just . toDyn $ merge (fromDyn' e1ValDyn) (fromDyn' e2ValDyn)
-                  GateSample f b e -> Left (do
-                      let bVal = fromDyn' (behaviorValues M.! GateKey' b)
-                      eventValueMay <- M.lookup (GateKey' e) events
-                      toDyn . f bVal . fromDyn' <$> eventValueMay)
+                  GateLiftE f e ->
+                    Left
+                      (toDyn . f . fromDyn' <$>
+                       join (M.lookup (GateKey' e) events))
+                  GateMergeE merge e1 e2 ->
+                    Left $ do
+                      e1ValueMay <- M.lookup (GateKey' e1) events
+                      e2ValueMay <- M.lookup (GateKey' e2) events
+                      case (e1ValueMay, e2ValueMay) of
+                        (Nothing, Nothing) -> Nothing
+                        (Just eValDyn, Nothing) -> Just eValDyn
+                        (Nothing, Just eValDyn) -> Just eValDyn
+                        (Just e1ValDyn, Just e2ValDyn) ->
+                          Just . toDyn $
+                          merge (fromDyn' e1ValDyn) (fromDyn' e2ValDyn)
+                  GateSample f b e ->
+                    Left
+                      (do let bVal = fromDyn' (behaviorValues M.! GateKey' b)
+                          eventValueMay <- M.lookup (GateKey' e) events
+                          toDyn . f bVal . fromDyn' <$> eventValueMay)
                   GateStepper e -> Right (join $ M.lookup (GateKey' e) events)
                   GateLiftB1 f b ->
-                    Right. Just . toDyn . f . fromDyn' $
+                    Right . Just . toDyn . f . fromDyn' $
                     behaviorValues M.! GateKey' b
                   GateLiftB2 f b1 b2 ->
-                    Right. Just . toDyn $
+                    Right . Just . toDyn $
                     f
                       (fromDyn' $ behaviorValues M.! GateKey' b1)
-                      (fromDyn' $ behaviorValues M.! GateKey' b2)
-          )
+                      (fromDyn' $ behaviorValues M.! GateKey' b2))
       behaviorValues :: M.Map GateKey' Dynamic
       behaviorValues =
-        M.unionWith const (M.mapMaybe id behaviorUpdates) (circuitBehaviorValues circuit)
+        M.unionWith
+          const
+          (M.mapMaybe id behaviorUpdates)
+          (circuitBehaviorValues circuit)
   in ( Circuit
        { circuitBehaviorValues = behaviorValues
        , circuitGates = circuitGates circuit
@@ -344,7 +342,10 @@ applyUpdates circuit updates
     accumulateAffectedGates visited gate
       | S.member gate visited = visited
       | otherwise =
-        foldl' accumulateAffectedGates (S.insert gate visited) (childGates circuit gate)
+        foldl'
+          accumulateAffectedGates
+          (S.insert gate visited)
+          (childGates circuit gate)
 
 childGates :: Circuit node -> GateKey' -> [GateKey']
 childGates circuit key =
