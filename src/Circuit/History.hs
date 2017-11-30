@@ -113,7 +113,7 @@ encodeTransaction (Transaction time updates) =
   runPut $ do
     put time
     forM_ updates $ \(GateUpdate key a) -> do
-      put key
+      put (gateKeyToInt key)
       put a
 
 decodeTransaction :: Circuit node -> BS.ByteString -> Either String Transaction
