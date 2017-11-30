@@ -22,30 +22,38 @@ import Safe (readDef)
 
 import Lib
 
+-- |The network consists of two nodes.
 data Node
-  = Server
-  | Client
+  = NodeA
+  | NodeB
   deriving (Generic, Serialize, Show, Read, Eq, Ord, Bounded, Enum)
 
+-- |NFRP circuit takes an Int from each node and sums them.
 sumCircuit :: Circuit Node
-serverIntESinkKey :: E Int
-clientIntESinkKey :: E Int
-serverIntBKey :: B Int
-clientIntBKey :: B Int
-sumBKey :: B Int
-((serverIntESinkKey, clientIntESinkKey, serverIntBKey, clientIntBKey, sumBKey), sumCircuit) =
+-- |Event sink for changes to nodeA's Int.
+nodeAIntESink :: E Int
+-- |Event sink for changes to nodeB's Int.
+nodeBIntESink :: E Int
+-- |Behavior of node A's Int.
+nodeAIntB :: B Int
+-- |Behavior of node B's Int.
+nodeBIntB :: B Int
+-- |Behavior of the sum of both nodes' Ints.
+sumB :: B Int
+((nodeAIntESink, nodeBIntESink, nodeAIntB, nodeBIntB, sumB), sumCircuit) =
   mkCircuit $
-    -- Input Int change events for client and for server.
+    -- |Event sourced from NodeA
    do
-    serverIntESink <- localE Server
-    clientIntESink <- localE Client
+    nodeAIntESink' <- localE NodeA
+     -- |Event sourced from NodeB
+    nodeBIntESink' <- localE NodeB
     -- Convert to behaviors (initially set to 0).
-    serverIntB <- stepper 0 serverIntESink
-    clientIntB <- stepper 0 clientIntESink
-    -- Sum the server and client ints.
-    sumB <- liftB2 (+) serverIntB clientIntB
+    nodeAIntB' <- stepper 0 nodeAIntESink'
+    nodeBIntB' <- stepper 0 nodeBIntESink'
+    -- Sum the nodeA and nodeB ints.
+    sumB' <- liftB2 (+) nodeAIntB' nodeBIntB'
     -- return events and behaviors.
-    return (serverIntESink, clientIntESink, serverIntB, clientIntB, sumB)
+    return (nodeAIntESink', nodeBIntESink', nodeAIntB', nodeBIntB', sumB')
 
 run :: M.Map Node (Net.HostName, Int) -> Node -> IO (Async ())
 run hostNames ownerNode
@@ -55,10 +63,10 @@ run hostNames ownerNode
   -- Use MVar to wait for window close.
    do
     exitMVar <- MV.newEmptyMVar
-    let (ownerIntEKey, _ownerIntBKey, remoteIntBKey) =
+    let (ownerIntE, _ownerIntB, remoteIntB) =
           case ownerNode of
-            Server -> (serverIntESinkKey, serverIntBKey, clientIntBKey)
-            Client -> (clientIntESinkKey, clientIntBKey, serverIntBKey)
+            NodeA -> (nodeAIntESink, nodeAIntB, nodeBIntB)
+            NodeB -> (nodeBIntESink, nodeBIntB, nodeAIntB)
     (remoteIntLabel, sumIntLabel, entry) <-
       Gtk.postGUISync $
     -- Create the window.
@@ -106,13 +114,11 @@ run hostNames ownerNode
          ownerNode
          sumCircuit
          [ Setter
-             remoteIntBKey
+             remoteIntB
              (Gtk.postGUISync . Gtk.labelSetText remoteIntLabel . show)
-         , Setter
-             sumBKey
-             (Gtk.postGUISync . Gtk.labelSetText sumIntLabel . show)
-      -- , Setter ownerIntBKey (\ownerInt -> putStrLn $ "OwnerInt: " ++ show ownerInt)
-      -- , Setter remoteIntBKey (\remoteInt -> putStrLn $ "RemoteInt: " ++ show remoteInt)
+         , Setter sumB (Gtk.postGUISync . Gtk.labelSetText sumIntLabel . show)
+      -- , Setter ownerIntB (\ownerInt -> putStrLn $ "OwnerInt: " ++ show ownerInt)
+      -- , Setter remoteIntB (\remoteInt -> putStrLn $ "RemoteInt: " ++ show remoteInt)
       -- , Setter (soSumB sumOuts) (\sumInt -> putStrLn $ "SumInt: " ++ show sumInt)
          ])
       (\(_, closeSockets) -> closeSockets)
@@ -129,7 +135,7 @@ run hostNames ownerNode
               -- perform transaction.
                  -> do
                   localInt <- readDef 0 <$> Gtk.entryGetText entry
-                  performTransaction [GateUpdate ownerIntEKey localInt])
+                  performTransaction [GateUpdate ownerIntE localInt])
            return ()
       -- Return wait for close.
          MV.takeMVar exitMVar)

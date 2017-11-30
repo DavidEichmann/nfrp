@@ -60,6 +60,7 @@ test-suite NFRP-test
                      , containers >= 0.5.9
                      , NFRP
                      , cereal
+                     , time
                      , tasty
                      , tasty-hunit
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N

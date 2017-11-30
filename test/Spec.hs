@@ -12,16 +12,16 @@ import Test.Tasty.HUnit
 import Data.Serialize (Serialize)
 import Data.Dynamic
 import qualified Data.Map as M
-import qualified Data.Set as S
 import GHC.Generics (Generic)
 import Lib
+import qualified Data.Time as Time
 
 main :: IO ()
 main = defaultMain tests
 
 tests :: TestTree
 tests = testGroup "Description"
-    [ testGroup "applyUpdates"    
+    [ testGroup "applyUpdates"
         [ testGroup "stepperCircuit"
             [ testGroup "empty update" $ assertApplyUpdates
                 stepperCircuit
@@ -54,7 +54,7 @@ tests = testGroup "Description"
             ]
         ]
     ]
-    
+
 data ExpectedBehaviorChange
     = forall a. GateValue a => NoChange (B a)
     | forall a. GateValue a => Change (B a) a
@@ -72,10 +72,12 @@ assertApplyUpdatesTransactionRoundTrip
 assertApplyUpdatesTransactionRoundTrip _ [] = []
 assertApplyUpdatesTransactionRoundTrip circuit ((updates, expectedBehaviorChangesList, expectedEventsList):xs)
     = let
-    Right (Transaction 451 updatesRoundTrip) = decodeTransaction circuit . encodeTransaction $ Transaction 451 updates
+    time = Time.UTCTime (Time.fromGregorian 1 1 1) 0
+    Right (Transaction timeCopy updatesRoundTrip) = decodeTransaction circuit . encodeTransaction $ Transaction time updates
     (circuit', currentTests) = assertApplyUpdates1 circuit updatesRoundTrip expectedBehaviorChangesList expectedEventsList
-    in currentTests ++ assertApplyUpdatesTransactionRoundTrip circuit' xs
-    
+    assertTime = testCase "Time decoded correctly" (timeCopy @=? time)
+    in currentTests ++ (assertTime : assertApplyUpdatesTransactionRoundTrip circuit' xs)
+
 assertApplyUpdates
     :: Circuit node     -- ^ circuit
     -> [([GateUpdate]     -- ^ updates
@@ -86,7 +88,7 @@ assertApplyUpdates _ [] = []
 assertApplyUpdates circuit ((updates, expectedBehaviorChangesList, expectedEventsList):xs) = let
     (circuit', currentTests) = assertApplyUpdates1 circuit updates expectedBehaviorChangesList expectedEventsList
     in currentTests ++ assertApplyUpdates circuit' xs
-    
+
 assertApplyUpdates1
     :: Circuit node     -- ^ circuit
     -> [GateUpdate]     -- ^ updates
@@ -135,7 +137,7 @@ stepperIntB :: B Int
     (intB :: B Int) <- stepper 0 intE
     -- return observations
     return (intE , intB)
-    
+
 data CSNode = Client | Server deriving (Generic, Serialize, Show, Eq, Ord)
 
 sumCircuit :: Circuit CSNode
