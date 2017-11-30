@@ -131,11 +131,15 @@ decodeTransaction circuit fullStr = do
        = do
         (gateInt, str') <- runGetPartial' (get @Int) str
         -- Infer the type, a, by looking up the GateKey' from gateKeys.
-        case gateKeys M.! gateInt of
-          GateKey' (gateKey :: GateKey gateType a) -> do
+        case M.lookup gateInt gateKeys of
+          Just (GateKey' (gateKey :: GateKey gateType a)) -> do
             (a, str'') <- runGetPartial' (get :: Get a) str'
             otherUpdates <- decodeGateUpdates str''
             return (GateUpdate gateKey a : otherUpdates)
+          Nothing ->
+            error $
+            "Could not find gate " ++
+            show gateInt ++ " in : " ++ show (M.keys gateKeys)
     runGetPartial' getter str =
       case runGetPartial getter str of
         Fail err _ -> Left $ "Failed to parse a transaction: " ++ err
