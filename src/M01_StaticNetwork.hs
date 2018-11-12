@@ -18,6 +18,7 @@ module M01_StaticNetwork where
 import Safe
 import Control.Monad.State
 import Unsafe.Coerce
+import Data.Typeable (cast)
 import Data.IORef
 import Data.Proxy
 import Data.Kind
@@ -41,6 +42,7 @@ circBeh :: forall (owner :: Node) a . (Typeable owner, Typeable a)
         => Circuit -> BehaviorIx owner a -> Behavior owner a
 circBeh c = flip fromDyn (error "Unexpected type of behavior.") . (circBehDyn c Map.!) . bixVert
 
+data BehaviorIx' = forall (o :: Node) (a :: Type) . (Typeable o, Typeable a) => BehaviorIx' (BehaviorIx o a)
 newtype BehaviorIx (owner :: Node) (a :: Type) = BehaviorIx { bixVert :: Graph.Vertex }
         deriving (Eq, Ord)
 data Behavior (owner :: Node) (a :: Type) where
@@ -55,6 +57,9 @@ data Behavior (owner :: Node) (a :: Type) where
          => (Proxy toNode)
          -> BehaviorIx fromNode a
          -> Behavior toNode a
+
+instance Eq BehaviorIx' where
+    (BehaviorIx' (BehaviorIx v1)) == (BehaviorIx' (BehaviorIx v2)) = v1 == v2
 
 -- Now we'd like a monad to build this circuit in
 type Moment a = State MomentState a
@@ -85,10 +90,6 @@ behDepVerts (Source _)   = []
 behDepVerts (Map _ b)    = [bixVert b]
 behDepVerts (Ap fb ib)   = [bixVert fb, bixVert ib]
 behDepVerts (Send _ b)   = [bixVert b]
-
-data BehaviorIx' = forall (o :: Node) (a :: Type) . (Typeable o, Typeable a) => BehaviorIx' (BehaviorIx o a)
-instance Eq BehaviorIx' where
-    (BehaviorIx' (BehaviorIx v1)) == (BehaviorIx' (BehaviorIx v2)) = v1 == v2
 
 behDeps :: (Typeable owner, Typeable a) => Behavior owner a -> [BehaviorIx']
 behDeps (Source _)   = []
@@ -148,7 +149,7 @@ calculatorCircuit = do
 type Time = Int -- TODO Int64? nanoseconds?
 
 actuate :: forall (myNode :: Node)
-        .  (SingNode myNode)
+        .  (Typeable myNode, SingNode myNode)
         => Proxy myNode                        -- What node to run.
         -> Node                        -- Clock sync node
         -> IO Time                     -- Local clock
@@ -177,7 +178,7 @@ actuate myNodeProxy
 
     -- Get all source behaviors for this node.
     let mySourceBs :: [BehaviorIx myNode LocalInput]
-        mySourceBs = flip mapMaybe (circAllBeh circuit) (\(BehaviorIx' (b :: Behavior bo ba)) -> _filterBeh b)
+        mySourceBs = mapMaybe (\(BehaviorIx' b) -> cast b) (circAllBeh circuit)
 
     -- A single change to compile all local inputs and messages from other nodes.
     inChan :: Chan (Time, [Update]) <- newChan
@@ -233,6 +234,7 @@ mkLiveCircuit c = LiveCircuit
     , lcBehVal      = (\t b -> if t /= 0 then lcBehValTimeError else error "TODO initial value") -- TODO this is just a hack default value
     }
 
+lcBehValTimeError :: a
 lcBehValTimeError = error "Attempt to access behavior value outside of known time."
 
 data Update = forall owner a . Update (BehaviorIx owner a) a
