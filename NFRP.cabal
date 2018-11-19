@@ -18,31 +18,23 @@ source-repository head
 
 library
     exposed-modules:
-        Lib
-        SumExample
-        Circuit.Actuate
-        Circuit.Description
-        Circuit.Net
-        Circuit.ClockSync
-        Circuit.History
         M01_StaticNetwork
     hs-source-dirs: src
     default-language: Haskell2010
     ghc-options: -Wall
     build-depends:
         base ==4.11.1.0,
-        safe,
         array,
         mtl,
         containers >=0.5.9,
-        network -any,
+        -- network -any,
         stm -any,
-        async -any,
+        -- async -any,
         bytestring -any,
-        cereal -any,
+        -- cereal -any,
         vector -any,
         safe -any,
-        gtk3 -any,
+        -- gtk3 -any,
         time -any,
         transformers -any,
         base -any
@@ -55,11 +47,11 @@ executable Main
     build-depends:
         base -any,
         containers >=0.5.9,
-        async -any,
+        -- async -any,
         network -any,
         NFRP -any,
         safe -any,
-        gtk3 -any,
+        -- gtk3 -any,
         time -any
 
 test-suite NFRP-test
@@ -72,7 +64,7 @@ test-suite NFRP-test
         base -any,
         containers >=0.5.9,
         NFRP -any,
-        cereal -any,
+        -- cereal -any,
         time -any,
         tasty -any,
         tasty-hunit -any

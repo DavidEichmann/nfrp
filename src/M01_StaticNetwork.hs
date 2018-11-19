@@ -19,20 +19,21 @@ module M01_StaticNetwork where
 import Safe
 import Control.Monad.State
 import Unsafe.Coerce
-import Data.Typeable (cast)
+import Data.Typeable (cast, typeRep)
 import Data.IORef
 import Data.Proxy
 import Data.Kind
 import Data.Dynamic
-import Data.Maybe (fromJust, mapMaybe)
-import Data.List (find)
+import Data.Maybe (mapMaybe)
+import Data.List (find, sortBy)
+import Data.Function (on)
 import qualified Data.Graph as Graph
 import qualified Data.Map as Map
 
 import Control.Concurrent
 
 import Debug.Trace
--- import Control.Exception.Base (assert)
+import Control.Exception.Base (assert)
 
 data GateIx' = forall (o :: Node) (a :: Type) . (Typeable o, Typeable a) => GateIx' (GateIx o a)
 data GateIx (owner :: Node) (a :: Type) = GateIxB (BehaviorIx owner a) | GateIxE (EventIx owner a)
@@ -83,16 +84,31 @@ circEvt :: forall (owner :: Node) a . (Typeable owner, Typeable a)
         => Circuit -> EventIx owner a -> Event owner a
 circEvt c = flip fromDyn (error "Unexpected type of event.") . (circGateDyn c Map.!) . eixVert
 
-data LiveCircuit = LiveCircuit
+data LiveCircuit (owner :: Node) = LiveCircuit
     { lcCircuit :: Circuit
-    , lcGateMaxT :: forall (owner :: Node) a . (Typeable owner, Typeable a) => GateIx owner a -> Time
-                    -- ^ Up to what time is the value of a behavior known OR
-                    --   Up to what time are all events occorences known
-    , lcBehVal  :: forall (owner :: Node) a . (Typeable owner, Typeable a) => Time -> BehaviorIx owner a -> Maybe a
+    , lcBehChanges  :: forall (o' :: Node) a . (Typeable o', Typeable a) => BehaviorIx o' a -> [(Time, a)]
                     -- ^ Value of a behavior at a time. Time must be <= lcBehMaxT else Nothing.
-    , lcEvents  :: forall (owner :: Node) a . (Typeable owner, Typeable a) => EventIx owner a -> [(Time, a)]
+    , lcEvents  :: forall (o' :: Node) a . (Typeable o', Typeable a) => EventIx o' a -> [(Time, a)]
                     -- ^ Complete events up to lcGateMaxT time in reverse chronological order.
     }
+
+
+lcGateMaxT :: forall myNode (o' :: Node) a . (Typeable o', Typeable a) => LiveCircuit myNode -> GateIx o' a -> Time
+lcGateMaxT lc (GateIxB b) = headDef (-1) (fst <$> lcBehChanges lc b)
+lcGateMaxT lc (GateIxE e) = headDef (-1) (fst <$> lcEvents lc e)
+
+lcBehVal :: (Typeable o2, Typeable a)
+         => LiveCircuit o1 -> Time -> BehaviorIx o2 a -> a
+lcBehVal lc t bix
+    | t > maxT  = err
+    | otherwise = maybe err snd (find ((<=t) . fst) cs)
+    where
+        cs = lcBehChanges lc bix
+        maxT = lcGateMaxT lc (GateIxB bix)
+        err = error $ 
+            "Trying to access behavior valur at time " ++ show t
+            ++ " but only know till time " ++ show maxT
+
 
 instance Eq BehaviorIx' where
     (BehaviorIx' (BehaviorIx v1)) == (BehaviorIx' (BehaviorIx v2)) = v1 == v2
@@ -106,10 +122,10 @@ data MomentState = MomentState
     , momentAllGates :: [GateIx']
     }
 
-data Update = forall owner a . (Typeable owner, Typeable a)
-                => UpdateB (BehaviorIx owner a) a
+data UpdateList = forall owner a . (Typeable owner, Typeable a)
+                => UpdateListB (BehaviorIx owner a) [(Time, a)]
             | forall owner a . (Typeable owner, Typeable a)
-                => UpdateE (EventIx    owner a) a
+                => UpdateListE (EventIx    owner a) [(Time, a)]
 
 data Responsibility (responsibleNode :: Node)
     = forall (owner :: Node) a . (Typeable owner, Typeable a) => 
@@ -147,7 +163,10 @@ evt e = do
             (((v,) <$> evtDepVerts e) ++ es)
             (GateIx' (GateIxE evtIx) : allGates)
     return evtIx
-        
+
+(===) :: (Typeable a, Typeable b, Eq a) => a -> b -> Bool
+a === b = Just a == cast b
+
 behDepVerts :: Behavior owner a -> [Graph.Vertex]
 behDepVerts (Step _ e)    = [eixVert e]
 behDepVerts (MapB _ b)    = [bixVert b]
@@ -197,6 +216,33 @@ instance SingNode ClientB where singNode _ = ClientB
 instance SingNode ClientC where singNode _ = ClientC
 instance SingNode Server where singNode _ = Server
 
+data UpdateWay
+    = LocalUpdate    -- ^ updated directly by a local update event (local event)
+    | RemoteUpdate   -- ^ updated directly by a remote update event (sent from a remote node)
+    | DerivedUpdate  -- ^ updated by combining dependant gates
+    | NoUpdate       -- ^ node's value is never updated (The value is is unknown)
+    deriving (Eq, Show)
+
+class HasUpdateWay gate where
+    updateWay :: Typeable myNode => Proxy myNode -> gate -> UpdateWay
+instance (Typeable o, Typeable a) => HasUpdateWay (Behavior o a) where
+    updateWay myNodeP b
+        | isOwned myNodeP b = case b of
+            SendB {}  -> RemoteUpdate
+            _         -> DerivedUpdate
+        | otherwise = NoUpdate
+instance (Typeable o, Typeable a) => HasUpdateWay (Event o a) where
+    updateWay myNodeP b
+        | isOwned myNodeP b = case b of
+            SendE {}  -> RemoteUpdate
+            Source {} -> LocalUpdate
+            _         -> DerivedUpdate
+        | otherwise = NoUpdate
+
+
+isOwned :: forall o1 o2 gate a . (Typeable o1, Typeable o2) => Proxy o1 -> gate o2 a -> Bool
+isOwned po1 _ = typeRep po1 == typeRep (Proxy @o2)
+
 -- The only local input we care about is key presses.
 type LocalInput = Char
 
@@ -216,7 +262,7 @@ calculatorCircuit = do
                         bKeyB)
 
     resultB_ <- beh $ opB `Ap` leftB
-    resultB  <- beh $ resultB_ `Ap` rightB
+    _resultB  <- beh $ resultB_ `Ap` rightB
 
     return ()
 
@@ -234,16 +280,16 @@ actuate :: forall (myNode :: Node)
         -> IO Time                     -- Local clock
         -> Moment ()                   -- The circuit to build
         -> Chan LocalInput             -- Local inputs
-        -> Map.Map Node (Chan (Time, [Update]), Chan (Time, [Update]))   -- (send, receive) Chanels to other nodes
+        -> Map.Map Node (Chan [UpdateList], Chan [UpdateList])   -- (send, receive) Chanels to other nodes
         -> IO ()
 actuate myNodeProxy
-        clockSyncNode
+        _clockSyncNode
         getLocalTime
         mkCircuit
         localInChan
         handles
   = do
-    let myNode = singNode myNodeProxy
+    let _myNode = singNode myNodeProxy
         circuit = buildCircuit mkCircuit
 
     -- Clock synchronize with clockSyncNode if not myNode and wait for starting time. (TODO regularly synchronize clocks).
@@ -264,33 +310,43 @@ actuate myNodeProxy
             (circAllGates circuit)
 
     -- A single change to compile all local inputs and messages from other nodes.
-    inChan :: Chan (Time, [Update]) <- newChan
+    inChan :: Chan [UpdateList] <- newChan
 
     -- Listen for local inputs (time is assigned here)
     _ <- forkIO . forever $ do
         input <- readChan localInChan
         time <- getTime
-        writeChan inChan (time, [UpdateE e input | e <- mySourceEs])
+        writeChan inChan [UpdateListE e [(time, input)] | e <- mySourceEs]
 
     -- Listen for messages from other nodes.
-    forM_ (Map.assocs handles) $ \(otherNode, (_, recvChan)) -> forkIO
+    forM_ (Map.assocs handles) $ \(_otherNode, (_, recvChan)) -> forkIO
         $ writeChan inChan =<< readChan recvChan
 
     -- Thread that just processes inChan, keeps track of the whole circuit and
     -- decides what listeners to execute (sending them to listenersChan/msgChan).
+    let (circuit0, initialUpdates) = mkLiveCircuit circuit :: (LiveCircuit myNode, [UpdateList])
+    changesChan :: Chan [UpdateList] <- newChan
+    writeChan changesChan initialUpdates
     listenersChan :: Chan (IO ()) <- newChan
     outMsgChan :: Chan (IO ()) <- newChan
-    liveCircuitRef <- newIORef (mkLiveCircuit circuit)
+    liveCircuitRef <- newIORef circuit0
     _ <- forkIO . forever $ do
         -- Update state: Calculate for each behavior what is known and up to what time
-        (time, updates) <- readChan inChan
+        updates <- readChan inChan
         oldLiveCircuit <- readIORef liveCircuitRef
-        let (newLiveCircuit, changedBehs) = lcTransaction oldLiveCircuit time updates
+        let (newLiveCircuit, changes) = lcTransaction oldLiveCircuit updates
         writeIORef liveCircuitRef newLiveCircuit
+        writeChan changesChan changes
 
-        -- Fullfill responsibilities
+    -- Fullfill responsibilities
+    _ <- forkIO . forever $ do
+        changes <- readChan changesChan
         forM_ responsabilities $ \(OnPossibleChange b isLocalListener action) -> 
-            when ((BehaviorIx' b) `elem` changedBehs)
+            when (any (\case
+                    UpdateListB ub _ -> b === ub
+                    _                -> False
+                ) changes)
+            -- when ((BehaviorIx' b) `elem` changes)
                 (writeChan (if isLocalListener then listenersChan else outMsgChan) action)
 
     -- Thread that just executes listeners
@@ -303,102 +359,127 @@ actuate myNodeProxy
     
     return ()
 
-mkLiveCircuit :: Circuit -> LiveCircuit
-mkLiveCircuit c = fst (lcTransaction shortCircuit 0 [])
+mkLiveCircuit :: forall myNode . Typeable myNode 
+              => Circuit -> (LiveCircuit myNode, [UpdateList])
+mkLiveCircuit c = (lc, initialUpdatesOwnedBeh ++ initialUpdatesDerived)
     where
-        shortCircuit =  LiveCircuit
+        (lc, initialUpdatesDerived) = lcTransaction LiveCircuit
             { lcCircuit     = c
-            , lcGateMaxT    = const (-1)
-            , lcBehVal      = error "Imposible! failed to set initial behavior value."
+            , lcBehChanges  = const []
             , lcEvents      = const []
-            }
+            } initialUpdatesOwnedBeh
 
-lcBehValTimeError :: a
-lcBehValTimeError = error "Attempt to access behavior value outside of known time."
+
+        initialUpdatesOwnedBeh = mapMaybe
+            (\case
+                GateIx' (GateIxB bix)
+                  | isOwned (Proxy @myNode) bix
+                  -> case circBeh c bix of
+                        Step bix2 _  -> Just (UpdateListB bix [(0, bix2)])
+                        MapB _ _   -> Nothing
+                        Ap _ _     -> Nothing
+                        SendB _ _  -> Nothing
+                _ -> Nothing
+            )
+            (circAllGates c) 
 
 -- Transactionally update the circuit. Returns (_, changed behaviors (lcBehMaxT has increased))
-lcTransaction :: LiveCircuit -> Time -> [Update] -> (LiveCircuit, [()])
-lcTransaction lc t ups = (lintLiveCircuit LiveCircuit
-    { lcCircuit     = c
-    , lcGateMaxT    = lcGateMaxT'
-    , lcBehVal      = lcBehVal'
-    , lcEvents      = lcEvents'
-    }, error "TODO calculate changes behaviors values, and new evetns (may be multiple occs per event! so use a list maybe)")
+lcTransaction :: forall myNode . (Typeable myNode)
+              => LiveCircuit myNode -> [UpdateList] -> (LiveCircuit myNode, [UpdateList])
+lcTransaction lc ups = assert lint (lc', error "TODO calculate changes behaviors values, and new evetns (may be multiple occs per event! so use a list maybe)")
     where
+        lc' = lintLiveCircuit LiveCircuit
+                { lcCircuit     = c
+                , lcBehChanges  = lcBehChanges'
+                , lcEvents      = lcEvents'
+                }
+
+        myNodeP = Proxy @myNode
+        lint
+            -- All updates are for Behaviors/Events are NOT derived/no-update
+            =  all (not . flip elem [DerivedUpdate, NoUpdate])
+                (fmap (\up -> case up of
+                        UpdateListB b _ -> updateWay myNodeP (circBeh c b)
+                        UpdateListE e _ -> updateWay myNodeP (circEvt c e))
+                    ups)
+
+            -- All updates are after maxT
+            && all (\up -> case up of
+                    UpdateListB b ul -> all (lcGateMaxT lc (GateIxB b) <) (fst <$> ul)
+                    UpdateListE e ul -> all (lcGateMaxT lc (GateIxE e) <) (fst <$> ul))
+                ups
+
+        -- TODO asset that all updates are after their corresponding Event/Behavior's MaxT time.
+        --      we have at most 1 UpdateList per gate
+
         c = lcCircuit lc
 
         -- Assumption (A): since we assuem that we get complete and inorder info about each "remote" gate from a
         -- unique remote node, we can immediatelly increase lcBehMaxT and know that the value hasn't changed
-        -- sine that last update we received. Likewise we can be sure that there are no earlier events that we
-        -- have "missed".
-
-        lcGateMaxT' :: forall (owner :: Node) (a :: Type) . (Typeable owner, Typeable a)
-                   => GateIx owner a -> Time
-        lcGateMaxT' gix = case findUpdate gix of
-            -- Is updated in this transaction, so use transaction time.
-            Just _ -> t
-            -- Else use min of dependants. If no dependants, then no change.
-            Nothing -> let
-                deps = gateIxDeps c gix
-                in if null deps
-                    then lcGateMaxT lc gix -- No change
-                    else minimum $ (\(GateIx' dep) -> lcGateMaxT' dep) <$> deps
+        -- sine the previous update we received. Likewise we can be sure that there are no earlier events that we
+        -- have missed.
 
         -- TODO/NOTE this is super inefficient
-        lcBehVal' :: forall (owner :: Node) a . (Typeable owner, Typeable a)
-                 => Time -> BehaviorIx owner a -> Maybe a
-        lcBehVal' t' b
-            | t' > lcGateMaxT' bGateIx = Nothing
-            | otherwise          = case findUpdate (GateIxB b) of
-                -- Is updated in this transaction, so use transaction value.
-                -- TODO can we get rid of the unsafeCoerce here? We know the type is correct
-                Just val -> unsafeCoerce $ Just val
-                -- Else use min of dependants. If no dependants, then no change.
-                Nothing -> case circBeh c b of
-                    Step aInit eA -> let
-                                    evtOccs = lcEvents' eA
-                                    occMay = find ((t'>=) . fst) evtOccs  -- Note (>=) implies value changes *on* the event not after.
-                                    in Just (maybe aInit snd occMay)    -- Is it correct to accept t < 0?
-                    MapB f bA    -> f <$> lcBehVal' t' bA
-                    Ap fb ib     -> let
-                        -- The values should be known, we we use fromJust to fail fast.
-                        f = fromJust (lcBehVal' t' fb)
-                        i = fromJust (lcBehVal' t' ib)
-                        in Just (f i)
-                    -- Send doesnt change the value from bA. Note that this subtly implies that when the owner sends
-                    -- the value, it sends it as the value of bA, not the (SendB _ bA) behavior. (***)
-                    SendB _ bA   -> lcBehVal' t' bA
+        lcBehChanges' :: forall (owner :: Node) a . (Typeable owner, Typeable a)
+                 => BehaviorIx owner a -> [(Time, a)]
+        lcBehChanges' bix = case updateWay myNodeP b of
+            NoUpdate       -> []
+            LocalUpdate    -> fromUpdatesList
+            RemoteUpdate   -> fromUpdatesList
+            DerivedUpdate  -> case b of
+                SendB {}           -> error "SendB Behavior cannot be derived."
+                Step _ eix         -> lcEvents lc' eix
+                MapB f bixParent   -> fmap f <$> lcBehChanges lc' bixParent
+                Ap bixF bixArg     -> apB (lcBehChanges lc' bixF) (lcBehChanges lc' bixArg)
             where
-                bGateIx = GateIxB b
+                b = circBeh c bix
+                fromUpdatesList = findUpdates (GateIxB bix) ++ lcBehChanges lc bix
+
+                apB :: [(Time, j -> k)] -> [(Time, j)] -> [(Time, k)]
+                apB [] _ = []
+                apB _ [] = []
+                apB ((tf,f):tfs) ((ta,a):tas) = case tf `compare` ta of
+                    EQ -> (tf, f a) : apB tfs tas
+                    LT -> (ta, f a) : apB tfs ((ta,a):tas)
+                    GT -> (tf, f a) : apB ((tf,f):tfs) tas 
+
 
         lcEvents'  :: forall (owner :: Node) a . (Typeable owner, Typeable a)
                 => EventIx owner a -> [(Time, a)]
-        lcEvents' e = case findUpdate (GateIxE e) of
-            Just val -> (t, val) : previousOccs
-            Nothing -> case circEvt c e of
+        lcEvents' eix = case updateWay myNodeP e of
+            NoUpdate       -> []
+            LocalUpdate    -> fromUpdatesList
+            RemoteUpdate   -> fromUpdatesList
+            DerivedUpdate  -> case e of
                 -- Nothing for source event even if it is local, because we will get this as an Update.
-                Source _        -> previousOccs
-                MapE f eA       -> (\(occT, occVal) -> (occT, f occVal)) <$> lcEvents' eA
-                Sample f b eA   -> [(t', f bVal eVal) | (t', eVal) <- lcEvents' eA
-                                                      , let bVal = fromJust (lcBehVal' t' b) ]
-                -- See (***) note on SendB case above.
-                SendE _ eA      -> lcEvents' eA
+                Source {}        -> error "Source Event cannot be derived."
+                SendE {}         -> error "SendE Event cannot be derived."
+                MapE f eA        -> (\(occT, occVal) -> (occT, f occVal)) <$> lcEvents' eA
+                Sample f bix eA  -> [(sampleT, f bVal eVal)
+                                        | (sampleT, eVal) <- lcEvents' eA
+                                        , let bVal = lcBehVal lc' sampleT bix ]
             where
-                previousOccs = lcEvents lc e
+                e = circEvt c eix
+                fromUpdatesList = findUpdates (GateIxE eix) ++ lcEvents lc eix
 
-        findUpdate :: GateIx owner a -> Maybe a
-        findUpdate g = headMay (mapMaybe maybeVal ups)
+        findUpdates :: GateIx owner a -> [(Time, a)]
+        findUpdates g
+            = sortBy (flip (compare `on` fst))     -- sort into reverse chronological order
+            . concat 
+            . mapMaybe changesMay
+            $ ups
             where
                 gv = case g of
                     GateIxB (BehaviorIx bv) -> bv
                     GateIxE (EventIx    ev) -> ev
-                maybeVal (UpdateB (BehaviorIx v) val)
-                    | v == gv   = Just (unsafeCoerce val)
+                changesMay (UpdateListB (BehaviorIx v) changes)
+                    | v == gv   = Just (unsafeCoerce changes)
                     | otherwise = Nothing
-                maybeVal (UpdateE (EventIx    v) val)
-                    | v == gv   = Just (unsafeCoerce val)
+                changesMay (UpdateListE (EventIx    v) events)
+                    | v == gv   = Just (unsafeCoerce events)
                     | otherwise = Nothing
 
--- Assertiong on LiveCircuitls
-lintLiveCircuit :: LiveCircuit -> LiveCircuit
+-- Asserting on LiveCircuitls
+lintLiveCircuit :: LiveCircuit myNode -> LiveCircuit myNode
 lintLiveCircuit = id -- TODO
+    
