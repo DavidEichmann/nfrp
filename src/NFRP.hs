@@ -214,7 +214,7 @@ data Node
     | ClientB
     | ClientC
     | Server
-    deriving (Eq, Ord)
+    deriving (Eq, Ord, Bounded, Enum)
 
 class SingNode (node :: Node) where singNode :: Proxy node -> Node
 instance SingNode ClientA where singNode _ = ClientA
@@ -252,32 +252,7 @@ isOwned po1 _ = typeRep po1 == typeRep (Proxy @o2)
 -- The only local input we care about is key presses.
 type LocalInput = Char
 
-calculatorCircuit :: Moment ()
-calculatorCircuit = do
-    aKeyB <- (beh . (Step '0')) =<< (evt $ Source (Proxy @ClientA))
-    bKeyB <- (beh . (Step '+')) =<< (evt $ Source (Proxy @ClientB))
-    cKeyB <- (beh . (Step '0')) =<< (evt $ Source (Proxy @ClientC))
-    
-    leftB  <- beh =<< SendB (Proxy @ClientA) (Proxy @'[Server]) <$> readIntB aKeyB
-    rightB <- beh =<< SendB (Proxy @ClientC) (Proxy @'[Server]) <$> readIntB cKeyB
-    opB    <- beh =<< SendB (Proxy @ClientB) (Proxy @'[Server]) <$> (beh $ MapB (\case
-                            '+' -> (+)
-                            '/' -> div
-                            '*' -> (*)
-                            _   -> (-) :: (Int -> Int -> Int)) 
-                        bKeyB)
-
-    resultB_ <- beh $ opB `Ap` leftB
-    _resultB  <- beh $ resultB_ `Ap` rightB
-
-    return ()
-
-    where
-        readIntB :: Typeable o
-                 => BehaviorIx o Char -> Moment (BehaviorIx o Int)
-        readIntB = beh . MapB (\c -> readDef 0 [c])
-
-type Time = Int -- TODO Int64? nanoseconds?
+type Time = Integer -- TODO Int64? nanoseconds?
 
 actuate :: forall (myNode :: Node)
         .  (Typeable myNode, SingNode myNode)
