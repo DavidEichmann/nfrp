@@ -24,6 +24,8 @@ import Data.Map as Map
 import NFRP
 import UI.NCurses
 
+import Data.Kind
+import Data.IORef
 import Control.Monad.IO.Class (liftIO)
 import Data.Time.Clock (NominalDiffTime, getCurrentTime, diffUTCTime)
 import Control.Concurrent (Chan, newChan, writeChan)
@@ -63,12 +65,26 @@ main = do
     localInChans <- Map.fromList <$> sequence [ (node,) <$> newChan 
                                                 | node <- [minBound..maxBound] ]
     
+    lhsRef :: IORef String <- newIORef ""
+    opRef  :: IORef String <- newIORef ""
+    rhsRef :: IORef String <- newIORef ""
+    totRef :: IORef String <- newIORef ""
+    
     let
+        ctx :: CtxF node
+        ctx = Ctx
+            ( lhsRef
+            , opRef
+            , rhsRef
+            , totRef
+            )
+
         mainNode :: forall (node :: Node)
                  .  (SingNode node, Typeable node)
                  => Proxy node -> IO ()
         mainNode myNodeP
             = actuate
+                ctx
                 myNodeP
                 Server
                 ((round :: NominalDiffTime -> Integer)
@@ -90,21 +106,28 @@ main = do
     aClientC <- async $ mainNode (Proxy @ClientC)
     aServer  <- async $ mainNode (Proxy @Server)
 
-    mainUI (localInChans ! ClientA)
+    mainUI ctx (localInChans ! ClientA)
 
     putStrLn "Exiting."
     return ()
 
+type Ctx    = (IORef String, IORef String, IORef String, IORef String)
+data CtxF :: Node -> Type where
+    Ctx :: Ctx -> CtxF n
 
-mainUI :: Chan Char -> IO ()
-mainUI keyInputC = runCurses $ do
+mainUI :: CtxF n -> Chan Char -> IO ()
+mainUI (Ctx (lhsRef, opRef, rhsRef, totRef)) keyInputC = runCurses $ do
     setEcho False
     w <- defaultWindow
     let mainUILoop = do
+            lhs <- liftIO $ readIORef lhsRef
+            op  <- liftIO $ readIORef opRef
+            rhs <- liftIO $ readIORef rhsRef
+            tot <- liftIO $ readIORef totRef
             updateWindow w $ do
                 clear
                 moveCursor 1 10
-                drawString "Hello world!"
+                drawString $ lhs ++ " " ++ op ++ " " ++ rhs ++ " = " ++ tot
                 moveCursor 3 10
                 drawString "(press q to quit)"
                 moveCursor 0 0
@@ -120,27 +143,44 @@ mainUI keyInputC = runCurses $ do
     mainUILoop
 
 
-calculatorCircuit :: Moment ()
+calculatorCircuit :: Moment CtxF ()
 calculatorCircuit = do
     aKeyB <- (beh . (Step '0')) =<< (evt $ Source (Proxy @ClientA))
-    bKeyB <- (beh . (Step '+')) =<< (evt $ Source (Proxy @ClientB))
+    bKeyBLocal <- (beh . (Step '+')) =<< (evt $ Source (Proxy @ClientB))
     cKeyB <- (beh . (Step '0')) =<< (evt $ Source (Proxy @ClientC))
     
-    leftB  <- beh =<< SendB (Proxy @ClientA) (Proxy @'[Server]) <$> readIntB aKeyB
-    rightB <- beh =<< SendB (Proxy @ClientC) (Proxy @'[Server]) <$> readIntB cKeyB
-    opB    <- beh =<< SendB (Proxy @ClientB) (Proxy @'[Server]) <$> (beh $ MapB (\case
+    opCharB <- beh
+             . SendB (Proxy @ClientB) (Proxy @'[Server, ClientA, ClientB, ClientC])
+             $ bKeyBLocal
+
+
+    leftB  <- beh =<< SendB (Proxy @ClientA) (Proxy @'[Server, ClientA, ClientB, ClientC]) <$> readIntB aKeyB
+    rightB <- beh =<< SendB (Proxy @ClientC) (Proxy @'[Server, ClientA, ClientB, ClientC]) <$> readIntB cKeyB
+    opB    <- beh =<< SendB (Proxy @ClientB) (Proxy @'[Server, ClientA, ClientB, ClientC]) <$> (beh $ MapB (\case
                             '+' -> (+)
                             '/' -> div
                             '*' -> (*)
                             _   -> (-) :: (Int -> Int -> Int)) 
-                        bKeyB)
+                        opCharB)
 
     resultB_ <- beh $ opB `Ap` leftB
-    _resultB  <- beh $ resultB_ `Ap` rightB
+    totalB   <- beh $ resultB_ `Ap` rightB
+
+    let bind :: forall (n :: Node)
+             .  IsElem n '[Server, ClientA, ClientB, ClientC]
+             => Proxy n -> Moment CtxF ()
+        bind listenNodeP = do
+            listenB listenNodeP leftB   (\(Ctx (r,_,_,_)) -> writeIORef r . show)
+            listenB listenNodeP opCharB (\(Ctx (_,r,_,_)) -> writeIORef r . show)
+            listenB listenNodeP rightB  (\(Ctx (_,_,r,_)) -> writeIORef r . show)
+            listenB listenNodeP totalB  (\(Ctx (_,_,_,r)) -> writeIORef r . show)
+    bind (Proxy @ClientA)
+    bind (Proxy @ClientB)
+    bind (Proxy @ClientC)
 
     return ()
 
     where
         readIntB :: Typeable o
-                 => BehaviorIx o Char -> Moment (BehaviorIx o Int)
+                 => BehaviorIx o Char -> Moment CtxF (BehaviorIx o Int)
         readIntB = beh . MapB (\c -> readDef 0 [c])

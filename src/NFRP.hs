@@ -16,7 +16,10 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE GADTs #-}
 
-module NFRP where
+module NFRP
+    ( module NFRP
+    , module TypeLevelStuff
+    ) where
 
 import Safe
 import Control.Monad.State
@@ -121,30 +124,33 @@ instance Eq BehaviorIx' where
     (BehaviorIx' (BehaviorIx v1)) == (BehaviorIx' (BehaviorIx v2)) = v1 == v2
 
 -- Now we'd like a monad to build this circuit in
-type Moment a = State MomentState a
-data MomentState = MomentState
-    { momentNextVert :: Graph.Vertex
-    , momentBehDyn   :: Map.Map Graph.Vertex Dynamic
-    , momentEdges    :: [Graph.Edge]
-    , momentAllGates :: [GateIx']
+type Moment ctxF a = State (MomentState ctxF) a
+data MomentState (ctxF :: Node -> Type) = MomentState
+    { momentNextVert  :: Graph.Vertex
+    , momentBehDyn    :: Map.Map Graph.Vertex Dynamic
+    , momentEdges     :: [Graph.Edge]
+    , momentAllGates  :: [GateIx']
+    , momentListeners :: [Listener ctxF]
     }
+
+data Listener (ctxF :: Node -> Type) = forall n os a . IsElem n os => Listener (Proxy n) (BehaviorIx os a) (ctxF n -> a -> IO ())
 
 data UpdateList = forall os a . (Typeable os, Typeable a)
                 => UpdateListB (BehaviorIx os a) [(Time, a)]
             | forall os a . (Typeable os, Typeable a)
                 => UpdateListE (EventIx    os a) [(Time, a)]
 
-data Responsibility (responsibleNode :: Node)
+data Responsibility localCtx (responsibleNode :: Node)
     = forall (os :: [Node]) a . (Typeable os, Typeable a) => 
         OnPossibleChange
             (BehaviorIx os a)
             Bool    -- ^ Is it a local listerner? As opposed to sending a msg to another node.
-            (IO ())
+            (localCtx -> IO ())
 
 beh :: (Typeable os, Typeable a)
-    => Behavior os a -> Moment (BehaviorIx os a)
+    => Behavior os a -> Moment ctxF (BehaviorIx os a)
 beh b = do
-    MomentState v bd es allGates <- get
+    MomentState v bd es allGates ls <- get
     let behIx = BehaviorIx v
     put $ MomentState
             -- Increment vertex index.
@@ -154,12 +160,13 @@ beh b = do
             -- Add eges and behavior.
             (((v,) <$> behDepVerts b) ++ es)
             (GateIx' (GateIxB behIx) : allGates)
+            ls
     return behIx
 
 evt :: (Typeable os, Typeable a)
-    => Event os a -> Moment (EventIx os a)
+    => Event os a -> Moment ctxF (EventIx os a)
 evt e = do
-    MomentState v bd es allGates <- get
+    MomentState v bd es allGates ls <- get
     let evtIx = EventIx v
     put $ MomentState
             -- Increment vertex index.
@@ -169,6 +176,7 @@ evt e = do
             -- Add eges and event.
             (((v,) <$> evtDepVerts e) ++ es)
             (GateIx' (GateIxE evtIx) : allGates)
+            ls
     return evtIx
 
 (===) :: (Typeable a, Typeable b, Eq a) => a -> b -> Bool
@@ -202,10 +210,15 @@ gateIxDeps :: (Typeable os, Typeable a) => Circuit -> GateIx os a -> [GateIx']
 gateIxDeps c (GateIxB bix) = behDeps $ circBeh c bix
 gateIxDeps c (GateIxE eix) = evtDeps $ circEvt c eix
 
-buildCircuit :: Moment () -> Circuit
+listenB :: (IsElem n os) => Proxy n -> BehaviorIx os a -> (ctxF n -> a -> IO ()) -> Moment ctxF ()
+listenB node bix listener = modify (\ms -> ms {
+        momentListeners = Listener node bix listener : momentListeners ms 
+    })
+
+buildCircuit :: Moment ctxF () -> Circuit
 buildCircuit builder = Circuit graph behDyn allBehs
     where
-        (_, MomentState nextVIx behDyn edges allBehs) = runState builder (MomentState 0 Map.empty [] [])
+        (_, MomentState nextVIx behDyn edges allBehs ls) = runState builder (MomentState 0 Map.empty [] [] [])
         graph = Graph.buildG (0, nextVIx - 1) edges
 
 
@@ -255,16 +268,18 @@ type LocalInput = Char
 
 type Time = Integer -- TODO Int64? nanoseconds?
 
-actuate :: forall (myNode :: Node)
+actuate :: forall (myNode :: Node) (ctxF :: Node -> Type)
         .  (Typeable myNode, SingNode myNode)
-        => Proxy myNode                        -- What node to run.
+        => ctxF myNode
+        -> Proxy myNode                -- What node to run.
         -> Node                        -- Clock sync node
         -> IO Time                     -- Local clock
-        -> Moment ()                   -- The circuit to build
+        -> Moment ctxF ()               -- The circuit to build
         -> Chan LocalInput             -- Local inputs
         -> Map.Map Node (Chan [UpdateList], Chan [UpdateList])   -- (send, receive) Chanels to other nodes
         -> IO ()
-actuate myNodeProxy
+actuate ctx
+        myNodeProxy
         _clockSyncNode
         getLocalTime
         mkCircuit
@@ -281,7 +296,7 @@ actuate myNodeProxy
     -- Gather Listeners (list of "on some behavior changed, perform some IO action")
     --    TODO allow IO listeners to be specified in the Moment monad and saved in the Circuit
     --    Add IO listeners for sending Msgs to other nodes.
-    let responsabilities = trace "TODO responsabilities" [] :: [Responsibility myNode]
+    let responsabilities = trace "TODO responsabilities" [] :: [Responsibility ctx myNode]
 
     -- Get all source behaviors for this node.
     let mySourceEs :: [EventIx '[myNode] LocalInput]
@@ -329,7 +344,7 @@ actuate myNodeProxy
                     _                -> False
                 ) changes)
             -- when ((BehaviorIx' b) `elem` changes)
-                (writeChan (if isLocalListener then listenersChan else outMsgChan) action)
+                (writeChan (if isLocalListener then listenersChan else outMsgChan) (action ctx))
 
     -- Thread that just executes listeners
     aListeners <- async . forever . join . readChan $ listenersChan
