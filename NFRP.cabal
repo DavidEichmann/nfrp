@@ -49,7 +49,8 @@ executable Main
         NFRP -any,
         safe -any,
         gtk3 -any,
-        time -any
+        time -any,
+        ncurses -any
 
 test-suite NFRP-test
     type: exitcode-stdio-1.0

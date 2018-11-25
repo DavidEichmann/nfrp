@@ -17,14 +17,17 @@
 {-# LANGUAGE GADTs #-}
 
 module Main where
-
+    
 import Safe
 import Data.Typeable
 import Data.Map as Map
 import NFRP
+import UI.NCurses
 
+import Control.Monad.IO.Class (liftIO)
 import Data.Time.Clock (NominalDiffTime, getCurrentTime, diffUTCTime)
-import Control.Concurrent (newChan, forkIO)
+import Control.Concurrent (Chan, newChan, writeChan)
+import Control.Concurrent.Async
 -- import System.Environment (getArgs)
 
 
@@ -41,14 +44,21 @@ import Control.Concurrent (newChan, forkIO)
 --         -> IO ()
 main :: IO ()
 main = do
+
+    putStrLn "Simulating all nodes..."
+
     t0 <- getCurrentTime
     
+    let nodePairs = [ (nodeFrom, nodeTo)
+                    | nodeFrom <- [minBound..maxBound]
+                    , nodeTo   <- [minBound..maxBound]
+                    , nodeFrom /= nodeTo]
+
     netChans <- Map.fromList <$> sequence 
         [ do
-            inC  <- newChan
-            outC <- newChan
-            return (node, (inC, outC))
-        | node <- [minBound..maxBound] ]
+            c  <- newChan
+            return ((nodeFrom, nodeTo), c)
+        | (nodeFrom, nodeTo) <- nodePairs ]
 
     localInChans <- Map.fromList <$> sequence [ (node,) <$> newChan 
                                                 | node <- [minBound..maxBound] ]
@@ -66,14 +76,49 @@ main = do
                     .   diffUTCTime t0
                     <$> getCurrentTime)
                 calculatorCircuit
-                (localInChans Map.! (singNode myNodeP))
-                netChans
+                (localInChans ! myNode)
+                (Map.fromList 
+                    [ (otherNode,
+                        ( netChans ! (myNode, otherNode)
+                        , netChans ! (otherNode, myNode)))
+                    | otherNode <- [minBound..maxBound], myNode /= otherNode])
+            where
+                myNode = singNode myNodeP
 
-    _ <- forkIO $ mainNode (Proxy @ClientA)
-    _ <- forkIO $ mainNode (Proxy @ClientB)
-    _ <- forkIO $ mainNode (Proxy @ClientC)
-    _ <- forkIO $ mainNode (Proxy @Server)
+    aClientA <- async $ mainNode (Proxy @ClientA)
+    aClientB <- async $ mainNode (Proxy @ClientB)
+    aClientC <- async $ mainNode (Proxy @ClientC)
+    aServer  <- async $ mainNode (Proxy @Server)
+
+    mainUI (localInChans ! ClientA)
+
+    putStrLn "Exiting."
     return ()
+
+
+mainUI :: Chan Char -> IO ()
+mainUI keyInputC = runCurses $ do
+    setEcho False
+    w <- defaultWindow
+    let mainUILoop = do
+            updateWindow w $ do
+                clear
+                moveCursor 1 10
+                drawString "Hello world!"
+                moveCursor 3 10
+                drawString "(press q to quit)"
+                moveCursor 0 0
+            render
+            ev <- getEvent w (Just 15)
+            case ev of
+                Just (EventCharacter 'q') -> return ()
+                Just (EventCharacter c) -> do
+                    liftIO $ writeChan keyInputC c
+                    mainUILoop
+                _ -> mainUILoop
+
+    mainUILoop
+
 
 calculatorCircuit :: Moment ()
 calculatorCircuit = do

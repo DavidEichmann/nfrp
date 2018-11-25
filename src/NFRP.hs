@@ -33,6 +33,7 @@ import qualified Data.Graph as Graph
 import qualified Data.Map as Map
 
 import Control.Concurrent
+import Control.Concurrent.Async
 
 import Debug.Trace
 import Control.Exception.Base (assert)
@@ -280,7 +281,7 @@ actuate myNodeProxy
     -- Gather Listeners (list of "on some behavior changed, perform some IO action")
     --    TODO allow IO listeners to be specified in the Moment monad and saved in the Circuit
     --    Add IO listeners for sending Msgs to other nodes.
-    let responsabilities = error "TODO" :: [Responsibility myNode]
+    let responsabilities = trace "TODO responsabilities" [] :: [Responsibility myNode]
 
     -- Get all source behaviors for this node.
     let mySourceEs :: [EventIx '[myNode] LocalInput]
@@ -294,13 +295,13 @@ actuate myNodeProxy
     inChan :: Chan [UpdateList] <- newChan
 
     -- Listen for local inputs (time is assigned here)
-    _ <- forkIO . forever $ do
+    aLocalInput <- async . forever $ do
         input <- readChan localInChan
         time <- getTime
         writeChan inChan [UpdateListE e [(time, input)] | e <- mySourceEs]
 
     -- Listen for messages from other nodes.
-    forM_ (Map.assocs handles) $ \(_otherNode, (_, recvChan)) -> forkIO
+    asRcv <- forM (Map.assocs handles) $ \(_otherNode, (_, recvChan)) -> async
         $ writeChan inChan =<< readChan recvChan
 
     -- Thread that just processes inChan, keeps track of the whole circuit and
@@ -311,7 +312,7 @@ actuate myNodeProxy
     listenersChan :: Chan (IO ()) <- newChan
     outMsgChan :: Chan (IO ()) <- newChan
     liveCircuitRef <- newIORef circuit0
-    _ <- forkIO . forever $ do
+    aLiveCircuit <- async . forever $ do
         -- Update state: Calculate for each behavior what is known and up to what time
         updates <- readChan inChan
         oldLiveCircuit <- readIORef liveCircuitRef
@@ -320,7 +321,7 @@ actuate myNodeProxy
         writeChan changesChan changes
 
     -- Fullfill responsibilities
-    _ <- forkIO . forever $ do
+    aResponsibilities <- async . forever $ do
         changes <- readChan changesChan
         forM_ responsabilities $ \(OnPossibleChange b isLocalListener action) -> 
             when (any (\case
@@ -331,13 +332,21 @@ actuate myNodeProxy
                 (writeChan (if isLocalListener then listenersChan else outMsgChan) action)
 
     -- Thread that just executes listeners
-    _ <- forkIO . forever . join . readChan $ listenersChan
+    aListeners <- async . forever . join . readChan $ listenersChan
 
     -- Thread that just sends messages to other nodes
-    _ <- forkIO . forever . join . readChan $ outMsgChan
+    -- aSend <- async . forever . join . readChan $ outMsgChan
+    forever . join . readChan $ outMsgChan
 
     -- TODO some way to stop gracefully.
     
+    -- wait aLocalInput
+    -- sequence (wait <$> asRcv)
+    -- wait aLiveCircuit
+    -- wait aResponsibilities
+    -- wait aListeners
+    -- wait aSend
+
     return ()
 
 mkLiveCircuit :: forall myNode . Typeable myNode 
