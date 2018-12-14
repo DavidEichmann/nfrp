@@ -166,17 +166,15 @@ calculatorCircuit = do
     resultB_ <- beh $ opB `Ap` leftB
     totalB   <- beh $ resultB_ `Ap` rightB
 
-    let bind :: forall (n :: Node)
-             .  IsElem n '[Server, ClientA, ClientB, ClientC]
-             => Proxy n -> Moment CtxF ()
+    let bind :: forall (ns :: '[Node])
+             .  IsSubsetEq ns '[Server, ClientA, ClientB, ClientC]
+             => Proxy ns -> Moment CtxF ()
         bind listenNodeP = do
             listenB listenNodeP leftB   (\(Ctx (r,_,_,_)) -> writeIORef r . show)
             listenB listenNodeP opCharB (\(Ctx (_,r,_,_)) -> writeIORef r . show)
             listenB listenNodeP rightB  (\(Ctx (_,_,r,_)) -> writeIORef r . show)
             listenB listenNodeP totalB  (\(Ctx (_,_,_,r)) -> writeIORef r . show)
-    bind (Proxy @ClientA)
-    bind (Proxy @ClientB)
-    bind (Proxy @ClientC)
+    bind (Proxy @'[ClientA, ClientB, ClientC])
 
     return ()
 
