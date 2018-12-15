@@ -136,7 +136,10 @@ data MomentState (ctxF :: Node -> Type) = MomentState
     , momentListeners :: [Listener ctxF]
     }
 
-data Listener (ctxF :: Node -> Type) = forall n os a . IsElem n os => Listener (Proxy n) (BehaviorIx os a) (ctxF n -> a -> IO ())
+data Listener (ctxF :: Node -> Type)
+    = forall n os a
+    . (IsElem n os, Typeable n, Typeable os, Typeable a)
+    => Listener (Proxy n) (BehaviorIx os a) (ctxF n -> a -> IO ())
 
 data UpdateList = forall os a . (Typeable os, Typeable a)
                 => UpdateListB (BehaviorIx os a) [(Time, a)]
@@ -148,7 +151,7 @@ data Responsibility localCtx (responsibleNode :: Node)
         OnPossibleChange
             (BehaviorIx os a)
             Bool    -- ^ Is it a local listerner? As opposed to sending a msg to another node.
-            (localCtx -> IO ())
+            (localCtx -> a -> IO ())
 
 beh :: (Typeable os, Typeable a)
     => Behavior os a -> Moment ctxF (BehaviorIx os a)
@@ -213,15 +216,19 @@ gateIxDeps :: (Typeable os, Typeable a) => Circuit -> GateIx os a -> [GateIx']
 gateIxDeps c (GateIxB bix) = behDeps $ circBeh c bix
 gateIxDeps c (GateIxE eix) = evtDeps $ circEvt c eix
 
-listenB :: (IsElem n os) => Proxy n -> BehaviorIx os a -> (ctxF n -> a -> IO ()) -> Moment ctxF ()
+listenB :: (IsElem n os, Typeable os, Typeable n, Typeable a)
+        => Proxy n -> BehaviorIx os a -> (ctxF n -> a -> IO ()) -> Moment ctxF ()
 listenB node bix listener = modify (\ms -> ms {
         momentListeners = Listener node bix listener : momentListeners ms 
     })
 
-buildCircuit :: Moment ctxF () -> Circuit
-buildCircuit builder = Circuit graph behDyn allBehs
+buildCircuit :: Moment ctxF () -> (Circuit, [Listener ctxF])
+buildCircuit builder
+    = ( Circuit graph behDyn allBehs
+      , ls
+      )
     where
-        (_, MomentState nextVIx behDyn edges allBehs _ls) = runState builder (MomentState 0 Map.empty [] [] [])
+        (_, MomentState nextVIx behDyn edges allBehs ls) = runState builder (MomentState 0 Map.empty [] [] [])
         graph = Graph.buildG (0, nextVIx - 1) edges
 
 
@@ -272,7 +279,7 @@ type LocalInput = Char
 type Time = Integer -- TODO Int64? nanoseconds?
 
 actuate :: forall (myNode :: Node) (ctxF :: Node -> Type)
-        .  (Typeable myNode, SingNode myNode)
+        .  (Typeable ctxF, Typeable myNode, SingNode myNode)
         => ctxF myNode
         -> Proxy myNode                -- What node to run.
         -> Node                        -- Clock sync node
@@ -290,21 +297,30 @@ actuate ctx
         handles
   = do
     let _myNode = singNode myNodeProxy
-        circuit = buildCircuit mkCircuit
+        (circuit, listeners) = buildCircuit mkCircuit
 
     -- Clock synchronize with clockSyncNode if not myNode and wait for starting time. (TODO regularly synchronize clocks).
     -- Else accept clock sync with all other nodes, then braodcast a starting time (to start the circuit).
     let getTime = trace "TODO create node wide synchronized getTime function" getLocalTime
 
-    -- Gather Listeners (list of "on some behavior changed, perform some IO action")
-    let responsabilitiesListeners :: [Responsibility ctx myNode]
-        responsabilitiesListeners = _
+    -- Gather Responsabilities (list of "on some behavior changed, perform some IO action")
+    let myResponsabilitiesListeners :: [Responsibility (ctxF myNode) myNode]
+        myResponsabilitiesListeners
+            = mapMaybe (\(Listener _proxyNode bix handler) 
+                        -> OnPossibleChange
+                                bix
+                                True
+                                <$> cast handler)   -- This case filters for myNode handlers
+            $ listeners
 
-        responsabilitiesMessage :: [Responsibility ctx myNode]
-        responsabilitiesMessage = _
 
-        responsabilities :: [Responsibility ctx myNode]
-        responsabilities = responsabilitiesMessage ++ responsabilitiesListeners
+        myResponsabilitiesMessage :: [Responsibility (ctxF myNode) myNode]
+        myResponsabilitiesMessage = _
+
+        -- My node's responsabilities
+        responsabilities :: [Responsibility (ctxF myNode) myNode]
+        responsabilities
+            = myResponsabilitiesMessage ++ myResponsabilitiesListeners
 
     -- Get all source behaviors for this node.
     let mySourceEs :: [EventIx '[myNode] LocalInput]
@@ -346,13 +362,17 @@ actuate ctx
     -- Fullfill responsibilities: Listeners + sending to other nodes
     aResponsibilities <- async . forever $ do
         changes <- readChan changesChan
-        forM_ responsabilities $ \(OnPossibleChange b isLocalListener action) -> 
-            when (any (\case
-                    UpdateListB ub _ -> b === ub
-                    _                -> False   -- Because we don't support Event listeners 
-                ) changes)
-            -- when ((BehaviorIx' b) `elem` changes)
-                (writeChan (if isLocalListener then listenersChan else outMsgChan) (action ctx))
+        forM_ responsabilities $ \(OnPossibleChange bix isLocalListener action) -> 
+            -- TODO double forM_ is inefficient 
+            forM_ changes $ \case
+                UpdateListB bix' ((_time,latestValue):_)
+                    | bix === bix'
+                    -> writeChan
+                        (if isLocalListener then listenersChan else outMsgChan)
+                        (action ctx (unsafeCoerce latestValue))
+                -- Note we don't support Event listeners (yet).
+                _ -> return ()
+                
 
     -- Thread that just executes listeners
     aListeners <- async . forever . join . readChan $ listenersChan
