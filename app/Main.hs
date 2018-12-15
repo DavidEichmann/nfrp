@@ -103,13 +103,14 @@ main = do
     _aClientC <- async $ actuateNode Nothing     (Proxy @ClientC)
     _aServer  <- async $ actuateNode Nothing     (Proxy @Server)
 
-    -- mainUI aCtx (localInChans ! ClientA)
-    clickSomeButtons (localInChans ! ClientA)
+    inputGenAsync <- async (clickSomeButtons localInChans)
+    mainUI aCtx (localInChans ! ClientA)
 
-    wait _aClientA
-    wait _aClientB
-    wait _aClientC
-    wait _aServer
+    _ <- wait inputGenAsync
+    _ <- wait _aClientA
+    _ <- wait _aClientB
+    _ <- wait _aClientC
+    _ <- wait _aServer
 
     putStrLn "Exiting."
     return ()
@@ -118,15 +119,15 @@ type Ctx    = (IORef String, IORef String, IORef String, IORef String)
 data CtxF :: Node -> Type where
     Ctx :: Ctx -> CtxF n
 
-clickSomeButtons :: Chan Char -> IO ()
-clickSomeButtons chan = do
-    writeChan chan 'a'
-    writeChan chan 's'
-    writeChan chan 'd'
-    writeChan chan 'f'
-
-    -- Block
-    -- threadDelay 1000000000
+clickSomeButtons :: Map.Map Node (Chan Char) -> IO ()
+clickSomeButtons chans = do
+    let send node char = do
+            threadDelay (100000 `div` 2)
+            writeChan (chans Map.! node) char
+    send ClientA '9'
+    send ClientB '+'
+    send ClientC '4'
+    send ClientB '-'
 
     return ()
 

@@ -172,7 +172,7 @@ beh b = do
             -- Increment vertex index.
             (v+1)
             -- Add behavior to map.
-            (Map.insert v (toDyn behIx) bd)
+            (Map.insert v (toDyn b) bd)
             -- Add eges and behavior.
             (((v,) <$> behDepVerts b) ++ es)
             (GateIx' (GateIxB behIx) : allGates)
@@ -188,7 +188,7 @@ evt e = do
             -- Increment vertex index.
             (v+1)
             -- Add event to map.
-            (Map.insert v (toDyn evtIx) bd)
+            (Map.insert v (toDyn e) bd)
             -- Add eges and event.
             (((v,) <$> evtDepVerts e) ++ es)
             (GateIx' (GateIxE evtIx) : allGates)
@@ -442,11 +442,11 @@ actuate ctx
 
     putLog "Started all threads."
 
-    wait aLocalInput
-    sequence (wait <$> asRcv)
-    wait aLiveCircuit
-    wait aResponsibilities
-    wait aListeners
+    _ <- wait aLocalInput
+    _ <- sequence (wait <$> asRcv)
+    _ <- wait aLiveCircuit
+    _ <- wait aResponsibilities
+    _ <- wait aListeners
     -- wait aSend
 
     return ()
