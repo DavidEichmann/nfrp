@@ -32,7 +32,7 @@ import Data.IORef
 import Data.Proxy
 import Data.Kind
 import Data.Dynamic
-import Data.Maybe (mapMaybe)
+import Data.Maybe (mapMaybe, fromMaybe)
 import Data.List (find, sortBy)
 import Data.Function (on)
 import qualified Data.Graph as Graph
@@ -148,7 +148,7 @@ data MomentState (ctxF :: Node -> Type) = MomentState
 
 data Listener (ctxF :: Node -> Type)
     = forall n os a
-    . (IsElem n os, Typeable n, Typeable os, Typeable a)
+    . (IsElem n os, Typeable n, Typeable os, Typeable a, SingNode n)
     => Listener (Proxy n) (BehaviorIx os a) (ctxF n -> a -> IO ())
 
 data UpdateList = forall os a . (Typeable os, Typeable a)
@@ -226,7 +226,7 @@ gateIxDeps :: (Typeable os, Typeable a) => Circuit -> GateIx os a -> [GateIx']
 gateIxDeps c (GateIxB bix) = behDeps $ circBeh c bix
 gateIxDeps c (GateIxE eix) = evtDeps $ circEvt c eix
 
-listenB :: (IsElem n os, Typeable os, Typeable n, Typeable a)
+listenB :: (IsElem n os, Typeable os, Typeable n, Typeable a, SingNode n)
         => Proxy n -> BehaviorIx os a -> (ctxF n -> a -> IO ()) -> Moment ctxF ()
 listenB node bix listener = modify (\ms -> ms {
         momentListeners = Listener node bix listener : momentListeners ms
@@ -340,11 +340,16 @@ actuate ctx
     -- Gather Responsabilities (list of "on some behavior changed, perform some IO action")
     let myResponsabilitiesListeners :: [Responsibility (ctxF myNode) myNode]
         myResponsabilitiesListeners
-            = mapMaybe (\(Listener _proxyNode bix handler)
-                        -> OnPossibleChange
+            = mapMaybe (\case
+                Listener proxyNode bix handler
+                    | singNode proxyNode == myNode
+                    -> let
+                            handler' = fromMaybe (error "Unexpected listener type.") (cast handler)
+                        in Just $ OnPossibleChange
                                 bix
                                 True
-                                <$> cast handler)   -- This case filters for myNode handlers
+                                handler'   -- This case filters for myNode handlers
+                _   -> Nothing)
             $ listeners
 
 
