@@ -54,7 +54,8 @@ main = do
     let nodePairs = [ (nodeFrom, nodeTo)
                     | nodeFrom <- [minBound..maxBound]
                     , nodeTo   <- [minBound..maxBound]
-                    , nodeFrom /= nodeTo]
+                    , nodeFrom /= nodeTo
+                    ]
 
     netChans <- Map.fromList <$> sequence 
         [ do
@@ -63,27 +64,22 @@ main = do
         | (nodeFrom, nodeTo) <- nodePairs ]
 
     localInChans <- Map.fromList <$> sequence [ (node,) <$> newChan 
-                                                | node <- [minBound..maxBound] ]
-    
-    lhsRef :: IORef String <- newIORef ""
-    opRef  :: IORef String <- newIORef ""
-    rhsRef :: IORef String <- newIORef ""
-    totRef :: IORef String <- newIORef ""
+                                              | node <- [minBound..maxBound] ]
     
     let
-        ctx :: CtxF node
-        ctx = Ctx
-            ( lhsRef
-            , opRef
-            , rhsRef
-            , totRef
-            )
+        newCtx :: IO (CtxF node)
+        newCtx = Ctx <$> ((,,,)
+            <$> newIORef ""
+            <*> newIORef ""
+            <*> newIORef ""
+            <*> newIORef "")
 
-        mainNode :: forall (node :: Node)
+        actuateNode :: forall (node :: Node)
                  .  (SingNode node, Typeable node)
-                 => Proxy node -> IO ()
-        mainNode myNodeP
-            = actuate
+                 => Maybe (CtxF node) -> Proxy node -> IO ()
+        actuateNode ctxMay myNodeP = do
+            ctx <- maybe newCtx return ctxMay
+            actuate
                 ctx
                 myNodeP
                 Server
@@ -101,12 +97,13 @@ main = do
             where
                 myNode = singNode myNodeP
 
-    aClientA <- async $ mainNode (Proxy @ClientA)
-    aClientB <- async $ mainNode (Proxy @ClientB)
-    aClientC <- async $ mainNode (Proxy @ClientC)
-    aServer  <- async $ mainNode (Proxy @Server)
+    aCtx <- newCtx
+    _aClientA <- async $ actuateNode (Just aCtx) (Proxy @ClientA)
+    _aClientB <- async $ actuateNode Nothing     (Proxy @ClientB)
+    _aClientC <- async $ actuateNode Nothing     (Proxy @ClientC)
+    _aServer  <- async $ actuateNode Nothing     (Proxy @Server)
 
-    mainUI ctx (localInChans ! ClientA)
+    mainUI aCtx (localInChans ! ClientA)
 
     putStrLn "Exiting."
     return ()
@@ -120,7 +117,7 @@ mainUI (Ctx (lhsRef, opRef, rhsRef, totRef)) keyInputC = runCurses $ do
     setEcho False
     w <- defaultWindow
     let mainUILoop = do
-            lhs <- liftIO $ readIORef lhsRef
+            lhs <- ("lol" ++) <$> (liftIO $ readIORef lhsRef)
             op  <- liftIO $ readIORef opRef
             rhs <- liftIO $ readIORef rhsRef
             tot <- liftIO $ readIORef totRef
@@ -166,15 +163,16 @@ calculatorCircuit = do
     resultB_ <- beh $ opB `Ap` leftB
     totalB   <- beh $ resultB_ `Ap` rightB
 
-    let bind :: forall (ns :: '[Node])
-             .  IsSubsetEq ns '[Server, ClientA, ClientB, ClientC]
+    let bind :: IsElem ns '[Server, ClientA, ClientB, ClientC]
              => Proxy ns -> Moment CtxF ()
         bind listenNodeP = do
             listenB listenNodeP leftB   (\(Ctx (r,_,_,_)) -> writeIORef r . show)
             listenB listenNodeP opCharB (\(Ctx (_,r,_,_)) -> writeIORef r . show)
             listenB listenNodeP rightB  (\(Ctx (_,_,r,_)) -> writeIORef r . show)
             listenB listenNodeP totalB  (\(Ctx (_,_,_,r)) -> writeIORef r . show)
-    bind (Proxy @'[ClientA, ClientB, ClientC])
+    bind (Proxy @ClientA)
+    bind (Proxy @ClientB)
+    bind (Proxy @ClientC)
 
     return ()
 

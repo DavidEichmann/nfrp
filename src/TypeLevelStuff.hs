@@ -15,6 +15,9 @@ module TypeLevelStuff (IsElem) where
 import Data.Kind
 import GHC.TypeLits
 
+-- TODO implement if needed.
+-- type family IsSubsetEq (as :: [k]) (bs :: [k]) :: Constraint where
+
 -- Type level list elem function
 type family IsElem (a :: k) (b :: [k]) :: Constraint where
     IsElem a as = IsElem' a as as
