@@ -28,7 +28,7 @@ import Data.Kind
 import Data.IORef
 import Control.Monad.IO.Class (liftIO)
 import Data.Time.Clock (NominalDiffTime, getCurrentTime, diffUTCTime)
-import Control.Concurrent (Chan, newChan, writeChan)
+import Control.Concurrent (Chan, newChan, threadDelay, writeChan)
 import Control.Concurrent.Async
 -- import System.Environment (getArgs)
 
@@ -103,7 +103,13 @@ main = do
     _aClientC <- async $ actuateNode Nothing     (Proxy @ClientC)
     _aServer  <- async $ actuateNode Nothing     (Proxy @Server)
 
-    mainUI aCtx (localInChans ! ClientA)
+    -- mainUI aCtx (localInChans ! ClientA)
+    clickSomeButtons (localInChans ! ClientA)
+
+    wait _aClientA
+    wait _aClientB
+    wait _aClientC
+    wait _aServer
 
     putStrLn "Exiting."
     return ()
@@ -111,6 +117,18 @@ main = do
 type Ctx    = (IORef String, IORef String, IORef String, IORef String)
 data CtxF :: Node -> Type where
     Ctx :: Ctx -> CtxF n
+
+clickSomeButtons :: Chan Char -> IO ()
+clickSomeButtons chan = do
+    writeChan chan 'a'
+    writeChan chan 's'
+    writeChan chan 'd'
+    writeChan chan 'f'
+
+    -- Block
+    -- threadDelay 1000000000
+
+    return ()
 
 mainUI :: CtxF n -> Chan Char -> IO ()
 mainUI (Ctx (lhsRef, opRef, rhsRef, totRef)) keyInputC = runCurses $ do

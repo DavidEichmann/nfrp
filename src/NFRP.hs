@@ -24,7 +24,9 @@ module NFRP
 
 import Safe
 import Control.Monad.State
+import Control.Monad
 import Unsafe.Coerce
+import Data.Coerce
 import Data.Typeable (cast, typeRep)
 import Data.IORef
 import Data.Proxy
@@ -246,7 +248,7 @@ data Node
     | ClientB
     | ClientC
     | Server
-    deriving (Eq, Ord, Bounded, Enum)
+    deriving (Show, Read, Eq, Ord, Bounded, Enum)
 
 class SingNode (node :: Node) where singNode :: Proxy node -> Node
 instance SingNode ClientA where singNode _ = ClientA
@@ -324,8 +326,12 @@ actuate ctx
         localInChan
         channels
   = do
+
     let myNode = singNode myNodeProxy
         (circuit, listeners) = buildCircuit mkCircuit
+
+        putLog :: String -> IO ()
+        putLog str = putStrLn $ show myNode ++ ": " ++ str
 
     -- Clock synchronize with clockSyncNode if not myNode and wait for starting time. (TODO regularly synchronize clocks).
     -- Else accept clock sync with all other nodes, then braodcast a starting time (to start the circuit).
@@ -351,7 +357,9 @@ actuate ctx
                         -> Just $ OnPossibleChange bix False
                             (\ _ bixUpdates -> forM_ (singNodes toNodesP) $ \ toNode -> let
                                 sendChan = fst (channels Map.! toNode)
-                                in writeChan sendChan [UpdateListB bix bixUpdates])
+                                in do
+                                    putLog "Sending updates"
+                                    writeChan sendChan [UpdateListB bix bixUpdates])
                     _ -> Nothing
                 GateIxE eix -> case circEvt circuit eix of
                     SendE {} -> error "TODO support sending events" -- Just $ OnEvent bix False _doSend
@@ -362,6 +370,10 @@ actuate ctx
         -- My node's responsabilities
         responsabilities :: [Responsibility (ctxF myNode) myNode]
         responsabilities = myResponsabilitiesMessage ++ myResponsabilitiesListeners
+
+    putLog $ show (length myResponsabilitiesListeners) ++ " my listener responsabilities"
+    putLog $ show (length $ circAllGates circuit) ++ " gates"
+    putLog $ show (length myResponsabilitiesMessage) ++ " my message responsabilities"
 
     -- Get all source behaviors for this node.
     let mySourceEs :: [EventIx '[myNode] LocalInput]
@@ -375,14 +387,16 @@ actuate ctx
     inChan :: Chan [UpdateList] <- newChan
 
     -- Listen for local inputs (time is assigned here)
-    _aLocalInput <- async . forever $ do
+    aLocalInput <- async . forever $ do
         input <- readChan localInChan
         time <- getTime
+        putLog $ "Pressed: " ++ show input
         writeChan inChan [UpdateListE e [(time, input)] | e <- mySourceEs]
 
     -- Listen for messages from other nodes.
-    _asRcv <- forM (Map.assocs channels) $ \(_otherNode, (_, recvChan)) -> async
-        $ writeChan inChan =<< readChan recvChan
+    asRcv <- forM (Map.assocs channels) $ \(_otherNode, (_, recvChan)) -> async
+        $ (writeChan inChan =<< readChan recvChan)
+            >> putLog "received input"
 
     -- Thread that just processes inChan, keeps track of the whole circuit and
     -- decides what listeners to execute (sending them to listenersChan/msgChan).
@@ -392,43 +406,47 @@ actuate ctx
     listenersChan :: Chan (IO ()) <- newChan
     outMsgChan :: Chan (IO ()) <- newChan
     liveCircuitRef <- newIORef circuit0
-    _aLiveCircuit <- async . forever $ do
+    aLiveCircuit <- async . forever $ do
         -- Update state: Calculate for each behavior what is known and up to what time
         updates <- readChan inChan
         oldLiveCircuit <- readIORef liveCircuitRef
+        putLog "Got inChan"
         let (newLiveCircuit, changes) = lcTransaction oldLiveCircuit updates
         writeIORef liveCircuitRef newLiveCircuit
         writeChan changesChan changes
 
     -- Fullfill responsibilities: Listeners + sending to other nodes
-    _aResponsibilities <- async . forever $ do
+    aResponsibilities <- async . forever $ do
         changes <- readChan changesChan
+        putLog "Got changesChan"
         forM_ responsabilities $ \(OnPossibleChange bix isLocalListener action) ->
             -- TODO double forM_ is inefficient
             forM_ changes $ \case
-                UpdateListB bix' ((_time,latestValue):_)
+                UpdateListB bix' updates
                     | bix === bix'
                     -> writeChan
                         (if isLocalListener then listenersChan else outMsgChan)
-                        (action ctx (unsafeCoerce latestValue))
+                        (action ctx (unsafeCoerce <$> updates))
                 -- Note we don't support Event listeners (yet).
                 _ -> return ()
 
 
     -- Thread that just executes listeners
-    _aListeners <- async . forever . join . readChan $ listenersChan
+    aListeners <- async . forever . join . readChan $ listenersChan
 
     -- Thread that just sends messages to other nodes
     -- aSend <- async . forever . join . readChan $ outMsgChan
-    _aMsg <- async . forever . join . readChan $ outMsgChan
+    aMsg <- async . forever . join . readChan $ outMsgChan
 
     -- TODO some way to stop gracefully.
 
-    -- wait aLocalInput
-    -- sequence (wait <$> asRcv)
-    -- wait aLiveCircuit
-    -- wait aResponsibilities
-    -- wait aListeners
+    putLog "Started all threads."
+
+    wait aLocalInput
+    sequence (wait <$> asRcv)
+    wait aLiveCircuit
+    wait aResponsibilities
+    wait aListeners
     -- wait aSend
 
     return ()
