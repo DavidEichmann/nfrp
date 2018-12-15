@@ -96,14 +96,17 @@ circEvt c = flip fromDyn (error "Unexpected type of event.") . (circGateDyn c Ma
 
 data LiveCircuit (os :: [Node]) = LiveCircuit
     { lcCircuit :: Circuit
-    , lcBehChanges  :: forall (o' :: [Node]) a . (Typeable o', Typeable a) => BehaviorIx o' a -> [(Time, a)]
+    , lcBehChanges  :: forall (o' :: [Node]) a . (Typeable o', Typeable a)
+                    => BehaviorIx o' a -> [(Time, a)]
                     -- ^ Value of a behavior at a time. Time must be <= lcBehMaxT else Nothing.
-    , lcEvents  :: forall (o' :: [Node]) a . (Typeable o', Typeable a) => EventIx o' a -> [(Time, a)]
+    , lcEvents  :: forall (o' :: [Node]) a . (Typeable o', Typeable a)
+                    => EventIx o' a    -> [(Time, a)]
                     -- ^ Complete events up to lcGateMaxT time in reverse chronological order.
     }
 
 
-lcGateMaxT :: forall myNode (o' :: [Node]) a . (Typeable o', Typeable a) => LiveCircuit myNode -> GateIx o' a -> Time
+lcGateMaxT :: forall myNode (o' :: [Node]) a . (Typeable o', Typeable a)
+           => LiveCircuit myNode -> GateIx o' a -> Time
 lcGateMaxT lc (GateIxB b) = headDef (-1) (fst <$> lcBehChanges lc b)
 lcGateMaxT lc (GateIxE e) = headDef (-1) (fst <$> lcEvents lc e)
 
@@ -218,7 +221,7 @@ listenB node bix listener = modify (\ms -> ms {
 buildCircuit :: Moment ctxF () -> Circuit
 buildCircuit builder = Circuit graph behDyn allBehs
     where
-        (_, MomentState nextVIx behDyn edges allBehs ls) = runState builder (MomentState 0 Map.empty [] [] [])
+        (_, MomentState nextVIx behDyn edges allBehs _ls) = runState builder (MomentState 0 Map.empty [] [] [])
         graph = Graph.buildG (0, nextVIx - 1) edges
 
 
@@ -294,9 +297,14 @@ actuate ctx
     let getTime = trace "TODO create node wide synchronized getTime function" getLocalTime
 
     -- Gather Listeners (list of "on some behavior changed, perform some IO action")
-    --    TODO allow IO listeners to be specified in the Moment monad and saved in the Circuit
-    --    Add IO listeners for sending Msgs to other nodes.
-    let responsabilities = trace "TODO responsabilities" [] :: [Responsibility ctx myNode]
+    let responsabilitiesListeners :: [Responsibility ctx myNode]
+        responsabilitiesListeners = _
+
+        responsabilitiesMessage :: [Responsibility ctx myNode]
+        responsabilitiesMessage = _
+
+        responsabilities :: [Responsibility ctx myNode]
+        responsabilities = responsabilitiesMessage ++ responsabilitiesListeners
 
     -- Get all source behaviors for this node.
     let mySourceEs :: [EventIx '[myNode] LocalInput]
@@ -335,13 +343,13 @@ actuate ctx
         writeIORef liveCircuitRef newLiveCircuit
         writeChan changesChan changes
 
-    -- Fullfill responsibilities
+    -- Fullfill responsibilities: Listeners + sending to other nodes
     aResponsibilities <- async . forever $ do
         changes <- readChan changesChan
         forM_ responsabilities $ \(OnPossibleChange b isLocalListener action) -> 
             when (any (\case
                     UpdateListB ub _ -> b === ub
-                    _                -> False
+                    _                -> False   -- Because we don't support Event listeners 
                 ) changes)
             -- when ((BehaviorIx' b) `elem` changes)
                 (writeChan (if isLocalListener then listenersChan else outMsgChan) (action ctx))
@@ -391,13 +399,25 @@ mkLiveCircuit c = (lc, initialUpdatesOwnedBeh ++ initialUpdatesDerived)
 -- Transactionally update the circuit. Returns (_, changed behaviors (lcBehMaxT has increased))
 lcTransaction :: forall myNode . (Typeable myNode)
               => LiveCircuit myNode -> [UpdateList] -> (LiveCircuit myNode, [UpdateList])
-lcTransaction lc ups = assert lint (lc', error "TODO calculate changes behaviors values, and new evetns (may be multiple occs per event! so use a list maybe)")
+lcTransaction lc ups = assert lint (lc', changes)
     where
         lc' = lintLiveCircuit LiveCircuit
                 { lcCircuit     = c
                 , lcBehChanges  = lcBehChanges'
                 , lcEvents      = lcEvents'
                 }
+
+        changes
+            = mapMaybe (\(GateIx' gix) -> let 
+                ta = lcGateMaxT lc  gix
+                tb = lcGateMaxT lc' gix
+                prune = takeWhile ((> ta) . fst)
+                in if ta == tb
+                    then Nothing
+                    else Just $ case gix of
+                        (GateIxB bix) -> UpdateListB bix (prune $ lcBehChanges lc' bix)
+                        (GateIxE eix) -> UpdateListE eix (prune $ lcEvents     lc' eix))
+            $ circAllGates c
 
         myNodeP = Proxy @myNode
         lint
