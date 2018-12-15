@@ -315,12 +315,20 @@ actuate ctx
 
 
         myResponsabilitiesMessage :: [Responsibility (ctxF myNode) myNode]
-        myResponsabilitiesMessage = _
+        myResponsabilitiesMessage
+            = mapMaybe (\(GateIx' g) -> case g of
+                GateIxB bix -> case circBeh circuit bix of
+                    SendB {} -> Just $ OnPossibleChange bix False _doSend
+                    _ -> Nothing
+                GateIxE eix -> case circEvt circuit eix of
+                    SendE {} -> error "TODO support sending events" -- Just $ OnEvent bix False _doSend
+                    _ -> Nothing
+                )
+            $ circAllGates circuit
 
         -- My node's responsabilities
         responsabilities :: [Responsibility (ctxF myNode) myNode]
-        responsabilities
-            = myResponsabilitiesMessage ++ myResponsabilitiesListeners
+        responsabilities = myResponsabilitiesMessage ++ myResponsabilitiesListeners
 
     -- Get all source behaviors for this node.
     let mySourceEs :: [EventIx '[myNode] LocalInput]

@@ -163,7 +163,8 @@ calculatorCircuit = do
     resultB_ <- beh $ opB `Ap` leftB
     totalB   <- beh $ resultB_ `Ap` rightB
 
-    let bind :: IsElem ns '[Server, ClientA, ClientB, ClientC]
+    let bind :: ( IsElem ns '[Server, ClientA, ClientB, ClientC]
+                , Typeable ns)
              => Proxy ns -> Moment CtxF ()
         bind listenNodeP = do
             listenB listenNodeP leftB   (\(Ctx (r,_,_,_)) -> writeIORef r . show)
