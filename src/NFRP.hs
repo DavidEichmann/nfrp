@@ -57,7 +57,14 @@ data Behavior (os :: [Node]) (a :: Type) where
     Ap  :: (Typeable os, Typeable a, Typeable b)
         => BehaviorIx os (a -> b) -> BehaviorIx os a -> Behavior os b
     SendB :: forall (fromNode :: Node) (fromOs :: [Node]) (toOs :: [Node]) a
-         .  (IsElem fromNode fromOs, Typeable fromOs, Typeable toOs, Typeable fromNode, Typeable toOs, Typeable a)
+         .  ( IsElem fromNode fromOs
+            , Typeable fromOs
+            , Typeable toOs
+            , Typeable fromNode
+            , Typeable toOs
+            , Typeable a
+            , SingNode fromNode
+            , AllC SingNode toOs)
          => (Proxy fromNode)
          -> (Proxy toOs)
          -> BehaviorIx fromOs a
@@ -246,6 +253,19 @@ instance SingNode ClientB where singNode _ = ClientB
 instance SingNode ClientC where singNode _ = ClientC
 instance SingNode Server where singNode _ = Server
 
+instance Sing ClientA where
+    type SingT ClientA = Node
+    sing _ = ClientA
+instance Sing ClientB where
+    type SingT ClientB = Node
+    sing _ = ClientB
+instance Sing ClientC where
+    type SingT ClientC = Node
+    sing _ = ClientC
+instance Sing Server where
+    type SingT Server = Node
+    sing _ = Server
+
 data UpdateWay
     = LocalUpdate    -- ^ updated directly by a local update event (local event)
     | RemoteUpdate   -- ^ updated directly by a remote update event (sent from a remote node)
@@ -294,9 +314,9 @@ actuate ctx
         getLocalTime
         mkCircuit
         localInChan
-        handles
+        channels
   = do
-    let _myNode = singNode myNodeProxy
+    let myNode = singNode myNodeProxy
         (circuit, listeners) = buildCircuit mkCircuit
 
     -- Clock synchronize with clockSyncNode if not myNode and wait for starting time. (TODO regularly synchronize clocks).
@@ -318,7 +338,11 @@ actuate ctx
         myResponsabilitiesMessage
             = mapMaybe (\(GateIx' g) -> case g of
                 GateIxB bix -> case circBeh circuit bix of
-                    SendB {} -> Just $ OnPossibleChange bix False _doSend
+                    SendB fromNodeP toNodesP _bix
+                        | myNode == singNode fromNodeP
+                        -> Just $ OnPossibleChange bix False
+                            (\ _ bixVal -> forM_ (sings toNodesP) $ \ toNode ->
+                                writeChan _msg . fst $ channels Map.! toNode)
                     _ -> Nothing
                 GateIxE eix -> case circEvt circuit eix of
                     SendE {} -> error "TODO support sending events" -- Just $ OnEvent bix False _doSend
@@ -342,13 +366,13 @@ actuate ctx
     inChan :: Chan [UpdateList] <- newChan
 
     -- Listen for local inputs (time is assigned here)
-    aLocalInput <- async . forever $ do
+    _aLocalInput <- async . forever $ do
         input <- readChan localInChan
         time <- getTime
         writeChan inChan [UpdateListE e [(time, input)] | e <- mySourceEs]
 
     -- Listen for messages from other nodes.
-    asRcv <- forM (Map.assocs handles) $ \(_otherNode, (_, recvChan)) -> async
+    _asRcv <- forM (Map.assocs channels) $ \(_otherNode, (_, recvChan)) -> async
         $ writeChan inChan =<< readChan recvChan
 
     -- Thread that just processes inChan, keeps track of the whole circuit and
@@ -359,7 +383,7 @@ actuate ctx
     listenersChan :: Chan (IO ()) <- newChan
     outMsgChan :: Chan (IO ()) <- newChan
     liveCircuitRef <- newIORef circuit0
-    aLiveCircuit <- async . forever $ do
+    _aLiveCircuit <- async . forever $ do
         -- Update state: Calculate for each behavior what is known and up to what time
         updates <- readChan inChan
         oldLiveCircuit <- readIORef liveCircuitRef
@@ -368,7 +392,7 @@ actuate ctx
         writeChan changesChan changes
 
     -- Fullfill responsibilities: Listeners + sending to other nodes
-    aResponsibilities <- async . forever $ do
+    _aResponsibilities <- async . forever $ do
         changes <- readChan changesChan
         forM_ responsabilities $ \(OnPossibleChange bix isLocalListener action) ->
             -- TODO double forM_ is inefficient
@@ -383,11 +407,11 @@ actuate ctx
 
 
     -- Thread that just executes listeners
-    aListeners <- async . forever . join . readChan $ listenersChan
+    _aListeners <- async . forever . join . readChan $ listenersChan
 
     -- Thread that just sends messages to other nodes
     -- aSend <- async . forever . join . readChan $ outMsgChan
-    forever . join . readChan $ outMsgChan
+    _aMsg <- async . forever . join . readChan $ outMsgChan
 
     -- TODO some way to stop gracefully.
 
