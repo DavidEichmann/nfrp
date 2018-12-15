@@ -1,6 +1,7 @@
 {-# OPTIONS_GHC -Wno-unticked-promoted-constructors #-}
 
 {-# LANGUAGE PartialTypeSignatures #-}
+{-# LANGUAGE UndecidableSuperClasses #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
@@ -64,7 +65,7 @@ data Behavior (os :: [Node]) (a :: Type) where
             , Typeable toOs
             , Typeable a
             , SingNode fromNode
-            , AllC SingNode toOs)
+            , SingNodes toOs)
          => (Proxy fromNode)
          -> (Proxy toOs)
          -> BehaviorIx fromOs a
@@ -158,7 +159,7 @@ data Responsibility localCtx (responsibleNode :: Node)
         OnPossibleChange
             (BehaviorIx os a)
             Bool    -- ^ Is it a local listerner? As opposed to sending a msg to another node.
-            (localCtx -> a -> IO ())
+            (localCtx -> [(Time,a)] -> IO ())
 
 beh :: (Typeable os, Typeable a)
     => Behavior os a -> Moment ctxF (BehaviorIx os a)
@@ -253,6 +254,13 @@ instance SingNode ClientB where singNode _ = ClientB
 instance SingNode ClientC where singNode _ = ClientC
 instance SingNode Server where singNode _ = Server
 
+class AllC SingNode nodes => SingNodes (nodes :: [Node]) where
+    singNodes :: Proxy nodes -> [Node]
+instance SingNodes '[] where
+    singNodes _ = []
+instance (SingNode t, SingNodes ts) => SingNodes (t:ts) where
+    singNodes _ = singNode (Proxy @t) : singNodes (Proxy @ts)
+
 instance Sing ClientA where
     type SingT ClientA = Node
     sing _ = ClientA
@@ -341,8 +349,9 @@ actuate ctx
                     SendB fromNodeP toNodesP _bix
                         | myNode == singNode fromNodeP
                         -> Just $ OnPossibleChange bix False
-                            (\ _ bixVal -> forM_ (sings toNodesP) $ \ toNode ->
-                                writeChan _msg . fst $ channels Map.! toNode)
+                            (\ _ bixUpdates -> forM_ (singNodes toNodesP) $ \ toNode -> let
+                                sendChan = fst (channels Map.! toNode)
+                                in writeChan sendChan [UpdateListB bix bixUpdates])
                     _ -> Nothing
                 GateIxE eix -> case circEvt circuit eix of
                     SendE {} -> error "TODO support sending events" -- Just $ OnEvent bix False _doSend

@@ -27,16 +27,21 @@ class Sing t where
 
 type family Head xs where Head (x:xs) = x
 
-class Sing (Head ts) => Sings ts where
-    sings :: Proxy ts -> [SingT (Head ts)]
-instance forall t . Sing t => Sings '[t] where
-    sings _ = [sing (Proxy @t)]
-instance forall t tt ts
-    . ( Sing t
-      , Sings (tt:ts)
-      , SingT t ~ SingT (Head (tt:ts))
-    ) => Sings (t:tt:ts) where
-    sings _ = sing (Proxy @t) : sings (Proxy @(tt:ts))
+class Sings ts where
+    type SingsT ts
+    sings :: Proxy ts -> [SingsT ts]
+-- instance forall t . Sing t => Sings '[t] where
+--     type SingsT '[t] = SingT t
+--     sings _ = [sing (Proxy @t)]
+-- instance forall t tt ts . (SingT t ~ SingsT (tt:ts)) => Sings (t:tt:ts) where
+--     type SingsT (t:tt:ts) = SingT t
+--     sings _ = sing (Proxy @t) : sings (Proxy @(tt:ts))
+-- instance forall t tt ts
+--     . ( Sing t
+--       , Sings (tt:ts)
+--       , SingT t ~ SingT (Head (tt:ts))
+--     ) => Sings (t:tt:ts) where
+--     sings _ = sing (Proxy @t) : sings (Proxy @(tt:ts))
 
 -- class Sings k () where
 --     type SingsT a
