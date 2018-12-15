@@ -85,7 +85,7 @@ data Circuit = Circuit
                     -- ^Dynamic is a Behavior or Event of some os/type (can be infered from vertex)
     , circAllGates :: [GateIx']
     }
-    
+
 circBeh :: forall (os :: [Node]) a . (Typeable os, Typeable a)
         => Circuit -> BehaviorIx os a -> Behavior os a
 circBeh c = flip fromDyn (error "Unexpected type of behavior.") . (circGateDyn c Map.!) . bixVert
@@ -118,7 +118,7 @@ lcBehVal lc t bix
     where
         cs = lcBehChanges lc bix
         maxT = lcGateMaxT lc (GateIxB bix)
-        err = error $ 
+        err = error $
             "Trying to access behavior valur at time " ++ show t
             ++ " but only know till time " ++ show maxT
 
@@ -147,7 +147,7 @@ data UpdateList = forall os a . (Typeable os, Typeable a)
                 => UpdateListE (EventIx    os a) [(Time, a)]
 
 data Responsibility localCtx (responsibleNode :: Node)
-    = forall (os :: [Node]) a . (Typeable os, Typeable a) => 
+    = forall (os :: [Node]) a . (Typeable os, Typeable a) =>
         OnPossibleChange
             (BehaviorIx os a)
             Bool    -- ^ Is it a local listerner? As opposed to sending a msg to another node.
@@ -199,7 +199,7 @@ behDeps (Step _ e)    = [GateIx' (GateIxE e)]
 behDeps (MapB _ b)    = [GateIx' (GateIxB b)]
 behDeps (Ap fb ib)    = [GateIx' (GateIxB fb), GateIx' (GateIxB ib)]
 behDeps (SendB _ _ b) = [GateIx' (GateIxB b)]
-    
+
 evtDepVerts :: Event os a -> [Graph.Vertex]
 evtDepVerts (Source _)     = []
 evtDepVerts (MapE _ e)     = [eixVert e]
@@ -219,7 +219,7 @@ gateIxDeps c (GateIxE eix) = evtDeps $ circEvt c eix
 listenB :: (IsElem n os, Typeable os, Typeable n, Typeable a)
         => Proxy n -> BehaviorIx os a -> (ctxF n -> a -> IO ()) -> Moment ctxF ()
 listenB node bix listener = modify (\ms -> ms {
-        momentListeners = Listener node bix listener : momentListeners ms 
+        momentListeners = Listener node bix listener : momentListeners ms
     })
 
 buildCircuit :: Moment ctxF () -> (Circuit, [Listener ctxF])
@@ -306,7 +306,7 @@ actuate ctx
     -- Gather Responsabilities (list of "on some behavior changed, perform some IO action")
     let myResponsabilitiesListeners :: [Responsibility (ctxF myNode) myNode]
         myResponsabilitiesListeners
-            = mapMaybe (\(Listener _proxyNode bix handler) 
+            = mapMaybe (\(Listener _proxyNode bix handler)
                         -> OnPossibleChange
                                 bix
                                 True
@@ -362,8 +362,8 @@ actuate ctx
     -- Fullfill responsibilities: Listeners + sending to other nodes
     aResponsibilities <- async . forever $ do
         changes <- readChan changesChan
-        forM_ responsabilities $ \(OnPossibleChange bix isLocalListener action) -> 
-            -- TODO double forM_ is inefficient 
+        forM_ responsabilities $ \(OnPossibleChange bix isLocalListener action) ->
+            -- TODO double forM_ is inefficient
             forM_ changes $ \case
                 UpdateListB bix' ((_time,latestValue):_)
                     | bix === bix'
@@ -372,7 +372,7 @@ actuate ctx
                         (action ctx (unsafeCoerce latestValue))
                 -- Note we don't support Event listeners (yet).
                 _ -> return ()
-                
+
 
     -- Thread that just executes listeners
     aListeners <- async . forever . join . readChan $ listenersChan
@@ -382,7 +382,7 @@ actuate ctx
     forever . join . readChan $ outMsgChan
 
     -- TODO some way to stop gracefully.
-    
+
     -- wait aLocalInput
     -- sequence (wait <$> asRcv)
     -- wait aLiveCircuit
@@ -392,7 +392,7 @@ actuate ctx
 
     return ()
 
-mkLiveCircuit :: forall myNode . Typeable myNode 
+mkLiveCircuit :: forall myNode . Typeable myNode
               => Circuit -> (LiveCircuit myNode, [UpdateList])
 mkLiveCircuit c = (lc, initialUpdatesOwnedBeh ++ initialUpdatesDerived)
     where
@@ -414,7 +414,7 @@ mkLiveCircuit c = (lc, initialUpdatesOwnedBeh ++ initialUpdatesDerived)
                         SendB _ _ _  -> Nothing
                 _ -> Nothing
             )
-            (circAllGates c) 
+            (circAllGates c)
 
 -- Transactionally update the circuit. Returns (_, changed behaviors (lcBehMaxT has increased))
 lcTransaction :: forall myNode . (Typeable myNode)
@@ -428,7 +428,7 @@ lcTransaction lc ups = assert lint (lc', changes)
                 }
 
         changes
-            = mapMaybe (\(GateIx' gix) -> let 
+            = mapMaybe (\(GateIx' gix) -> let
                 ta = lcGateMaxT lc  gix
                 tb = lcGateMaxT lc' gix
                 prune = takeWhile ((> ta) . fst)
@@ -486,7 +486,7 @@ lcTransaction lc ups = assert lint (lc', changes)
                 apB ((tf,f):tfs) ((ta,a):tas) = case tf `compare` ta of
                     EQ -> (tf, f a) : apB tfs tas
                     LT -> (ta, f a) : apB tfs ((ta,a):tas)
-                    GT -> (tf, f a) : apB ((tf,f):tfs) tas 
+                    GT -> (tf, f a) : apB ((tf,f):tfs) tas
 
 
         lcEvents'  :: forall (os :: [Node]) a . (Typeable os, Typeable a)
@@ -510,7 +510,7 @@ lcTransaction lc ups = assert lint (lc', changes)
         findUpdates :: GateIx os a -> [(Time, a)]
         findUpdates g
             = sortBy (flip (compare `on` fst))     -- sort into reverse chronological order
-            . concat 
+            . concat
             . mapMaybe changesMay
             $ ups
             where
@@ -527,4 +527,3 @@ lcTransaction lc ups = assert lint (lc', changes)
 -- Asserting on LiveCircuitls
 lintLiveCircuit :: LiveCircuit myNode -> LiveCircuit myNode
 lintLiveCircuit = id -- TODO
-    

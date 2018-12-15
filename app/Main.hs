@@ -17,7 +17,7 @@
 {-# LANGUAGE GADTs #-}
 
 module Main where
-    
+
 import Safe
 import Data.Typeable
 import Data.Map as Map
@@ -50,22 +50,22 @@ main = do
     putStrLn "Simulating all nodes..."
 
     t0 <- getCurrentTime
-    
+
     let nodePairs = [ (nodeFrom, nodeTo)
                     | nodeFrom <- [minBound..maxBound]
                     , nodeTo   <- [minBound..maxBound]
                     , nodeFrom /= nodeTo
                     ]
 
-    netChans <- Map.fromList <$> sequence 
+    netChans <- Map.fromList <$> sequence
         [ do
             c  <- newChan
             return ((nodeFrom, nodeTo), c)
         | (nodeFrom, nodeTo) <- nodePairs ]
 
-    localInChans <- Map.fromList <$> sequence [ (node,) <$> newChan 
+    localInChans <- Map.fromList <$> sequence [ (node,) <$> newChan
                                               | node <- [minBound..maxBound] ]
-    
+
     let
         newCtx :: IO (CtxF node)
         newCtx = Ctx <$> ((,,,)
@@ -89,7 +89,7 @@ main = do
                     <$> getCurrentTime)
                 calculatorCircuit
                 (localInChans ! myNode)
-                (Map.fromList 
+                (Map.fromList
                     [ (otherNode,
                         ( netChans ! (myNode, otherNode)
                         , netChans ! (otherNode, myNode)))
@@ -145,7 +145,7 @@ calculatorCircuit = do
     aKeyB <- (beh . (Step '0')) =<< (evt $ Source (Proxy @ClientA))
     bKeyBLocal <- (beh . (Step '+')) =<< (evt $ Source (Proxy @ClientB))
     cKeyB <- (beh . (Step '0')) =<< (evt $ Source (Proxy @ClientC))
-    
+
     opCharB <- beh
              . SendB (Proxy @ClientB) (Proxy @'[Server, ClientA, ClientB, ClientC])
              $ bKeyBLocal
@@ -157,7 +157,7 @@ calculatorCircuit = do
                             '+' -> (+)
                             '/' -> div
                             '*' -> (*)
-                            _   -> (-) :: (Int -> Int -> Int)) 
+                            _   -> (-) :: (Int -> Int -> Int))
                         opCharB)
 
     resultB_ <- beh $ opB `Ap` leftB
