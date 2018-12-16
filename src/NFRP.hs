@@ -1,4 +1,5 @@
 {-# OPTIONS_GHC -Wno-unticked-promoted-constructors #-}
+{-# OPTIONS_GHC -Wno-partial-type-signatures #-}
 
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
@@ -48,7 +49,7 @@ data GateIx (os :: [Node]) (a :: Type) = GateIxB (BehaviorIx os a) | GateIxE (Ev
 
 data BehaviorIx' = forall (os :: [Node]) (a :: Type) . (Typeable os, Typeable a) => BehaviorIx' (BehaviorIx os a)
 newtype BehaviorIx (os :: [Node]) (a :: Type) = BehaviorIx { bixVert :: Graph.Vertex }
-        deriving (Eq, Ord)
+        deriving (Show, Eq, Ord)
 data Behavior (os :: [Node]) (a :: Type) where
     Step :: (Typeable os, Typeable a)
         => a -> EventIx os a -> Behavior os a
@@ -71,7 +72,7 @@ data Behavior (os :: [Node]) (a :: Type) where
          -> Behavior toOs a
 data EventIx' = forall (o :: [Node]) (a :: Type) . (Typeable o, Typeable a) => EventIx' (EventIx o a)
 newtype EventIx (os :: [Node]) (a :: Type) = EventIx { eixVert :: Graph.Vertex }
-        deriving (Eq, Ord)
+        deriving (Show, Eq, Ord)
 data Event (os :: [Node]) (a :: Type) where
     Source :: forall (node :: Node)
         .  (Proxy node)
@@ -151,6 +152,11 @@ data UpdateList = forall os a . (Typeable os, Typeable a)
                 => UpdateListB (BehaviorIx os a) [(Time, a)]
             | forall os a . (Typeable os, Typeable a)
                 => UpdateListE (EventIx    os a) [(Time, a)]
+
+instance Show UpdateList where
+    show ul = "UpdateList (" ++ case ul of
+                UpdateListB b us -> show b ++ ") Times=" ++ show (fst <$> us)
+                UpdateListE e us -> show e ++ ") Times=" ++ show (fst <$> us)
 
 data Responsibility localCtx (responsibleNode :: Node)
     = forall (os :: [Node]) a . (Typeable os, Typeable a) =>
@@ -380,8 +386,9 @@ actuate ctx
     let mySourceEs :: [EventIx '[myNode] LocalInput]
         mySourceEs = mapMaybe
             (\case
-                GateIx' (GateIxB (BehaviorIx b)) -> cast b
-                GateIx' (GateIxE (EventIx    e)) -> cast e)
+                GateIx' (GateIxB (bix :: BehaviorIx o a)) -> (cast :: BehaviorIx o a -> _) bix
+                GateIx' (GateIxE (eix :: EventIx    o a)) -> (cast :: EventIx    o a -> _) eix
+            )
             (circAllGates circuit)
 
     -- A single change to compile all local inputs and messages from other nodes.
@@ -406,15 +413,17 @@ actuate ctx
     writeChan changesChan initialUpdates
     listenersChan :: Chan (IO ()) <- newChan
     outMsgChan :: Chan (IO ()) <- newChan
-    liveCircuitRef <- newIORef circuit0
-    aLiveCircuit <- async . forever $ do
-        -- Update state: Calculate for each behavior what is known and up to what time
-        updates <- readChan inChan
-        oldLiveCircuit <- readIORef liveCircuitRef
-        putLog "Got inChan"
-        let (newLiveCircuit, changes) = lcTransaction oldLiveCircuit updates
-        writeIORef liveCircuitRef newLiveCircuit
-        writeChan changesChan changes
+    aLiveCircuit <- async $ do
+        liveCircuitRef <- newIORef circuit0
+        forever $ do
+            -- Update state: Calculate for each behavior what is known and up to what time
+            updates <- readChan inChan
+            oldLiveCircuit <- readIORef liveCircuitRef
+            putLog $ "Got inChan updates for " ++ show updates
+            let (newLiveCircuit, changes) = lcTransaction oldLiveCircuit updates
+            putLog $ "Updates from lcTransaction: " ++ show (length updates)
+            writeIORef liveCircuitRef newLiveCircuit
+            writeChan changesChan changes
 
     -- Fullfill responsibilities: Listeners + sending to other nodes
     aResponsibilities <- async . forever $ do
