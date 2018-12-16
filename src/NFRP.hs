@@ -24,10 +24,7 @@ module NFRP
 
 import Safe
 import Control.Monad.State
-import Control.Monad
-import Unsafe.Coerce
-import Data.Coerce
-import Data.Typeable (cast, typeRep)
+import Data.Typeable (cast, typeRep, eqT, (:~:)(Refl))
 import Data.IORef
 import Data.Proxy
 import Data.Kind
@@ -87,7 +84,6 @@ data Event (os :: [Node]) (a :: Type) where
         => (Proxy toNode)
         -> EventIx fromNode a
         -> Event toNode a
-
 
 data Circuit = Circuit
     { circGraph    :: Graph.Graph
@@ -424,17 +420,18 @@ actuate ctx
     aResponsibilities <- async . forever $ do
         changes <- readChan changesChan
         putLog "Got changesChan"
-        forM_ responsabilities $ \(OnPossibleChange bix isLocalListener action) ->
-            -- TODO double forM_ is inefficient
-            forM_ changes $ \case
-                UpdateListB bix' updates
-                    | bix === bix'
-                    -> writeChan
-                        (if isLocalListener then listenersChan else outMsgChan)
-                        (action ctx (unsafeCoerce <$> updates))
-                -- Note we don't support Event listeners (yet).
-                _ -> return ()
-
+        forM_ responsabilities $
+            \ (OnPossibleChange (bix :: BehaviorIx bixO bixA) isLocalListener action) ->
+                -- TODO double forM_ is inefficient... maybe index changes on BehaviorIxZ?
+                forM_ changes $ \ case
+                    UpdateListB (bix' :: BehaviorIx bixO' bixA') updates
+                        | Just Refl <- eqT @(BehaviorIx bixO bixA) @(BehaviorIx bixO' bixA')
+                        , bix == bix'
+                        -> writeChan
+                            (if isLocalListener then listenersChan else outMsgChan)
+                            (action ctx updates)
+                    -- Note we don't support Event listeners (yet).
+                    _ -> return ()
 
     -- Thread that just executes listeners
     aListeners <- async . forever . join . readChan $ listenersChan
@@ -452,7 +449,7 @@ actuate ctx
     _ <- wait aLiveCircuit
     _ <- wait aResponsibilities
     _ <- wait aListeners
-    -- wait aSend
+    _ <- wait aMsg
 
     return ()
 
@@ -571,7 +568,8 @@ lcTransaction lc ups = assert lint (lc', changes)
                 e = circEvt c eix
                 fromUpdatesList = findUpdates (GateIxE eix) ++ lcEvents lc eix
 
-        findUpdates :: GateIx os a -> [(Time, a)]
+        findUpdates :: forall os a . (Typeable os, Typeable a)
+                    => GateIx os a -> [(Time, a)]
         findUpdates g
             = sortBy (flip (compare `on` fst))     -- sort into reverse chronological order
             . concat
@@ -581,11 +579,13 @@ lcTransaction lc ups = assert lint (lc', changes)
                 gv = case g of
                     GateIxB (BehaviorIx bv) -> bv
                     GateIxE (EventIx    ev) -> ev
-                changesMay (UpdateListB (BehaviorIx v) changes)
-                    | v == gv   = Just (unsafeCoerce changes)
+                changesMay (UpdateListB (BehaviorIx v :: BehaviorIx vo va) vChanges)
+                    | Just Refl <- eqT @(BehaviorIx os a) @(BehaviorIx vo va)
+                    , v == gv   = Just vChanges
                     | otherwise = Nothing
-                changesMay (UpdateListE (EventIx    v) events)
-                    | v == gv   = Just (unsafeCoerce events)
+                changesMay (UpdateListE (EventIx    v :: EventIx    vo va) vEvents)
+                    | Just Refl <- eqT @(EventIx os a) @(EventIx vo va)
+                    , v == gv   = Just vEvents
                     | otherwise = Nothing
 
 -- Asserting on LiveCircuitls

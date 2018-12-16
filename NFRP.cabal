@@ -4,7 +4,7 @@ version: 0.1.0.0
 license: BSD3
 license-file: LICENSE
 copyright: 2017 David Eichmann
--- maintainer: 
+-- maintainer:
 author: David Eichmann
 -- homepage: https://github.com/githubuser/NFRP#readme
 category: Web
@@ -63,6 +63,6 @@ test-suite NFRP-test
         containers >=0.5.9,
         NFRP -any,
         cereal -any,
-        time -any,
-        tasty -any,
-        tasty-hunit -any
+        time -any
+        -- tasty -any,
+        -- tasty-hunit -any
