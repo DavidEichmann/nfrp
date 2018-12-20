@@ -372,14 +372,12 @@ actuate ctx
     let myResponsabilitiesListeners :: [Responsibility (ctxF myNode) myNode]
         myResponsabilitiesListeners
             = mapMaybe (\case
-                Listener proxyNode bix handler
-                    | singNode proxyNode == myNode
-                    -> let
-                            handler' = fromMaybe (error "Unexpected listener type.") (cast handler)
-                        in Just $ OnPossibleChange
+                Listener (_ :: Proxy myNode') bix handler
+                    | Just Refl <- eqT @myNode @myNode'
+                    -> Just $ OnPossibleChange
                                 bix
                                 True
-                                handler'   -- This case filters for myNode handlers
+                                (\ctx' ups -> handler ctx' (snd . head $ ups))   -- This case filters for myNode handlers
                 _   -> Nothing)
             $ listeners
 
@@ -440,8 +438,6 @@ actuate ctx
     let (circuit0, initialUpdates) = mkLiveCircuit circuit :: (LiveCircuit myNode, [UpdateList])
     changesChan :: Chan [UpdateList] <- newChan
     writeChan changesChan initialUpdates
-    listenersChan :: Chan (IO ()) <- newChan
-    outMsgChan :: Chan (IO ()) <- newChan
     aLiveCircuit <- do
         liveCircuitRef <- newIORef circuit0
         forkIO . readUntillStop inChan $ \ updates -> do
@@ -454,6 +450,8 @@ actuate ctx
             writeChan changesChan changes
 
     -- Fullfill responsibilities: Listeners + sending to other nodes
+    listenersChan :: Chan (IO ()) <- newChan
+    outMsgChan :: Chan (IO ()) <- newChan
     aResponsibilities <- forkIO . readUntillStop changesChan $ \ changes -> do
         putLog $ "Got changesChan with changes: " ++ show changes
         forM_ responsabilities $
@@ -468,6 +466,8 @@ actuate ctx
                             writeChan
                                 (if isLocalListener then listenersChan else outMsgChan)
                                 (action ctx updates)
+                            putLog $ "Sent listener action for bix: " ++ show bix
+
                     -- Note we don't support Event listeners (yet).
                     _ -> return ()
 
@@ -522,7 +522,7 @@ lcTransaction lc ups = assert lint (lc', changes)
             = mapMaybe (\(GateIx' gix) -> let
                 ta = lcGateMaxT lc  gix
                 tb = lcGateMaxT lc' gix
-                prune = id -- takeWhile ((> ta) . fst)
+                prune = takeWhile ((> ta) . fst)
                 in if ta == tb
                     then Nothing
                     else Just $ case gix of
@@ -563,7 +563,7 @@ lcTransaction lc ups = assert lint (lc', changes)
             LocalUpdate    -> fromUpdatesList
             RemoteUpdate   -> fromUpdatesList
             DerivedUpdate  -> case b of
-                SendB {}           -> error "SendB Behavior cannot be derived."
+                SendB _ _ bix'     -> lcBehChanges lc' bix'
                 Step _ eix         -> lcEvents lc' eix
                 MapB f bixParent   -> fmap f <$> lcBehChanges lc' bixParent
                 Ap bixF bixArg     -> apB (lcBehChanges lc' bixF) (lcBehChanges lc' bixArg)
@@ -589,7 +589,7 @@ lcTransaction lc ups = assert lint (lc', changes)
             DerivedUpdate  -> case e of
                 -- Nothing for source event even if it is local, because we will get this as an Update.
                 Source {}        -> error "Source Event cannot be derived."
-                SendE {}         -> error "SendE Event cannot be derived."
+                SendE _ _ eix'   -> lcEvents lc' eix'
                 MapE f eA        -> (\(occT, occVal) -> (occT, f occVal)) <$> lcEvents' eA
                 Sample f bix eA  -> [(sampleT, f bVal eVal)
                                         | (sampleT, eVal) <- lcEvents' eA

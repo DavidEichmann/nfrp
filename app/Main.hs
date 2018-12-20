@@ -103,16 +103,16 @@ main = do
     stopClientC <- actuateNode Nothing     (Proxy @ClientC)
     stopServer  <- actuateNode Nothing     (Proxy @Server)
 
-    inputGenAsync <- async (clickSomeButtons localInChans)
-    mainUI aCtx (localInChans ! ClientA)
+    clickSomeButtons localInChans
+    -- mainUI aCtx (localInChans ! ClientA)
 
-    _ <- wait inputGenAsync
+    putStrLn "Exiting."
+
     stopClientA
     stopClientB
     stopClientC
     stopServer
 
-    putStrLn "Exiting."
     return ()
 
 type Ctx    = (IORef String, IORef String, IORef String, IORef String)
