@@ -76,7 +76,7 @@ main = do
 
         actuateNode :: forall (node :: Node)
                  .  (SingNode node, Typeable node)
-                 => Maybe (CtxF node) -> Proxy node -> IO ()
+                 => Maybe (CtxF node) -> Proxy node -> IO (IO ())
         actuateNode ctxMay myNodeP = do
             ctx <- maybe newCtx return ctxMay
             actuate
@@ -98,19 +98,19 @@ main = do
                 myNode = singNode myNodeP
 
     aCtx <- newCtx
-    _aClientA <- async $ actuateNode (Just aCtx) (Proxy @ClientA)
-    _aClientB <- async $ actuateNode Nothing     (Proxy @ClientB)
-    _aClientC <- async $ actuateNode Nothing     (Proxy @ClientC)
-    _aServer  <- async $ actuateNode Nothing     (Proxy @Server)
+    stopClientA <- actuateNode (Just aCtx) (Proxy @ClientA)
+    stopClientB <- actuateNode Nothing     (Proxy @ClientB)
+    stopClientC <- actuateNode Nothing     (Proxy @ClientC)
+    stopServer  <- actuateNode Nothing     (Proxy @Server)
 
     inputGenAsync <- async (clickSomeButtons localInChans)
     mainUI aCtx (localInChans ! ClientA)
 
     _ <- wait inputGenAsync
-    _ <- wait _aClientA
-    _ <- wait _aClientB
-    _ <- wait _aClientC
-    _ <- wait _aServer
+    stopClientA
+    stopClientB
+    stopClientC
+    stopServer
 
     putStrLn "Exiting."
     return ()

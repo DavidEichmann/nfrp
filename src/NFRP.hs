@@ -337,7 +337,7 @@ actuate :: forall (myNode :: Node) (ctxF :: Node -> Type)
         -> Moment ctxF ()               -- The circuit to build
         -> Chan LocalInput             -- Local inputs
         -> Map.Map Node (Chan [UpdateList], Chan [UpdateList])   -- (send, receive) Chanels to other nodes
-        -> IO ()
+        -> IO (IO ())   -- Returns the IO action that stops the actuation
 actuate ctx
         myNodeProxy
         _clockSyncNode
@@ -346,6 +346,17 @@ actuate ctx
         localInChan
         channels
   = do
+
+    (stop, readStop) <- do
+        c <- newChan
+        return (writeChan c (), readChan c)
+
+    let readUntillStop :: Chan a -> (a -> IO ()) -> IO ()
+        readUntillStop c f = fix $ \ loop -> do
+            e <- race readStop (readChan c)
+            case e of
+                Left () -> return ()
+                Right v -> f v >> loop
 
     let myNode = singNode myNodeProxy
         (circuit, listeners) = buildCircuit mkCircuit
@@ -413,16 +424,16 @@ actuate ctx
     inChan :: Chan [UpdateList] <- newChan
 
     -- Listen for local inputs (time is assigned here)
-    aLocalInput <- async . forever $ do
-        input <- readChan localInChan
+    aLocalInput <- forkIO . readUntillStop localInChan $ \ input -> do
         time <- getTime
         putLog $ "Pressed: " ++ show input
         writeChan inChan [UpdateListE e [(time, input)] | e <- mySourceEs]
 
     -- Listen for messages from other nodes.
-    asRcv <- forM (Map.assocs channels) $ \(_otherNode, (_, recvChan)) -> async
-        $ (writeChan inChan =<< readChan recvChan)
-            >> putLog "received input"
+    asRcv <- forM (Map.assocs channels) $ \(_otherNode, (_, recvChan)) -> forkIO
+        . readUntillStop recvChan $ \ recvVal -> do
+            writeChan inChan recvVal
+            putLog "received input"
 
     -- Thread that just processes inChan, keeps track of the whole circuit and
     -- decides what listeners to execute (sending them to listenersChan/msgChan).
@@ -431,11 +442,10 @@ actuate ctx
     writeChan changesChan initialUpdates
     listenersChan :: Chan (IO ()) <- newChan
     outMsgChan :: Chan (IO ()) <- newChan
-    aLiveCircuit <- async $ do
+    aLiveCircuit <- do
         liveCircuitRef <- newIORef circuit0
-        forever $ do
+        forkIO . readUntillStop inChan $ \ updates -> do
             -- Update state: Calculate for each behavior what is known and up to what time
-            updates <- readChan inChan
             oldLiveCircuit <- readIORef liveCircuitRef
             putLog $ "Got inChan updates for " ++ show updates
             let (newLiveCircuit, changes) = lcTransaction oldLiveCircuit updates
@@ -444,9 +454,8 @@ actuate ctx
             writeChan changesChan changes
 
     -- Fullfill responsibilities: Listeners + sending to other nodes
-    aResponsibilities <- async . forever $ do
-        changes <- readChan changesChan
-        putLog $ "Got changesChan with changes: " ++ show changes  -- THIS IS HIT, BUT STOPS HERE :-( MUST NOT BE MATCHING UPDATES WITH RESPONSABILITIES CORRECTLY.
+    aResponsibilities <- forkIO . readUntillStop changesChan $ \ changes -> do
+        putLog $ "Got changesChan with changes: " ++ show changes
         forM_ responsabilities $
             \ (OnPossibleChange (bix :: BehaviorIx bixO bixA) isLocalListener action) ->
                 -- TODO double forM_ is inefficient... maybe index changes on BehaviorIxZ?
@@ -463,24 +472,16 @@ actuate ctx
                     _ -> return ()
 
     -- Thread that just executes listeners
-    aListeners <- async . forever . join . readChan $ listenersChan
+    aListeners <- forkIO $ readUntillStop listenersChan id
 
-    -- Thread that just sends messages to other nodes
-    -- aSend <- async . forever . join . readChan $ outMsgChan
-    aMsg <- async . forever . join . readChan $ outMsgChan
+    -- Thread that just sends mesages to other nodes
+    aMsg <- forkIO $ readUntillStop outMsgChan id
 
     -- TODO some way to stop gracefully.
 
     putLog "Started all threads."
 
-    _ <- wait aLocalInput
-    _ <- sequence (wait <$> asRcv)
-    _ <- wait aLiveCircuit
-    _ <- wait aResponsibilities
-    _ <- wait aListeners
-    _ <- wait aMsg
-
-    return ()
+    return stop
 
 mkLiveCircuit :: forall (myNode :: Node) . (SingNode myNode, Typeable myNode)
               => Circuit -> (LiveCircuit myNode, [UpdateList])
