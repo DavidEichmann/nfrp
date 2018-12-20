@@ -44,7 +44,7 @@ import Control.Exception.Base (assert)
 
 import TypeLevelStuff
 
-data GateIx' = forall (os :: [Node]) (a :: Type) . (Typeable os, Typeable a) => GateIx' (GateIx os a)
+data GateIx' = forall (os :: [Node]) (a :: Type) . (SingNodes os, Typeable os, Typeable a) => GateIx' (GateIx os a)
 data GateIx (os :: [Node]) (a :: Type) = GateIxB (BehaviorIx os a) | GateIxE (EventIx os a)
 
 data BehaviorIx' = forall (os :: [Node]) (a :: Type) . (Typeable os, Typeable a) => BehaviorIx' (BehaviorIx os a)
@@ -57,19 +57,22 @@ data Behavior (os :: [Node]) (a :: Type) where
         => (a -> b) -> BehaviorIx os a -> Behavior os b
     Ap  :: (Typeable os, Typeable a, Typeable b)
         => BehaviorIx os (a -> b) -> BehaviorIx os a -> Behavior os b
-    SendB :: forall (fromNode :: Node) (fromOs :: [Node]) (toOs :: [Node]) a
-         .  ( IsElem fromNode fromOs
-            , Typeable fromOs
-            , Typeable toOs
+    SendB :: forall (fromNode :: Node) (fromNodes :: [Node]) (toNodes :: [Node]) a
+         .  ( IsElem fromNode fromNodes
+            , SingNode fromNode
+            , SingNodes fromNodes
+            , SingNodes toNodes
+            , Typeable fromNodes
+            , Typeable toNodes
             , Typeable fromNode
-            , Typeable toOs
+            , Typeable toNodes
             , Typeable a
             , SingNode fromNode
-            , SingNodes toOs)
-         => (Proxy fromNode)
-         -> (Proxy toOs)
-         -> BehaviorIx fromOs a
-         -> Behavior toOs a
+            , SingNodes toNodes)
+         => Proxy fromNode
+         -> Proxy toNodes
+         -> BehaviorIx fromNodes a
+         -> Behavior toNodes a
 data EventIx' = forall (o :: [Node]) (a :: Type) . (Typeable o, Typeable a) => EventIx' (EventIx o a)
 newtype EventIx (os :: [Node]) (a :: Type) = EventIx { eixVert :: Graph.Vertex }
         deriving (Show, Eq, Ord)
@@ -81,10 +84,18 @@ data Event (os :: [Node]) (a :: Type) where
         => (a -> b) -> EventIx os a -> Event os b
     Sample :: (Typeable os, Typeable a, Typeable b, Typeable c)
         => (a -> b -> c) -> BehaviorIx os a -> EventIx os b -> Event os c
-    SendE :: (Typeable fromNode, Typeable toNode, Typeable a)
-        => (Proxy toNode)
-        -> EventIx fromNode a
-        -> Event toNode a
+    SendE ::  forall (fromNode :: Node) (fromNodes :: [Node]) (toNodes :: [Node]) a
+        . ( SingNode fromNode
+          , SingNodes fromNodes
+          , SingNodes toNodes
+          , Typeable fromNode
+          , Typeable fromNodes
+          , Typeable toNodes
+          , Typeable a)
+        => Proxy fromNode
+        -> Proxy toNodes
+        -> EventIx fromNodes a
+        -> Event toNodes a
 
 data Circuit = Circuit
     { circGraph    :: Graph.Graph
@@ -101,23 +112,23 @@ circEvt :: forall (os :: [Node]) a . (Typeable os, Typeable a)
         => Circuit -> EventIx os a -> Event os a
 circEvt c = flip fromDyn (error "Unexpected type of event.") . (circGateDyn c Map.!) . eixVert
 
-data LiveCircuit (os :: [Node]) = LiveCircuit
+data LiveCircuit (myNode :: Node) = LiveCircuit
     { lcCircuit :: Circuit
-    , lcBehChanges  :: forall (o' :: [Node]) a . (Typeable o', Typeable a)
+    , lcBehChanges  :: forall (o' :: [Node]) a . (SingNodes o', Typeable o', Typeable a)
                     => BehaviorIx o' a -> [(Time, a)]
                     -- ^ Value of a behavior at a time. Time must be <= lcBehMaxT else Nothing.
-    , lcEvents  :: forall (o' :: [Node]) a . (Typeable o', Typeable a)
+    , lcEvents  :: forall (o' :: [Node]) a . (SingNodes o', Typeable o', Typeable a)
                     => EventIx o' a    -> [(Time, a)]
                     -- ^ Complete events up to lcGateMaxT time in reverse chronological order.
     }
 
 
-lcGateMaxT :: forall myNode (o' :: [Node]) a . (Typeable o', Typeable a)
+lcGateMaxT :: forall myNode (o' :: [Node]) a . (SingNodes o', Typeable o', Typeable a)
            => LiveCircuit myNode -> GateIx o' a -> Time
 lcGateMaxT lc (GateIxB b) = headDef (-1) (fst <$> lcBehChanges lc b)
 lcGateMaxT lc (GateIxE e) = headDef (-1) (fst <$> lcEvents lc e)
 
-lcBehVal :: (Typeable o2, Typeable a)
+lcBehVal :: (SingNodes o2, Typeable o2, Typeable a)
          => LiveCircuit o1 -> Time -> BehaviorIx o2 a -> a
 lcBehVal lc t bix
     | t > maxT  = err
@@ -148,9 +159,9 @@ data Listener (ctxF :: Node -> Type)
     . (IsElem n os, Typeable n, Typeable os, Typeable a, SingNode n)
     => Listener (Proxy n) (BehaviorIx os a) (ctxF n -> a -> IO ())
 
-data UpdateList = forall os a . (Typeable os, Typeable a)
+data UpdateList = forall os a . (SingNodes os, Typeable os, Typeable a)
                 => UpdateListB (BehaviorIx os a) [(Time, a)]
-            | forall os a . (Typeable os, Typeable a)
+            | forall os a . (SingNodes os, Typeable os, Typeable a)
                 => UpdateListE (EventIx    os a) [(Time, a)]
 
 instance Show UpdateList where
@@ -165,7 +176,10 @@ data Responsibility localCtx (responsibleNode :: Node)
             Bool    -- ^ Is it a local listerner? As opposed to sending a msg to another node.
             (localCtx -> [(Time,a)] -> IO ())
 
-beh :: (Typeable os, Typeable a)
+instance Show (Responsibility localCtx responsibilityNode) where
+    show (OnPossibleChange bix isLocal _) = "OnPossibleChange (" ++ show bix ++ ") " ++ show isLocal ++ " _"
+
+beh :: (SingNodes os, Typeable os, Typeable a)
     => Behavior os a -> Moment ctxF (BehaviorIx os a)
 beh b = do
     MomentState v bd es allGates ls <- get
@@ -181,7 +195,7 @@ beh b = do
             ls
     return behIx
 
-evt :: (Typeable os, Typeable a)
+evt :: (SingNodes os, Typeable os, Typeable a)
     => Event os a -> Moment ctxF (EventIx os a)
 evt e = do
     MomentState v bd es allGates ls <- get
@@ -206,7 +220,7 @@ behDepVerts (MapB _ b)    = [bixVert b]
 behDepVerts (Ap fb ib)    = [bixVert fb, bixVert ib]
 behDepVerts (SendB _ _ b) = [bixVert b]
 
-behDeps :: (Typeable os, Typeable a) => Behavior os a -> [GateIx']
+behDeps :: (SingNodes os, Typeable os, Typeable a) => Behavior os a -> [GateIx']
 behDeps (Step _ e)    = [GateIx' (GateIxE e)]
 behDeps (MapB _ b)    = [GateIx' (GateIxB b)]
 behDeps (Ap fb ib)    = [GateIx' (GateIxB fb), GateIx' (GateIxB ib)]
@@ -216,15 +230,15 @@ evtDepVerts :: Event os a -> [Graph.Vertex]
 evtDepVerts (Source _)     = []
 evtDepVerts (MapE _ e)     = [eixVert e]
 evtDepVerts (Sample _ b e) = [bixVert b, eixVert e]
-evtDepVerts (SendE _ e)    = [eixVert e]
+evtDepVerts (SendE _ _ e)    = [eixVert e]
 
-evtDeps :: (Typeable os, Typeable a) => Event os a -> [GateIx']
+evtDeps :: (SingNodes os, Typeable os, Typeable a) => Event os a -> [GateIx']
 evtDeps (Source _)     = []
 evtDeps (MapE _ e)     = [GateIx' (GateIxE e)]
 evtDeps (Sample _ b e) = [GateIx' (GateIxB b), GateIx' (GateIxE e)]
-evtDeps (SendE _ e)    = [GateIx' (GateIxE e)]
+evtDeps (SendE _ _ e)    = [GateIx' (GateIxE e)]
 
-gateIxDeps :: (Typeable os, Typeable a) => Circuit -> GateIx os a -> [GateIx']
+gateIxDeps :: (SingNodes os, Typeable os, Typeable a) => Circuit -> GateIx os a -> [GateIx']
 gateIxDeps c (GateIxB bix) = behDeps $ circBeh c bix
 gateIxDeps c (GateIxE eix) = evtDeps $ circEvt c eix
 
@@ -286,24 +300,28 @@ data UpdateWay
     deriving (Eq, Show)
 
 class HasUpdateWay gate where
-    updateWay :: Typeable myNode => Proxy myNode -> gate -> UpdateWay
-instance (Typeable o, Typeable a) => HasUpdateWay (Behavior o a) where
+    updateWay :: SingNode myNode => Proxy myNode -> gate -> UpdateWay
+instance (SingNodes o) => HasUpdateWay (Behavior o a) where
     updateWay myNodeP b
         | isOwned myNodeP b = case b of
-            SendB {}  -> RemoteUpdate
+            SendB fromNodeP _ _ -> if singNode myNodeP == singNode fromNodeP
+                                        then DerivedUpdate
+                                        else RemoteUpdate
             _         -> DerivedUpdate
         | otherwise = NoUpdate
-instance (Typeable o, Typeable a) => HasUpdateWay (Event o a) where
+instance (SingNodes o) => HasUpdateWay (Event o a) where
     updateWay myNodeP b
         | isOwned myNodeP b = case b of
-            SendE {}  -> RemoteUpdate
+            SendE fromNodeP _ _  -> if singNode myNodeP == singNode fromNodeP
+                                        then DerivedUpdate
+                                        else RemoteUpdate
             Source {} -> LocalUpdate
             _         -> DerivedUpdate
         | otherwise = NoUpdate
 
 
-isOwned :: forall o1 o2 gate a . (Typeable o1, Typeable o2) => Proxy o1 -> gate o2 a -> Bool
-isOwned po1 _ = typeRep po1 == typeRep (Proxy @o2)
+isOwned :: forall o1 o2 gate a . (SingNode o1, SingNodes o2) => Proxy o1 -> gate o2 a -> Bool
+isOwned po1 _ = singNode po1 `elem` singNodes (Proxy @o2)
 
 -- The only local input we care about is key presses.
 type LocalInput = Char
@@ -378,9 +396,9 @@ actuate ctx
         responsabilities :: [Responsibility (ctxF myNode) myNode]
         responsabilities = myResponsabilitiesMessage ++ myResponsabilitiesListeners
 
-    putLog $ show (length myResponsabilitiesListeners) ++ " my listener responsabilities"
+    putLog $ show myResponsabilitiesListeners ++ " my listener responsabilities"
     putLog $ show (length $ circAllGates circuit) ++ " gates"
-    putLog $ show (length myResponsabilitiesMessage) ++ " my message responsabilities"
+    putLog $ show myResponsabilitiesMessage ++ " my message responsabilities"
 
     -- Get all source behaviors for this node.
     let mySourceEs :: [EventIx '[myNode] LocalInput]
@@ -408,7 +426,7 @@ actuate ctx
 
     -- Thread that just processes inChan, keeps track of the whole circuit and
     -- decides what listeners to execute (sending them to listenersChan/msgChan).
-    let (circuit0, initialUpdates) = mkLiveCircuit circuit :: (LiveCircuit '[myNode], [UpdateList])
+    let (circuit0, initialUpdates) = mkLiveCircuit circuit :: (LiveCircuit myNode, [UpdateList])
     changesChan :: Chan [UpdateList] <- newChan
     writeChan changesChan initialUpdates
     listenersChan :: Chan (IO ()) <- newChan
@@ -421,14 +439,14 @@ actuate ctx
             oldLiveCircuit <- readIORef liveCircuitRef
             putLog $ "Got inChan updates for " ++ show updates
             let (newLiveCircuit, changes) = lcTransaction oldLiveCircuit updates
-            putLog $ "Updates from lcTransaction: " ++ show (length updates)
+            putLog $ "Changes from lcTransaction: " ++ show changes
             writeIORef liveCircuitRef newLiveCircuit
             writeChan changesChan changes
 
     -- Fullfill responsibilities: Listeners + sending to other nodes
     aResponsibilities <- async . forever $ do
         changes <- readChan changesChan
-        putLog "Got changesChan"
+        putLog $ "Got changesChan with changes: " ++ show changes  -- THIS IS HIT, BUT STOPS HERE :-( MUST NOT BE MATCHING UPDATES WITH RESPONSABILITIES CORRECTLY.
         forM_ responsabilities $
             \ (OnPossibleChange (bix :: BehaviorIx bixO bixA) isLocalListener action) ->
                 -- TODO double forM_ is inefficient... maybe index changes on BehaviorIxZ?
@@ -436,9 +454,11 @@ actuate ctx
                     UpdateListB (bix' :: BehaviorIx bixO' bixA') updates
                         | Just Refl <- eqT @(BehaviorIx bixO bixA) @(BehaviorIx bixO' bixA')
                         , bix == bix'
-                        -> writeChan
-                            (if isLocalListener then listenersChan else outMsgChan)
-                            (action ctx updates)
+                        -> do
+                            putLog $ "Found listener for bix: " ++ show bix
+                            writeChan
+                                (if isLocalListener then listenersChan else outMsgChan)
+                                (action ctx updates)
                     -- Note we don't support Event listeners (yet).
                     _ -> return ()
 
@@ -462,7 +482,7 @@ actuate ctx
 
     return ()
 
-mkLiveCircuit :: forall myNode . Typeable myNode
+mkLiveCircuit :: forall (myNode :: Node) . (SingNode myNode, Typeable myNode)
               => Circuit -> (LiveCircuit myNode, [UpdateList])
 mkLiveCircuit c = (lc, initialUpdatesOwnedBeh ++ initialUpdatesDerived)
     where
@@ -486,8 +506,8 @@ mkLiveCircuit c = (lc, initialUpdatesOwnedBeh ++ initialUpdatesDerived)
             )
             (circAllGates c)
 
--- Transactionally update the circuit. Returns (_, changed behaviors (lcBehMaxT has increased))
-lcTransaction :: forall myNode . (Typeable myNode)
+-- Transactionally update the circuit. Returns (_, changed behaviors/events (lcBehMaxT has increased))
+lcTransaction :: forall myNode . (SingNode myNode, Typeable myNode)
               => LiveCircuit myNode -> [UpdateList] -> (LiveCircuit myNode, [UpdateList])
 lcTransaction lc ups = assert lint (lc', changes)
     where
@@ -501,7 +521,7 @@ lcTransaction lc ups = assert lint (lc', changes)
             = mapMaybe (\(GateIx' gix) -> let
                 ta = lcGateMaxT lc  gix
                 tb = lcGateMaxT lc' gix
-                prune = takeWhile ((> ta) . fst)
+                prune = id -- takeWhile ((> ta) . fst)
                 in if ta == tb
                     then Nothing
                     else Just $ case gix of
@@ -535,7 +555,7 @@ lcTransaction lc ups = assert lint (lc', changes)
         -- have missed.
 
         -- TODO/NOTE this is super inefficient
-        lcBehChanges' :: forall (os :: [Node]) a . (Typeable os, Typeable a)
+        lcBehChanges' :: forall (os :: [Node]) a . (SingNodes os, Typeable os, Typeable a)
                  => BehaviorIx os a -> [(Time, a)]
         lcBehChanges' bix = case updateWay myNodeP b of
             NoUpdate       -> []
@@ -559,7 +579,7 @@ lcTransaction lc ups = assert lint (lc', changes)
                     GT -> (tf, f a) : apB ((tf,f):tfs) tas
 
 
-        lcEvents'  :: forall (os :: [Node]) a . (Typeable os, Typeable a)
+        lcEvents'  :: forall (os :: [Node]) a . (SingNodes os, Typeable os, Typeable a)
                 => EventIx os a -> [(Time, a)]
         lcEvents' eix = case updateWay myNodeP e of
             NoUpdate       -> []

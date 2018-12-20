@@ -85,7 +85,7 @@ main = do
                 Server
                 ((round :: NominalDiffTime -> Integer)
                     .   (* 10^(12::Int))
-                    .   diffUTCTime t0
+                    .   flip diffUTCTime t0
                     <$> getCurrentTime)
                 calculatorCircuit
                 (localInChans ! myNode)
@@ -198,6 +198,6 @@ calculatorCircuit = do
     return ()
 
     where
-        readIntB :: Typeable o
+        readIntB :: (SingNodes o, Typeable o)
                  => BehaviorIx o Char -> Moment CtxF (BehaviorIx o Int)
         readIntB = beh . MapB (\c -> readDef 0 [c])

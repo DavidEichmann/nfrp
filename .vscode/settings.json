@@ -1,4 +1,4 @@
 {
-    "languageServerHaskell.enableHIE": false,
+    "languageServerHaskell.enableHIE": true,
     "files.trimTrailingWhitespace": true
 }

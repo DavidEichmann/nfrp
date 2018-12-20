@@ -63,6 +63,6 @@ test-suite NFRP-test
         containers >=0.5.9,
         NFRP -any,
         cereal -any,
-        time -any
-        -- tasty -any,
-        -- tasty-hunit -any
+        time -any,
+        tasty -any,
+        tasty-hunit -any

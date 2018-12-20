@@ -265,3 +265,37 @@
 2017-10-01 14:32:51 [ThreadId 11] ERROR phoityne - load file fail.[/home/david/Documents/git/nfrp/app/Main.hs] file load error. '/home/david/Documents/git/nfrp/app/Main.hs'
 2017-10-01 14:32:51 [ThreadId 11] ERROR phoityne - startup load error. /home/david/Documents/git/nfrp/app/Main.hs
 
+2018-12-20 00:05:22 [ThreadId 7] ERROR phoityne - H>>= :list
+ can not use these commands.
+[":{",":abandon",":back",":break",":continue",":delete",":force",":forward",":history",":list",":print",":sprint",":step",":steplocal",":stepmodule",":trace"]
+
+2018-12-20 00:05:32 [ThreadId 7] ERROR phoityne - H>>= :trace
+ can not use these commands.
+[":{",":abandon",":back",":break",":continue",":delete",":force",":forward",":history",":list",":print",":sprint",":step",":steplocal",":stepmodule",":trace"]
+
+2018-12-20 00:06:02 [ThreadId 7] ERROR phoityne - H>>= :step
+ can not use these commands.
+[":{",":abandon",":back",":break",":continue",":delete",":force",":forward",":history",":list",":print",":sprint",":step",":steplocal",":stepmodule",":trace"]
+
+2018-12-20 00:12:28 [ThreadId 7] ERROR phoityne - H>>= :trace
+ can not use these commands.
+[":{",":abandon",":back",":break",":continue",":delete",":force",":forward",":history",":list",":print",":sprint",":step",":steplocal",":stepmodule",":trace"]
+
+2018-12-20 00:13:25 [ThreadId 7] ERROR phoityne - H>>= :trace
+ can not use these commands.
+[":{",":abandon",":back",":break",":continue",":delete",":force",":forward",":history",":list",":print",":sprint",":step",":steplocal",":stepmodule",":trace"]
+
+2018-12-20 00:13:37 [ThreadId 7] ERROR phoityne - "error: Variable not in scope: t0"
+2018-12-20 00:13:46 [ThreadId 7] ERROR phoityne - "error: Variable not in scope: nodeFrom"
+2018-12-20 00:13:46 [ThreadId 7] ERROR phoityne - "error: Variable not in scope: nodeFrom"
+2018-12-20 00:13:55 [ThreadId 7] ERROR phoityne - "error: parse error on input \8216$\8217 Perhaps you intended to use TemplateHaskell"
+2018-12-20 00:18:04 [ThreadId 7] ERROR phoityne - H>>= :trace
+ can not use these commands.
+[":{",":abandon",":back",":break",":continue",":delete",":force",":forward",":history",":list",":print",":sprint",":step",":steplocal",":stepmodule",":trace"]
+
+2018-12-20 00:30:17 [ThreadId 14] ERROR phoityne - load file fail.[/home/david/Documents/git/nfrp/src/NFRP.hs] <stdout>: hPutBuf: resource vanished (Broken pipe)
+2018-12-20 00:30:17 [ThreadId 13] ERROR phoityne - load file fail.[/home/david/Documents/git/nfrp/app/Main.hs] <stdout>: hPutBuf: resource vanished (Broken pipe)
+2018-12-20 00:30:17 [ThreadId 15] ERROR phoityne - load file fail.[/home/david/Documents/git/nfrp/src/NFRP.hs] <stdout>: hPutBuf: resource vanished (Broken pipe)
+2018-12-20 00:30:17 [ThreadId 16] ERROR phoityne - load file fail.[/home/david/Documents/git/nfrp/src/NFRP.hs] <stdout>: hPutBuf: resource vanished (Broken pipe)
+2018-12-20 00:30:17 [ThreadId 17] ERROR phoityne - load file fail.[/home/david/Documents/git/nfrp/src/NFRP.hs] <stdout>: hPutBuf: resource vanished (Broken pipe)
+2018-12-20 00:30:17 [ThreadId 18] ERROR phoityne - load file fail.[/home/david/Documents/git/nfrp/src/NFRP.hs] <stdout>: hPutBuf: resource vanished (Broken pipe)
