@@ -1,48 +1,111 @@
+TODO create node wide synchronized getTime function
 Simulating all nodes...
 ClientA: [OnPossibleChange (BehaviorIx {bixVert = 14}) True _,OnPossibleChange (BehaviorIx {bixVert = 10}) True _,OnPossibleChange (BehaviorIx {bixVert = 6}) True _,OnPossibleChange (BehaviorIx {bixVert = 8}) True _] my listener responsabilities
 ClientA: 15 gates
 ClientA: [OnPossibleChange (BehaviorIx {bixVert = 8}) False _] my message responsabilities
+ClientA: Got changesChan with changes: [UpdateList (BehaviorIx {bixVert = 1}) Times=[0]]
 ClientA: Started all threads.
 ClientB: [OnPossibleChange (BehaviorIx {bixVert = 14}) True _,OnPossibleChange (BehaviorIx {bixVert = 10}) True _,OnPossibleChange (BehaviorIx {bixVert = 6}) True _,OnPossibleChange (BehaviorIx {bixVert = 8}) True _] my listener responsabilities
 ClientB: 15 gates
 ClientB: [OnPossibleChange (BehaviorIx {bixVert = 12}) False _,OnPossibleChange (BehaviorIx {bixVert = 6}) False _] my message responsabilities
 ClientB: Started all threads.
-Main: SendB Behavior cannot be derived.
-CallStack (from HasCallStack):
-  error, called at src/NFRP.hs:566:39 in NFRP-0.1.0.0-6vmVRCRfyNq2k3wOCWrzEX:NFRP
 ClientC: [OnPossibleChange (BehaviorIx {bixVert = 14}) True _,OnPossibleChange (BehaviorIx {bixVert = 10}) True _,OnPossibleChange (BehaviorIx {bixVert = 6}) True _,OnPossibleChange (BehaviorIx {bixVert = 8}) True _] my listener responsabilities
 ClientC: 15 gates
-Main: SendB Behavior cannot be derived.
-CallStack (from HasCallStack):
-  error, called at src/NFRP.hs:566:39 in NFRP-0.1.0.0-6vmVRCRfyNq2k3wOCWrzEX:NFRP
 ClientC: [OnPossibleChange (BehaviorIx {bixVert = 10}) False _] my message responsabilities
 ClientC: Started all threads.
+ClientB: Got changesChan with changes: [UpdateList (BehaviorIx {bixVert = 3}) Times=[0]]
 Server: [] my listener responsabilities
 Server: 15 gates
 Server: [] my message responsabilities
 Server: Started all threads.
+ClientC: Got changesChan with changes: [UpdateList (BehaviorIx {bixVert = 5}) Times=[0]]
 Server: Got changesChan with changes: []
-Main: SendB Behavior cannot be derived.
-CallStack (from HasCallStack):
-  error, called at src/NFRP.hs:566:39 in NFRP-0.1.0.0-6vmVRCRfyNq2k3wOCWrzEX:NFRP
-[?1049h[1;24r(B[m[4l[?7h[?1000h[39;49m[?1h=[39;49m(B[m[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[HTODO create node wide synchronized getTime function
 ClientA: Pressed: '9'
-ClientA: Got inChan updates for [UpdateList (EventIx {eixVert = 0}) Times=[51223978000]]
-Main: SendB Behavior cannot be derived.
+ClientA: Got inChan updates for [UpdateList (EventIx {eixVert = 0}) Times=[51102288000]]
+ClientA: Changes from lcTransaction: [UpdateList (BehaviorIx {bixVert = 8}) Times=[51102288000],UpdateList (BehaviorIx {bixVert = 7}) Times=[51102288000],UpdateList (BehaviorIx {bixVert = 1}) Times=[51102288000],UpdateList (EventIx {eixVert = 0}) Times=[51102288000]]
+ClientA: Got changesChan with changes: [UpdateList (BehaviorIx {bixVert = 8}) Times=[51102288000],UpdateList (BehaviorIx {bixVert = 7}) Times=[51102288000],UpdateList (BehaviorIx {bixVert = 1}) Times=[51102288000],UpdateList (EventIx {eixVert = 0}) Times=[51102288000]]
+ClientA: Found listener for bix: BehaviorIx {bixVert = 8}
+ClientA: Sent listener action for bix: BehaviorIx {bixVert = 8}
+ClientA: Found listener for bix: BehaviorIx {bixVert = 8}
+ClientA: Sent listener action for bix: BehaviorIx {bixVert = 8}
+ClientA: Beep
+Boop
+ClientA: Boop
+ClientA: Sending updates
+ClientA: Sending updates
+Server: received input
+Server: Got inChan updates for [UpdateList (BehaviorIx {bixVert = 8}) Times=[51102288000]]
+Main: Map.!: given key is not an element in the map
 CallStack (from HasCallStack):
-  error, called at src/NFRP.hs:566:39 in NFRP-0.1.0.0-6vmVRCRfyNq2k3wOCWrzEX:NFRP
-[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[HTODO create node wide synchronized getTime function
+  error, called at libraries/containers/Data/Map/Internal.hs:610:17 in containers-0.5.11.0:Data.Map.Internal
+TODO create node wide synchronized getTime function
+Server: Changes from lcTransaction: [UpdateList (BehaviorIx {bixVert = 8}) Times=[51102288000]]
+Server: Got changesChan with changes: [UpdateList (BehaviorIx {bixVert = 8}) Times=[51102288000]]
 ClientB: Pressed: '+'
-ClientB: Got inChan updates for [UpdateList (EventIx {eixVert = 2}) Times=[101437894000]]
-Main: SendB Behavior cannot be derived.
+ClientB: Got inChan updates for [UpdateList (EventIx {eixVert = 2}) Times=[101366658000]]
+ClientB: Changes from lcTransaction: [UpdateList (BehaviorIx {bixVert = 12}) Times=[101366658000],UpdateList (BehaviorIx {bixVert = 11}) Times=[101366658000],UpdateList (BehaviorIx {bixVert = 6}) Times=[101366658000],UpdateList (BehaviorIx {bixVert = 3}) Times=[101366658000],UpdateList (EventIx {eixVert = 2}) Times=[101366658000]]
+ClientB: Got changesChan with changes: [UpdateList (BehaviorIx {bixVert = 12}) Times=[101366658000],UpdateList (BehaviorIx {bixVert = 11}) Times=[101366658000],UpdateList (BehaviorIx {bixVert = 6}) Times=[101366658000],UpdateList (BehaviorIx {bixVert = 3}) Times=[101366658000],UpdateList (EventIx {eixVert = 2}) Times=[101366658000]]
+ClientB: Found listener for bix: BehaviorIx {bixVert = 12}
+ClientB: Sent listener action for bix: BehaviorIx {bixVert = 12}
+ClientB: Boop
+ClientB: Sending updates
+ClientB: Found listener for bix: BehaviorIx {bixVert = 6}
+ClientB: Sending updates
+ClientB: Sent listener action for bix: BehaviorIx {bixVert = 6}
+Server: received input
+ClientB: Sending updates
+ClientB: Found listener for bix: BehaviorIx {bixVert = 6}
+ClientA: received input
+Main: Map.!: given key is not an element in the map
 CallStack (from HasCallStack):
-  error, called at src/NFRP.hs:566:39 in NFRP-0.1.0.0-6vmVRCRfyNq2k3wOCWrzEX:NFRP
-[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[HTODO create node wide synchronized getTime function
+  error, called at libraries/containers/Data/Map/Internal.hs:610:17 in containers-0.5.11.0:Data.Map.Internal
+TODO create node wide synchronized getTime function
+ClientA: Got inChan updates for [UpdateList (BehaviorIx {bixVert = 12}) Times=[101366658000]]
+Server: Got inChan updates for [UpdateList (BehaviorIx {bixVert = 12}) Times=[101366658000]]
+ClientB: Sent listener action for bix: BehaviorIx {bixVert = 6}
+ClientB: Beep
+Server: Changes from lcTransaction: [UpdateList (BehaviorIx {bixVert = 13}) Times=[101366658000],UpdateList (BehaviorIx {bixVert = 12}) Times=[101366658000]]
+ClientA: Changes from lcTransaction: [UpdateList (BehaviorIx {bixVert = 13}) Times=[101366658000],UpdateList (BehaviorIx {bixVert = 12}) Times=[101366658000]]
+Server: Got changesChan with changes: [UpdateList (BehaviorIx {bixVert = 13}) Times=[101366658000],UpdateList (BehaviorIx {bixVert = 12}) Times=[101366658000]]
+ClientA: Got changesChan with changes: [UpdateList (BehaviorIx {bixVert = 13}) Times=[101366658000],UpdateList (BehaviorIx {bixVert = 12}) Times=[101366658000]]
 ClientC: Pressed: '4'
-ClientC: Got inChan updates for [UpdateList (EventIx {eixVert = 4}) Times=[151626856000]]
-Main: SendB Behavior cannot be derived.
+ClientC: Got inChan updates for [UpdateList (EventIx {eixVert = 4}) Times=[151501551000]]
+ClientC: Changes from lcTransaction: [UpdateList (BehaviorIx {bixVert = 10}) Times=[151501551000],UpdateList (BehaviorIx {bixVert = 9}) Times=[151501551000],UpdateList (BehaviorIx {bixVert = 5}) Times=[151501551000],UpdateList (EventIx {eixVert = 4}) Times=[151501551000]]
+ClientC: Got changesChan with changes: [UpdateList (BehaviorIx {bixVert = 10}) Times=[151501551000],UpdateList (BehaviorIx {bixVert = 9}) Times=[151501551000],UpdateList (BehaviorIx {bixVert = 5}) Times=[151501551000],UpdateList (EventIx {eixVert = 4}) Times=[151501551000]]
+ClientC: Found listener for bix: BehaviorIx {bixVert = 10}
+ClientC: Sent listener action for bix: BehaviorIx {bixVert = 10}
+ClientC: Boop
+ClientC: Sending updates
+ClientC: Sending updates
+ClientC: Sending updates
+ClientC: Sending updates
+Main: Map.!: given key is not an element in the map
 CallStack (from HasCallStack):
-  error, called at src/NFRP.hs:566:39 in NFRP-0.1.0.0-6vmVRCRfyNq2k3wOCWrzEX:NFRP
-[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[HTODO create node wide synchronized getTime function
-[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[H[2J[2;11Hlol   =[4;11H(press q to quit)[H[?1000l[24;1H[?1049l[?1l>ClientB: Pressed: '-'
+  error, called at libraries/containers/Data/Map/Internal.hs:610:17 in containers-0.5.11.0:Data.Map.Internal
+ClientC: Found listener for bix: BehaviorIx {bixVert = 10}
+ClientA: received input
+Server: received input
+ClientA: Got inChan updates for [UpdateList (BehaviorIx {bixVert = 10}) Times=[151501551000]]
+ClientB: received input
+Server: Got inChan updates for [UpdateList (BehaviorIx {bixVert = 10}) Times=[151501551000]]
+ClientB: Got inChan updates for [UpdateList (BehaviorIx {bixVert = 10}) Times=[151501551000]]
+ClientC: Sent listener action for bix: BehaviorIx {bixVert = 10}
+ClientC: Beep
+Server: Changes from lcTransaction: [UpdateList (BehaviorIx {bixVert = 14}) Times=[151501551000],UpdateList (BehaviorIx {bixVert = 10}) Times=[151501551000]]
+ClientA: Changes from lcTransaction: [UpdateList (BehaviorIx {bixVert = 14}) Times=[151501551000],UpdateList (BehaviorIx {bixVert = 10}) Times=[151501551000]]
+ClientB: Changes from lcTransaction: [UpdateList (BehaviorIx {bixVert = 10}) Times=[151501551000]]
+Server: Got changesChan with changes: [UpdateList (BehaviorIx {bixVert = 14}) Times=[151501551000],UpdateList (BehaviorIx {bixVert = 10}) Times=[151501551000]]
+ClientB: Got changesChan with changes: [UpdateList (BehaviorIx {bixVert = 10}) Times=[151501551000]]
+ClientA: Got changesChan with changes: [UpdateList (BehaviorIx {bixVert = 14}) Times=[151501551000],UpdateList (BehaviorIx {bixVert = 10}) Times=[151501551000]]
+ClientB: Found listener for bix: BehaviorIx {bixVert = 10}
+ClientA: Found listener for bix: BehaviorIx {bixVert = 14}
+ClientB: Sent listener action for bix: BehaviorIx {bixVert = 10}
+ClientA: Sent listener action for bix: BehaviorIx {bixVert = 14}
+ClientA: Found listener for bix: BehaviorIx {bixVert = 10}
+ClientA: Sent listener action for bix: BehaviorIx {bixVert = 10}
+ClientB: Beep
+ClientA: Beep
+Beep
+ClientA: Beep
 Exiting.
+TODO create node wide synchronized getTime function

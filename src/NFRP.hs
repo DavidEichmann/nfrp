@@ -97,6 +97,7 @@ data Event (os :: [Node]) (a :: Type) where
         -> EventIx fromNodes a
         -> Event toNodes a
 
+
 data Circuit = Circuit
     { circGraph    :: Graph.Graph
     , circGateDyn  :: Map.Map Graph.Vertex Dynamic
@@ -389,11 +390,12 @@ actuate ctx
                     SendB fromNodeP toNodesP _bix
                         | myNode == singNode fromNodeP
                         -> Just $ OnPossibleChange bix False
-                            (\ _ bixUpdates -> forM_ (singNodes toNodesP) $ \ toNode -> let
+                            (\ _ bixUpdates -> forM_ (filter (/= myNode) $ singNodes toNodesP) $ \ toNode -> let
                                 sendChan = fst (channels Map.! toNode)
                                 in do
                                     putLog "Sending updates"
-                                    writeChan sendChan [UpdateListB bix bixUpdates])
+                                    writeChan sendChan [UpdateListB bix bixUpdates]
+                            )
                     _ -> Nothing
                 GateIxE eix -> case circEvt circuit eix of
                     SendE {} -> error "TODO support sending events" -- Just $ OnEvent bix False _doSend

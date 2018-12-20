@@ -104,7 +104,7 @@ main = do
     stopServer  <- actuateNode Nothing     (Proxy @Server)
 
     clickSomeButtons localInChans
-    -- mainUI aCtx (localInChans ! ClientA)
+    mainUI aCtx (localInChans ! ClientA)
 
     putStrLn "Exiting."
 
