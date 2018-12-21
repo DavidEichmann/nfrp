@@ -15,46 +15,23 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE ConstraintKinds #-}
 
-module TypeLevelStuff (IsElem, AllC, Sing(..), Sings(..)) where
+module TypeLevelStuff (IsElem, AllC, Sing(..), Sings(..), ElemT(..)) where
 
 import Data.Proxy
+import Data.Typeable
 import Data.Kind
 import GHC.TypeLits
 
 class Sing t where
-    type SingT t
+    type SingT t :: Type
     sing :: Proxy t -> SingT t
 
-type family Head xs where Head (x:xs) = x
-
-class Sings ts where
-    type SingsT ts
-    sings :: Proxy ts -> [SingsT ts]
--- instance forall t . Sing t => Sings '[t] where
---     type SingsT '[t] = SingT t
---     sings _ = [sing (Proxy @t)]
--- instance forall t tt ts . (SingT t ~ SingsT (tt:ts)) => Sings (t:tt:ts) where
---     type SingsT (t:tt:ts) = SingT t
---     sings _ = sing (Proxy @t) : sings (Proxy @(tt:ts))
--- instance forall t tt ts
---     . ( Sing t
---       , Sings (tt:ts)
---       , SingT t ~ SingT (Head (tt:ts))
---     ) => Sings (t:tt:ts) where
---     sings _ = sing (Proxy @t) : sings (Proxy @(tt:ts))
-
--- class Sings k () where
---     type SingsT a
---     sings :: Proxy a -> [SingsT a]
--- instance Sing k t => Sings '[t] where
---     type SingsT '[t] = SingT k t
---     sings _ = [sing (Proxy @t)]
--- instance Sings (t:tt:ts) where
---     type SingsT (t:tt:ts) = SingT (tt:ts)
---     sings _ = sing (Proxy @t) : sings (Proxy @(tt:ts))
-
--- TODO implement if needed.
--- type family IsSubsetEq (as :: [k]) (bs :: [k]) :: Constraint where
+class Sings ts t where
+    sings :: Proxy ts -> [t]
+instance Sings '[] t where
+    sings _ = []
+instance (Sing x, SingT x ~ t, Sings xs t) => Sings (x:xs) t where
+    sings _ = sing (Proxy @x) : sings (Proxy @ xs)
 
 -- Type level list elem function
 type family IsElem (a :: k) (b :: [k]) :: Constraint where
@@ -62,7 +39,7 @@ type family IsElem (a :: k) (b :: [k]) :: Constraint where
 
 -- Helper that keeps the original list so that an error message can be created.
 type family IsElem' (a :: k) (b :: [k]) (orig :: [k]) :: Constraint where
-    IsElem' a (a:_) _      = True ~ True
+    IsElem' a (a:_) _      = ()
     IsElem' a (_:as) orig  = IsElem' a as orig
     IsElem' a _ orig       = TypeError (ShowType a
                                        :<>: Text " not an element of "
@@ -72,3 +49,13 @@ type family IsElem' (a :: k) (b :: [k]) (orig :: [k]) :: Constraint where
 type family AllC (cFn :: k -> Constraint) (xs :: [k]) :: Constraint where
     AllC f '[]     = ()
     AllC f (e:es) = (f e, AllC f es)
+
+class ElemT k (xs :: [k]) where
+    elemT :: forall (e :: k) . Typeable e => Proxy e -> Proxy xs -> Bool
+instance ElemT k '[] where
+    elemT _ _ = False
+instance (Typeable x, ElemT k xs)
+         => ElemT k (x : xs) where
+    elemT (_ :: Proxy e) _ = case eqT @e @x of
+        Just Refl -> True
+        Nothing   -> elemT (Proxy @e) (Proxy @xs)

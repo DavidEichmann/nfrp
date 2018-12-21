@@ -29,21 +29,31 @@ import Data.IORef
 import Control.Monad.IO.Class (liftIO)
 import Data.Time.Clock (NominalDiffTime, getCurrentTime, diffUTCTime)
 import Control.Concurrent (Chan, newChan, threadDelay, writeChan)
-import Control.Concurrent.Async
--- import System.Environment (getArgs)
 
+-- Lets make a simple calculator example with 3 clients and a server that we want to do that calculating.
+data Node
+    = ClientA
+    | ClientB
+    | ClientC
+    | Server
+    deriving (Show, Read, Eq, Ord, Bounded, Enum)
 
--- TODO LocalInput and Node types are still hard wired into NFRP but should be moved here.
+instance Sing ClientA where
+    type SingT ClientA = Node
+    sing _ = ClientA
+instance Sing ClientB where
+    type SingT ClientB = Node
+    sing _ = ClientB
+instance Sing ClientC where
+    type SingT ClientC = Node
+    sing _ = ClientC
+instance Sing Server where
+    type SingT Server = Node
+    sing _ = Server
 
--- actuate :: forall (myNode :: Node)
---         .  (Typeable myNode, SingNode myNode)
---         => Proxy myNode                        -- What node to run.
---         -> Node                        -- Clock sync node
---         -> IO Time                     -- Local clock
---         -> Moment ()                   -- The circuit to build
---         -> Chan LocalInput             -- Local inputs
---         -> Map.Map Node (Chan [UpdateList], Chan [UpdateList])   -- (send, receive) Chanels to other nodes
---         -> IO ()
+allNodes :: [Node]
+allNodes = [minBound..maxBound]
+
 main :: IO ()
 main = do
 
@@ -51,20 +61,22 @@ main = do
 
     t0 <- getCurrentTime
 
-    let nodePairs = [ (nodeFrom, nodeTo)
-                    | nodeFrom <- [minBound..maxBound]
-                    , nodeTo   <- [minBound..maxBound]
+    let nodePairs :: [(Node, Node)]
+        nodePairs = [ (nodeFrom, nodeTo)
+                    | nodeFrom <- allNodes
+                    , nodeTo   <- allNodes
                     , nodeFrom /= nodeTo
                     ]
 
-    netChans <- Map.fromList <$> sequence
-        [ do
-            c  <- newChan
-            return ((nodeFrom, nodeTo), c)
-        | (nodeFrom, nodeTo) <- nodePairs ]
+    netChans :: Map.Map (Node, Node) (Chan [UpdateList Node])
+        <- Map.fromList <$> sequence
+            [ do
+                c  <- newChan
+                return ((nodeFrom, nodeTo), c)
+            | (nodeFrom, nodeTo) <- nodePairs ]
 
     localInChans <- Map.fromList <$> sequence [ (node,) <$> newChan
-                                              | node <- [minBound..maxBound] ]
+                                              | node <- allNodes ]
 
     let
         newCtx :: IO (CtxF node)
@@ -75,7 +87,7 @@ main = do
             <*> newIORef "")
 
         actuateNode :: forall (node :: Node)
-                 .  (SingNode node, Typeable node)
+                 .  (NodeKC Node node)
                  => Maybe (CtxF node) -> Proxy node -> IO (IO ())
         actuateNode ctxMay myNodeP = do
             ctx <- maybe newCtx return ctxMay
@@ -93,9 +105,9 @@ main = do
                     [ (otherNode,
                         ( netChans ! (myNode, otherNode)
                         , netChans ! (otherNode, myNode)))
-                    | otherNode <- [minBound..maxBound], myNode /= otherNode])
+                    | otherNode <- allNodes, myNode /= otherNode])
             where
-                myNode = singNode myNodeP
+                myNode = sing myNodeP
 
     aCtx <- newCtx
     stopClientA <- actuateNode (Just aCtx) (Proxy @ClientA)
@@ -159,7 +171,7 @@ mainUI (Ctx (lhsRef, opRef, rhsRef, totRef)) keyInputC = runCurses $ do
     mainUILoop
 
 
-calculatorCircuit :: Moment CtxF ()
+calculatorCircuit :: Moment Node CtxF ()
 calculatorCircuit = do
     aKeyB <- (beh . (Step '0')) =<< (evt $ Source (Proxy @ClientA))
     bKeyBLocal <- (beh . (Step '+')) =<< (evt $ Source (Proxy @ClientB))
@@ -183,9 +195,8 @@ calculatorCircuit = do
     totalB   <- beh $ resultB_ `Ap` rightB
 
     let bind :: ( IsElem n '[Server, ClientA, ClientB, ClientC]
-                , Typeable n
-                , SingNode n )
-             => Proxy n -> Moment CtxF ()
+                , Typeable n )
+             => Proxy n -> Moment Node CtxF ()
         bind listenNodeP = do
             listenB listenNodeP leftB   (\(Ctx (r,_,_,_)) -> writeIORef r . show)
             listenB listenNodeP opCharB (\(Ctx (_,r,_,_)) -> writeIORef r . show)
@@ -198,6 +209,7 @@ calculatorCircuit = do
     return ()
 
     where
-        readIntB :: (SingNodes o, Typeable o)
-                 => BehaviorIx o Char -> Moment CtxF (BehaviorIx o Int)
+        readIntB :: forall (o :: [Node])
+                 .  GateIxC Node o Char
+                 => BehaviorIx o Char -> Moment Node CtxF (BehaviorIx o Int)
         readIntB = beh . MapB (\c -> readDef 0 [c])
