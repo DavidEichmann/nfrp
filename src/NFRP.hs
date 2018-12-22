@@ -45,40 +45,47 @@ import Control.Exception.Base (assert)
 
 import TypeLevelStuff
 
+type family TestC (node :: Type) (proNodeTerm :: nodeType)  :: Constraint where
+
 -- Some common constraint type families
-type family NodeTC (node :: Type) :: Constraint where
-    NodeTC node =
+-- TODO rename to NodeC
+type family NodeC (node :: Type) :: Constraint where
+    NodeC node =
         ( Eq node
         , Show node
         , Ord node
         , Typeable node
+        , ReifySomeNode node
         )
 
-type family NodeKC nodeK (node :: nodeK) :: Constraint where
-    NodeKC nodeK node =
-        ( Typeable node
-        , Typeable nodeK
-        , Sing node
-        , NodeTC (SingT node)
-        , SingT node ~ nodeK
+-- TODO rename to NodePC
+type family NodePC (nodeConstr :: node) :: Constraint where
+    NodePC (nodeConstr :: node) =
+        ( NodeC node
+        , Typeable nodeConstr
+        , Sing nodeConstr
         )
 
-type family NodesKC nodeK (ns :: [nodeK]) :: Constraint where
-    NodesKC nodeK '[] = ()
-    NodesKC nodeK (x:xs) =
-        ( NodeKC  nodeK x
-        , NodesKC nodeK xs
+type family NodePsC (ns :: [node]) :: Constraint where
+    NodePsC '[] = ()
+    NodePsC (x:xs) =
+        ( NodePC  x
+        , NodePsC xs
         )
 
-type family GateIxC nodeK (ns :: [nodeK]) a :: Constraint where
-    GateIxC nodeK ns a =
-        ( NodesKC nodeK ns
-        , Typeable nodeK
+type family GateIxC node (ns :: [node]) a :: Constraint where
+    GateIxC node (ns :: [node]) a =
+        ( NodePsC ns
+        , NodeC node
         , Typeable ns
         , Typeable a
-        , Sings ns nodeK
-        , ElemT nodeK ns
+        , Sings ns node
+        , ElemT node ns
         )
+
+data SomeNode node = forall (nodeP :: node) . NodePC nodeP => SomeNode (Proxy nodeP)
+class ReifySomeNode (node :: Type) where
+    someNode :: node -> SomeNode node
 
 data GateIx' node = forall (os :: [node]) (a :: Type) . GateIxC node os a => GateIx' (GateIx os a)
 data GateIx (os :: [node]) (a :: Type) = GateIxB (BehaviorIx os a) | GateIxE (EventIx os a)
@@ -302,7 +309,7 @@ data UpdateWay
 
 class HasUpdateWay (gate :: [node] -> Type -> Type) where
     updateWay :: forall (myNode :: node) (os :: [node]) a
-              .  (NodeKC node myNode, GateIxC node os a)
+              .  (NodePC myNode, GateIxC node os a)
               => Proxy myNode -> gate os a -> UpdateWay
 instance HasUpdateWay Behavior where
     updateWay (myNodeP :: Proxy myNode) b
@@ -324,7 +331,7 @@ instance HasUpdateWay Event where
 
 
 isOwned :: forall (myNode :: node) (o2 :: [node]) gate a
-        . (NodeKC node myNode, ElemT node o2)
+        . (NodePC myNode, ElemT node o2)
         => Proxy myNode -> gate o2 a -> Bool
 isOwned po1 _ = elemT po1 (Proxy @o2)
 
@@ -334,7 +341,7 @@ type LocalInput = Char
 type Time = Integer -- TODO Int64? nanoseconds?
 
 actuate :: forall (myNode :: node) (ctxF :: node -> Type)
-        .  ( NodeKC node myNode
+        .  ( NodePC myNode
            , Typeable ctxF)
         => ctxF myNode
         -> Proxy myNode                -- What node to run.
@@ -490,7 +497,7 @@ actuate ctx
 
     return stop
 
-mkLiveCircuit :: forall (myNode :: node) . NodeKC node myNode
+mkLiveCircuit :: forall (myNode :: node) . NodePC myNode
               => Circuit node -> (LiveCircuit myNode, [UpdateList node])
 mkLiveCircuit c = (lc, initialUpdatesOwnedBeh ++ initialUpdatesDerived)
     where
@@ -516,7 +523,7 @@ mkLiveCircuit c = (lc, initialUpdatesOwnedBeh ++ initialUpdatesDerived)
 
 -- Transactionally update the circuit. Returns (_, changed behaviors/events (lcBehMaxT has increased))
 lcTransaction :: forall node (myNode :: node)
-              .   NodeKC node myNode
+              .   NodePC myNode
               => LiveCircuit myNode -> [UpdateList node] -> (LiveCircuit myNode, [UpdateList node])
 lcTransaction lc ups = assert lint (lc', changes)
     where

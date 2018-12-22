@@ -14,7 +14,8 @@ extra-source-files:
 
 library
     exposed-modules:
-        NFRP
+          NFRP
+        , Simulate
     other-modules:
         TypeLevelStuff
     hs-source-dirs: src
@@ -50,7 +51,8 @@ executable Main
         safe -any,
         gtk3 -any,
         time -any,
-        ncurses -any
+        ncurses -any,
+        gloss -any
 
 test-suite NFRP-test
     type: exitcode-stdio-1.0

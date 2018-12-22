@@ -18,13 +18,12 @@
 
 module Main where
 
-import NFRP
-import Simulate
--- import Gloss
-
 import Safe
 import Data.Typeable
 import Data.Map as Map
+import NFRP
+import UI.NCurses
+
 import Data.Kind
 import Data.IORef
 import Control.Monad.IO.Class (liftIO)
@@ -33,20 +32,24 @@ import Control.Concurrent (Chan, newChan, threadDelay, writeChan)
 
 -- Lets make a simple calculator example with 3 clients and a server that we want to do that calculating.
 data Node
-    = Player
-    | Bot
+    = ClientA
+    | ClientB
+    | ClientC
+    | Server
     deriving (Show, Read, Eq, Ord, Bounded, Enum)
 
-instance Sing Player where
-    type SingT Player = Node
-    sing _ = Player
-instance Sing Bot where
-    type SingT Bot = Node
-    sing _ = Bot
-
-instance ReifySomeNode Node where
-    someNode Player = SomeNode (Proxy @Player)
-    someNode Bot    = SomeNode (Proxy @Bot)
+instance Sing ClientA where
+    type SingT ClientA = Node
+    sing _ = ClientA
+instance Sing ClientB where
+    type SingT ClientB = Node
+    sing _ = ClientB
+instance Sing ClientC where
+    type SingT ClientC = Node
+    sing _ = ClientC
+instance Sing Server where
+    type SingT Server = Node
+    sing _ = Server
 
 allNodes :: [Node]
 allNodes = [minBound..maxBound]
@@ -170,9 +173,9 @@ mainUI (Ctx (lhsRef, opRef, rhsRef, totRef)) keyInputC = runCurses $ do
 
 calculatorCircuit :: Moment Node CtxF ()
 calculatorCircuit = do
-    aKeyB      <- (beh . (Step '0')) =<< (evt $ Source (Proxy @ClientA))
+    aKeyB <- (beh . (Step '0')) =<< (evt $ Source (Proxy @ClientA))
     bKeyBLocal <- (beh . (Step '+')) =<< (evt $ Source (Proxy @ClientB))
-    cKeyB      <- (beh . (Step '0')) =<< (evt $ Source (Proxy @ClientC))
+    cKeyB <- (beh . (Step '0')) =<< (evt $ Source (Proxy @ClientC))
 
     opCharB <- beh
              . SendB (Proxy @ClientB) (Proxy @'[Server, ClientA, ClientB, ClientC])

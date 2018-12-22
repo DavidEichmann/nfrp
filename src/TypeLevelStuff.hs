@@ -5,6 +5,7 @@
 {-# LANGUAGE TypeInType #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -15,16 +16,27 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE ConstraintKinds #-}
 
-module TypeLevelStuff (IsElem, AllC, Sing(..), Sings(..), ElemT(..)) where
+module TypeLevelStuff
+    ( IsElem
+    , AllC
+    , Sing(..)
+    , SingT
+    , Sings(..)
+    , ElemT(..)
+    -- , Reify(..)
+    -- , Some(..)
+    ) where
 
 import Data.Proxy
 import Data.Typeable
 import Data.Kind
 import GHC.TypeLits
 
-class Sing t where
-    type SingT t :: Type
-    sing :: Proxy t -> SingT t
+type family SingT t where
+    SingT (t :: k) = k
+
+class Sing (t :: k) where
+    sing :: Proxy t -> k
 
 class Sings ts t where
     sings :: Proxy ts -> [t]
@@ -59,3 +71,16 @@ instance (Typeable x, ElemT k xs)
     elemT (_ :: Proxy e) _ = case eqT @e @x of
         Just Refl -> True
         Nothing   -> elemT (Proxy @e) (Proxy @xs)
+
+{-
+data Some kind
+    = forall (t :: kind) . Some (Proxy t)
+class Reify kind termT where
+    reify :: termT -> Some kind
+instance Reify a a => Reify [a] [a] where
+    reify []     = Some (Proxy @'[])
+    reify (x:xs)
+        | Some (_ :: Proxy rx ) <- reify x
+        , Some (_ :: Proxy rxs) <- reify xs
+        = Some (Proxy @(rx : rxs))
+-}
