@@ -3,8 +3,6 @@
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TupleSections #-}
-{-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE TypeInType #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -18,33 +16,29 @@
 
 module Simulate (simulate) where
 
-import Safe
 import Data.Typeable
 import Data.Map ((!))
 import qualified Data.Map as Map
 import NFRP
 
 import Data.Kind
-import Data.IORef
-import Control.Monad.IO.Class (liftIO)
+import Control.Monad (forM)
 import Data.Time.Clock (NominalDiffTime, getCurrentTime, diffUTCTime)
-import Control.Concurrent (Chan, newChan, threadDelay, writeChan)
+import Control.Concurrent (Chan, newChan)
 
-data NodeCtxMay node (ctxF :: node -> Type)
-  = forall (myNode :: node) . NodePC myNode => NodeCtxMay (Proxy myNode) (Maybe (ctxF myNode))
+data NodeCtx node (ctxF :: node -> Type)
+  = forall (myNode :: node) . NodePC myNode => NodeCtx (Proxy myNode) (ctxF myNode)
 
 simulate :: forall (node :: Type) (ctxF :: node -> Type)
          .  (NodeC node)
-         => Moment node ctxF ()        -- ^ ciruit to simulate
-         -> [NodeCtxMay node ctxF]                -- ^ nodes  to simulate
+         => Moment node ctxF ()   -- ^ Ciruit to simulate
+         -> [NodeCtx node ctxF]   -- ^ Nodes  to simulate
          -> node                  -- ^ clockSyncNode
-         -> IO ()
+         -> IO (IO ())            -- ^ returns an IO action that stops the simulation.
 simulate circuitM allNodeCtxMay clockSyncNode = do
 
     let allNodes :: [node]
-        allNodes = map (\ (NodeCtxMay nodeP _) -> sing nodeP) allNodeCtxMay
-
-    putStrLn $ "Simulating nodes: " ++ show allNodes
+        allNodes = map (\ (NodeCtx nodeP _) -> sing nodeP) allNodeCtxMay
 
     t0 <- getCurrentTime
 
@@ -65,16 +59,11 @@ simulate circuitM allNodeCtxMay clockSyncNode = do
     localInChans <- Map.fromList <$> sequence [ (node,) <$> newChan
                                               | node <- allNodes ]
 
-    let
-        newCtx :: Proxy myNode -> IO (ctxF myNode)
-        newCtx = error "TODO"
-
-        actuateNode :: forall (myNode :: node)
+    let actuateNode :: forall (myNode :: node)
                  .  (NodePC myNode)
-                 => Maybe (ctxF myNode) -> Proxy myNode -> IO (IO ())
-        actuateNode ctxMay myNodeP = do
-            ctx <- maybe (newCtx myNodeP) return ctxMay
-            actuate
+                 => ctxF myNode -> Proxy myNode -> IO (IO ())
+        actuateNode ctx myNodeP
+            = actuate
                 ctx
                 myNodeP
                 clockSyncNode
@@ -92,23 +81,7 @@ simulate circuitM allNodeCtxMay clockSyncNode = do
             where
                 myNode = sing myNodeP
 
-    let allSomeNodes :: [Some node]
-        allSomeNodes = reify allNodes
+    stops <- forM allNodeCtxMay $ \ (NodeCtx nodeP ctx) ->
+        actuateNode ctx nodeP
 
-
-    -- stopClientA <- actuateNode (Just aCtx) (Proxy @ClientA)
-    -- stopClientB <- actuateNode Nothing     (Proxy @ClientB)
-    -- stopClientC <- actuateNode Nothing     (Proxy @ClientC)
-    -- stopServer  <- actuateNode Nothing     (Proxy @Server)
-
-    -- clickSomeButtons localInChans
-    -- mainUI aCtx (localInChans ! ClientA)
-
-    -- putStrLn "Exiting."
-
-    -- stopClientA
-    -- stopClientB
-    -- stopClientC
-    -- stopServer
-
-    return ()
+    return $ sequence_ stops

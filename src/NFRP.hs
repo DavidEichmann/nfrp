@@ -341,8 +341,7 @@ type LocalInput = Char
 type Time = Integer -- TODO Int64? nanoseconds?
 
 actuate :: forall (myNode :: node) (ctxF :: node -> Type)
-        .  ( NodePC myNode
-           , Typeable ctxF)
+        .  (NodePC myNode)
         => ctxF myNode
         -> Proxy myNode                -- What node to run.
         -> node                        -- Clock sync node
