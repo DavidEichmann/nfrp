@@ -155,7 +155,7 @@ circuit = do
 
     botPosUpdateE <- evt $ MapE dirToPos botDirE
     botPosB' <- beh $ Step (0,0) botPosUpdateE
-    botPosB  <- beh $ SendB (Proxy @Player) (Proxy @[Player, Bot]) botPosB'
+    botPosB  <- beh $ SendB (Proxy @Bot) (Proxy @[Player, Bot]) botPosB'
 
     let bind :: forall (myNode :: Node)
              .  (Typeable myNode, IsElem myNode '[Player, Bot])

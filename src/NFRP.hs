@@ -104,6 +104,7 @@ data Behavior (os :: [node]) (a :: Type) where
          .  ( Typeable fromNode
             , GateIxC node fromNodes a
             , GateIxC node toNodes   a
+            , IsElem fromNode fromNodes
             , Typeable a)
          => Proxy fromNode
          -> Proxy toNodes
