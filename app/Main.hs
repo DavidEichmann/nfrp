@@ -32,7 +32,7 @@ import Data.IORef
 import Control.Monad (forM)
 import Control.Monad.IO.Class (liftIO)
 import Data.Time.Clock (NominalDiffTime, getCurrentTime, diffUTCTime)
-import Control.Concurrent (Chan, newChan, threadDelay, writeChan)
+import Control.Concurrent (Chan, newChan, threadDelay, writeChan, forkIO)
 
 -- Lets make a simple calculator example with 3 clients and a server that we want to do that calculating.
 data Node
@@ -75,11 +75,26 @@ main = do
         nodeCtxs
         Bot
 
-    -- Start Bot simulation
-    -- TODO
+    -- Start Bot GUI
+    let botInjector = injectors HMap.! (Proxy @Bot)
+        botSrcEvt = botInputDirSrcEvt $ circOuts Map.! Bot
+
+        botAI = do
+            injectEvent botInjector botSrcEvt DirUp
+            threadDelay 1000000
+            injectEvent botInjector botSrcEvt DirRight
+            threadDelay 1000000
+            injectEvent botInjector botSrcEvt DirDown
+            threadDelay 1000000
+            injectEvent botInjector botSrcEvt DirLeft
+            threadDelay 1000000
+            botAI
+
+    forkIO botAI
 
     -- Start Player GUI
     playerGUI
+        (700, 100)
         playerCtx
         (playerInputDirSrcEvt $ circOuts Map.! Player)
         (injectors HMap.! (Proxy @Player))
@@ -95,9 +110,9 @@ data CircOut = CircOut
 data InputDir = DirUp | DirRight | DirDown | DirLeft
     deriving (Eq, Ord, Show, Read)
 
-playerGUI :: Ctx Player -> SourceEvent Player InputDir -> EventInjector Player -> IO ()
-playerGUI (Ctx pPosIORef bPosIORef) inputDirSourceE injector = playIO
-    (InWindow "NFRP Demo" (500, 500) (100, 100))
+playerGUI :: (Int, Int) -> Ctx myNode -> SourceEvent myNode InputDir -> EventInjector myNode -> IO ()
+playerGUI windowPos (Ctx pPosIORef bPosIORef) inputDirSourceE injector = playIO
+    (InWindow "NFRP Demo" (500, 500) windowPos)
     black
     60
     ()
