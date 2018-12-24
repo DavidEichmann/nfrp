@@ -20,13 +20,16 @@ module Main where
 
 import NFRP
 import Simulate
--- import Gloss
+import HMap as HMap
+import Graphics.Gloss.Interface.IO.Game
 
 import Safe
 import Data.Typeable
 import Data.Map as Map
 import Data.Kind
+import Data.Proxy
 import Data.IORef
+import Control.Monad (forM)
 import Control.Monad.IO.Class (liftIO)
 import Data.Time.Clock (NominalDiffTime, getCurrentTime, diffUTCTime)
 import Control.Concurrent (Chan, newChan, threadDelay, writeChan)
@@ -38,175 +41,121 @@ data Node
     deriving (Show, Read, Eq, Ord, Bounded, Enum)
 
 instance Sing Player where
-    type SingT Player = Node
     sing _ = Player
 instance Sing Bot where
-    type SingT Bot = Node
     sing _ = Bot
 
 instance ReifySomeNode Node where
     someNode Player = SomeNode (Proxy @Player)
     someNode Bot    = SomeNode (Proxy @Bot)
 
+type Pos = (Float, Float)
+data Ctx :: Node -> Type where
+    Ctx :: IORef Pos -> IORef Pos -> Ctx n
+
 allNodes :: [Node]
 allNodes = [minBound..maxBound]
 
+newCtx :: IO (Ctx node)
+newCtx = Ctx
+    <$> newIORef (0,0)
+    <*> newIORef (0,0)
+
 main :: IO ()
 main = do
+    playerCtx <- newCtx
+    botCtx    <- newCtx
+    let nodeCtxs = [ NodeCtx (Proxy @Player) playerCtx
+                   , NodeCtx (Proxy @Bot)    botCtx
+                   ]
 
-    putStrLn "Simulating all nodes..."
+    -- Start simulation
+    (stop, circOuts, injectors) <- simulate
+        circuit
+        nodeCtxs
+        Bot
 
-    t0 <- getCurrentTime
+    -- Start Bot simulation
+    -- TODO
 
-    let nodePairs :: [(Node, Node)]
-        nodePairs = [ (nodeFrom, nodeTo)
-                    | nodeFrom <- allNodes
-                    , nodeTo   <- allNodes
-                    , nodeFrom /= nodeTo
-                    ]
+    -- Start Player GUI
+    playerGUI
+        playerCtx
+        (playerInputDirSrcEvt $ circOuts Map.! Player)
+        (injectors HMap.! (Proxy @Player))
 
-    netChans :: Map.Map (Node, Node) (Chan [UpdateList Node])
-        <- Map.fromList <$> sequence
-            [ do
-                c  <- newChan
-                return ((nodeFrom, nodeTo), c)
-            | (nodeFrom, nodeTo) <- nodePairs ]
+    --Stop
+    stop
 
-    localInChans <- Map.fromList <$> sequence [ (node,) <$> newChan
-                                              | node <- allNodes ]
+data CircOut = CircOut
+    { playerInputDirSrcEvt :: SourceEvent Player InputDir
+    , botInputDirSrcEvt    :: SourceEvent Bot    InputDir
+    }
 
-    let
-        newCtx :: IO (CtxF node)
-        newCtx = Ctx <$> ((,,,)
-            <$> newIORef ""
-            <*> newIORef ""
-            <*> newIORef ""
-            <*> newIORef "")
+data InputDir = DirUp | DirRight | DirDown | DirLeft
+    deriving (Eq, Ord, Show, Read)
 
-        actuateNode :: forall (node :: Node)
-                 .  (NodePC node)
-                 => Maybe (CtxF node) -> Proxy node -> IO (IO ())
-        actuateNode ctxMay myNodeP = do
-            ctx <- maybe newCtx return ctxMay
-            actuate
-                ctx
-                myNodeP
-                Server
-                ((round :: NominalDiffTime -> Integer)
-                    .   (* 10^(12::Int))
-                    .   flip diffUTCTime t0
-                    <$> getCurrentTime)
-                calculatorCircuit
-                (localInChans ! myNode)
-                (Map.fromList
-                    [ (otherNode,
-                        ( netChans ! (myNode, otherNode)
-                        , netChans ! (otherNode, myNode)))
-                    | otherNode <- allNodes, myNode /= otherNode])
-            where
-                myNode = sing myNodeP
+playerGUI :: Ctx Player -> SourceEvent Player InputDir -> EventInjector Player -> IO ()
+playerGUI (Ctx pPosIORef bPosIORef) inputDirSourceE injector = playIO
+    (InWindow "NFRP Demo" (500, 500) (100, 100))
+    black
+    60
+    ()
+    (\ () -> do
+        playerPos <- readIORef pPosIORef
+        botPos    <- readIORef bPosIORef
+        return $ Pictures
+            [ drawCharacter red  playerPos
+            , drawCharacter blue botPos
+            ]
+    )
+    (\ event () -> do
+        case event of
+            EventKey (SpecialKey sk) Down _modifiers _mousePos
+                -> maybe (return ()) (injectEvent injector inputDirSourceE) $ case sk of
+                    KeyUp    -> Just DirUp
+                    KeyRight -> Just DirRight
+                    KeyDown  -> Just DirDown
+                    KeyLeft  -> Just DirLeft
+                    _        -> Nothing
+            _   -> return ()
+        return ()
+        )
+    (\ dt () -> do
+        -- TODO step world... do we need to do this?
+        return ()
+        )
 
-    aCtx <- newCtx
-    stopClientA <- actuateNode (Just aCtx) (Proxy @ClientA)
-    stopClientB <- actuateNode Nothing     (Proxy @ClientB)
-    stopClientC <- actuateNode Nothing     (Proxy @ClientC)
-    stopServer  <- actuateNode Nothing     (Proxy @Server)
+drawCharacter :: Color -> Pos -> Picture
+drawCharacter c (x, y) = Color c (translate x y (Circle 10))
 
-    clickSomeButtons localInChans
-    mainUI aCtx (localInChans ! ClientA)
+circuit :: Moment Node Ctx CircOut
+circuit = do
+    (playerDirSE, playerDirE) <- newSourceEvent (Proxy @Player)
+    (botDirSE   , botDirE   ) <- newSourceEvent (Proxy @Bot)
 
-    putStrLn "Exiting."
+    playerPosUpdateE <- evt $ MapE dirToPos playerDirE
+    playerPosB' <- beh $ Step (0,0) playerPosUpdateE
+    playerPosB  <- beh $ SendB (Proxy @Player) (Proxy @[Player, Bot]) playerPosB'
 
-    stopClientA
-    stopClientB
-    stopClientC
-    stopServer
+    botPosUpdateE <- evt $ MapE dirToPos botDirE
+    botPosB' <- beh $ Step (0,0) botPosUpdateE
+    botPosB  <- beh $ SendB (Proxy @Player) (Proxy @[Player, Bot]) botPosB'
 
-    return ()
+    let bind :: forall (myNode :: Node)
+             .  (Typeable myNode, IsElem myNode '[Player, Bot])
+             => Proxy myNode -> Moment Node Ctx ()
+        bind myNodeP = do
+            listenB myNodeP playerPosB (\ (Ctx ref _) pos -> writeIORef ref pos)
+            listenB myNodeP botPosB    (\ (Ctx _ ref) pos -> writeIORef ref pos)
 
-type Ctx    = (IORef String, IORef String, IORef String, IORef String)
-data CtxF :: Node -> Type where
-    Ctx :: Ctx -> CtxF n
+    bind (Proxy @Player)
+    bind (Proxy @Bot)
 
-clickSomeButtons :: Map.Map Node (Chan Char) -> IO ()
-clickSomeButtons chans = do
-    let send node char = do
-            threadDelay (100000 `div` 2)
-            writeChan (chans Map.! node) char
-    send ClientA '9'
-    send ClientB '+'
-    send ClientC '4'
-    send ClientB '-'
+    return (CircOut playerDirSE botDirSE)
 
-    return ()
-
-mainUI :: CtxF n -> Chan Char -> IO ()
-mainUI (Ctx (lhsRef, opRef, rhsRef, totRef)) keyInputC = runCurses $ do
-    setEcho False
-    w <- defaultWindow
-    let mainUILoop = do
-            lhs <- ("lol" ++) <$> (liftIO $ readIORef lhsRef)
-            op  <- liftIO $ readIORef opRef
-            rhs <- liftIO $ readIORef rhsRef
-            tot <- liftIO $ readIORef totRef
-            updateWindow w $ do
-                clear
-                moveCursor 1 10
-                drawString $ lhs ++ " " ++ op ++ " " ++ rhs ++ " = " ++ tot
-                moveCursor 3 10
-                drawString "(press q to quit)"
-                moveCursor 0 0
-            render
-            ev <- getEvent w (Just 15)
-            case ev of
-                Just (EventCharacter 'q') -> return ()
-                Just (EventCharacter c) -> do
-                    liftIO $ writeChan keyInputC c
-                    mainUILoop
-                _ -> mainUILoop
-
-    mainUILoop
-
-
-calculatorCircuit :: Moment Node CtxF ()
-calculatorCircuit = do
-    aKeyB      <- (beh . (Step '0')) =<< (evt $ Source (Proxy @ClientA))
-    bKeyBLocal <- (beh . (Step '+')) =<< (evt $ Source (Proxy @ClientB))
-    cKeyB      <- (beh . (Step '0')) =<< (evt $ Source (Proxy @ClientC))
-
-    opCharB <- beh
-             . SendB (Proxy @ClientB) (Proxy @'[Server, ClientA, ClientB, ClientC])
-             $ bKeyBLocal
-
-
-    leftB  <- beh =<< SendB (Proxy @ClientA) (Proxy @'[Server, ClientA, ClientB, ClientC]) <$> readIntB aKeyB
-    rightB <- beh =<< SendB (Proxy @ClientC) (Proxy @'[Server, ClientA, ClientB, ClientC]) <$> readIntB cKeyB
-    opB    <- beh =<< SendB (Proxy @ClientB) (Proxy @'[Server, ClientA, ClientB, ClientC]) <$> (beh $ MapB (\case
-                            '+' -> (+)
-                            '/' -> div
-                            '*' -> (*)
-                            _   -> (-) :: (Int -> Int -> Int))
-                        opCharB)
-
-    resultB_ <- beh $ opB `Ap` leftB
-    totalB   <- beh $ resultB_ `Ap` rightB
-
-    let bind :: ( IsElem n '[Server, ClientA, ClientB, ClientC]
-                , Typeable n )
-             => Proxy n -> Moment Node CtxF ()
-        bind listenNodeP = do
-            listenB listenNodeP leftB   (\(Ctx (r,_,_,_)) -> writeIORef r . show)
-            listenB listenNodeP opCharB (\(Ctx (_,r,_,_)) -> writeIORef r . show)
-            listenB listenNodeP rightB  (\(Ctx (_,_,r,_)) -> writeIORef r . show)
-            listenB listenNodeP totalB  (\(Ctx (_,_,_,r)) -> writeIORef r . show)
-    bind (Proxy @ClientA)
-    bind (Proxy @ClientB)
-    bind (Proxy @ClientC)
-
-    return ()
-
-    where
-        readIntB :: forall (o :: [Node])
-                 .  GateIxC Node o Char
-                 => BehaviorIx o Char -> Moment Node CtxF (BehaviorIx o Int)
-        readIntB = beh . MapB (\c -> readDef 0 [c])
+dirToPos :: InputDir -> Pos
+dirToPos DirUp    = (0, 20)
+dirToPos DirRight = (20, 0)
+dirToPos DirDown  = (0, -20)
+dirToPos DirLeft  = (-20, 0)

@@ -2,7 +2,6 @@
 
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE TypeInType #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -14,27 +13,32 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE GADTs #-}
 
-module Simulate (simulate) where
+module Simulate where
 
 import Data.Typeable
-import Data.Map ((!))
-import qualified Data.Map as Map
+import Data.Map (Map, fromList, (!), empty, insert)
 import NFRP
+import qualified HMap as HM
 
 import Data.Kind
-import Control.Monad (forM)
+import Control.Monad (foldM)
 import Data.Time.Clock (NominalDiffTime, getCurrentTime, diffUTCTime)
 import Control.Concurrent (Chan, newChan)
 
 data NodeCtx node (ctxF :: node -> Type)
-  = forall (myNode :: node) . NodePC myNode => NodeCtx (Proxy myNode) (ctxF myNode)
+  = forall (myNode :: node)
+  . NodePC myNode
+  => NodeCtx (Proxy myNode) (ctxF myNode)
 
-simulate :: forall (node :: Type) (ctxF :: node -> Type)
+simulate :: forall (node :: Type) (ctxF :: node -> Type) mkCircuitOut
          .  (NodeC node)
-         => Moment node ctxF ()   -- ^ Ciruit to simulate
+         => Moment node ctxF mkCircuitOut   -- ^ Ciruit to simulate
          -> [NodeCtx node ctxF]   -- ^ Nodes  to simulate
          -> node                  -- ^ clockSyncNode
-         -> IO (IO ())            -- ^ returns an IO action that stops the simulation.
+         -> IO ( IO ()            -- ^ (returns an IO action that stops the simulation.
+               , Map node mkCircuitOut
+               , HM.HMap node EventInjector       -- ^ output from building the circuits per node.
+               )
 simulate circuitM allNodeCtxMay clockSyncNode = do
 
     let allNodes :: [node]
@@ -49,19 +53,21 @@ simulate circuitM allNodeCtxMay clockSyncNode = do
                     , nodeFrom /= nodeTo
                     ]
 
-    netChans :: Map.Map (node, node) (Chan [UpdateList node])
-        <- Map.fromList <$> sequence
+    netChans :: Map (node, node) (Chan [UpdateList node])
+        <- fromList <$> sequence
             [ do
                 c  <- newChan
                 return ((nodeFrom, nodeTo), c)
             | (nodeFrom, nodeTo) <- nodePairs ]
 
-    localInChans <- Map.fromList <$> sequence [ (node,) <$> newChan
-                                              | node <- allNodes ]
-
     let actuateNode :: forall (myNode :: node)
                  .  (NodePC myNode)
-                 => ctxF myNode -> Proxy myNode -> IO (IO ())
+                 => ctxF myNode
+                 -> Proxy myNode
+                 -> IO ( IO ()
+                       , mkCircuitOut
+                       , EventInjector myNode
+                       )
         actuateNode ctx myNodeP
             = actuate
                 ctx
@@ -72,8 +78,7 @@ simulate circuitM allNodeCtxMay clockSyncNode = do
                     .   flip diffUTCTime t0
                     <$> getCurrentTime)
                 circuitM
-                (localInChans ! myNode)
-                (Map.fromList
+                (fromList
                     [ (otherNode,
                         ( netChans ! (myNode, otherNode)
                         , netChans ! (otherNode, myNode)))
@@ -81,7 +86,13 @@ simulate circuitM allNodeCtxMay clockSyncNode = do
             where
                 myNode = sing myNodeP
 
-    stops <- forM allNodeCtxMay $ \ (NodeCtx nodeP ctx) ->
-        actuateNode ctx nodeP
-
-    return $ sequence_ stops
+    foldM
+        (\ (stopAcc, outsAcc, injectorsAcc) (NodeCtx nodeP ctx) -> do
+            (stopI, outI, injectorI) <- actuateNode ctx nodeP
+            return ( stopAcc >> stopI
+                   , insert    (sing nodeP) outI      outsAcc
+                   , HM.insert nodeP        injectorI injectorsAcc
+                   )
+        )
+        (return(), empty, HM.empty)
+        allNodeCtxMay

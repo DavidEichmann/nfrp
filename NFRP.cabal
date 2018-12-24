@@ -16,6 +16,7 @@ library
     exposed-modules:
           NFRP
         , Simulate
+        , HMap
     other-modules:
         TypeLevelStuff
     hs-source-dirs: src

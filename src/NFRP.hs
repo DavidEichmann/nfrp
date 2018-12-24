@@ -113,9 +113,9 @@ data EventIx' node = forall node (o :: [node]) (a :: Type) . (Typeable o, Typeab
 newtype EventIx (os :: [node]) (a :: Type) = EventIx { eixVert :: Graph.Vertex }
         deriving (Show, Eq, Ord)
 data Event (os :: [node]) (a :: Type) where
-    Source :: forall (sourceNode :: node)
+    Source :: forall (sourceNode :: node) localInput
         .  (Proxy sourceNode)
-        -> Event '[sourceNode] LocalInput
+        -> Event '[sourceNode] localInput
     MapE :: (Typeable os, Typeable a, Typeable b)
         => (a -> b) -> EventIx os a -> Event os b
     Sample :: (Typeable os, Typeable a, Typeable b, Typeable c)
@@ -129,7 +129,8 @@ data Event (os :: [node]) (a :: Type) where
         -> Proxy toNodes
         -> EventIx fromNodes a
         -> Event toNodes a
-
+data SourceEvent node a where
+    SourceEvent :: Typeable a => EventIx '[node] a -> SourceEvent node a
 
 data Circuit node = Circuit
     { circGraph    :: Graph.Graph
@@ -249,6 +250,14 @@ evt e = do
             ls
     return evtIx
 
+newSourceEvent :: forall node (myNode :: node) (ctxF :: node -> Type) a
+          .  (GateIxC node '[myNode] a)
+          => Proxy myNode
+          -> Moment node ctxF (SourceEvent myNode a, EventIx '[myNode] a)
+newSourceEvent myNodeP = do
+    eix <- evt (Source myNodeP)
+    return (SourceEvent eix, eix)
+
 behDepVerts :: Behavior os a -> [Graph.Vertex]
 behDepVerts (Step _ e)    = [eixVert e]
 behDepVerts (MapB _ b)    = [bixVert b]
@@ -290,14 +299,15 @@ listenB node bix listener = modify (\ms -> ms {
         momentListeners = Listener node bix listener : momentListeners ms
     })
 
-buildCircuit :: forall node (ctxF :: node -> Type)
-             .  Moment node ctxF () -> (Circuit node, [Listener ctxF])
+buildCircuit :: forall node (ctxF :: node -> Type) out
+             .  Moment node ctxF out -> (Circuit node, [Listener ctxF], out)
 buildCircuit builder
     = ( Circuit graph behDyn allBehs
       , ls
+      , out
       )
     where
-        (_, MomentState nextVIx behDyn edges allBehs ls) = runState builder (MomentState 0 Map.empty [] [] [])
+        (out, MomentState nextVIx behDyn edges allBehs ls) = runState builder (MomentState 0 Map.empty [] [] [])
         graph = Graph.buildG (0, nextVIx - 1) edges
 
 data UpdateWay
@@ -335,27 +345,34 @@ isOwned :: forall (myNode :: node) (o2 :: [node]) gate a
         => Proxy myNode -> gate o2 a -> Bool
 isOwned po1 _ = elemT po1 (Proxy @o2)
 
--- The only local input we care about is key presses.
-type LocalInput = Char
-
 type Time = Integer -- TODO Int64? nanoseconds?
 
-actuate :: forall (myNode :: node) (ctxF :: node -> Type)
+data EventInjector myNode where
+    EventInjector :: Proxy myNode
+                  -> (forall a . SourceEvent myNode a -> a -> IO ())
+                  -> EventInjector myNode
+
+injectEvent :: EventInjector myNode -> SourceEvent myNode a -> a -> IO ()
+injectEvent (EventInjector _ injector) = injector
+
+actuate :: forall (myNode :: node) (ctxF :: node -> Type) mkCircuitOut
         .  (NodePC myNode)
         => ctxF myNode
         -> Proxy myNode                -- What node to run.
         -> node                        -- Clock sync node
         -> IO Time                     -- Local clock
-        -> Moment node ctxF ()               -- The circuit to build
-        -> Chan LocalInput             -- Local inputs
+        -> Moment node ctxF mkCircuitOut               -- The circuit to build
         -> Map.Map node (Chan [UpdateList node], Chan [UpdateList node])   -- (send, receive) Chanels to other nodes
-        -> IO (IO ())   -- Returns the IO action that stops the actuation
+        -> IO ( IO ()               -- IO action that stops the actuation
+              , mkCircuitOut                   -- Result of building the circuit
+              , EventInjector myNode
+                                    -- ^ function to inject events
+              )
 actuate ctx
         myNodeProxy
         _clockSyncNode
         getLocalTime
         mkCircuit
-        localInChan
         channels
   = do
 
@@ -371,7 +388,7 @@ actuate ctx
                 Right v -> f v >> loop
 
     let myNode = sing myNodeProxy
-        (circuit, listeners) = buildCircuit mkCircuit
+        (circuit, listeners, mkCircuitOut) = buildCircuit mkCircuit
 
         putLog :: String -> IO ()
         putLog str = putStrLn $ show myNode ++ ": " ++ str
@@ -422,26 +439,17 @@ actuate ctx
     putLog $ show (length $ circAllGates circuit) ++ " gates"
     putLog $ show myResponsabilitiesMessage ++ " my message responsabilities"
 
-    -- Get all source behaviors for this node.
-    let mySourceEs :: [EventIx '[myNode] LocalInput]
-        mySourceEs = mapMaybe
-            (\case
-                GateIx' (GateIxB (bix :: BehaviorIx o a)) -> (cast :: BehaviorIx o a -> _) bix
-                GateIx' (GateIxE (eix :: EventIx    o a)) -> (cast :: EventIx    o a -> _) eix
-            )
-            (circAllGates circuit)
-
     -- A single change to compile all local inputs and messages from other nodes.
     inChan :: Chan [UpdateList node] <- newChan
 
     -- Listen for local inputs (time is assigned here)
-    aLocalInput <- forkIO . readUntillStop localInChan $ \ input -> do
-        time <- getTime
-        putLog $ "Pressed: " ++ show input
-        writeChan inChan [UpdateListE e [(time, input)] | e <- mySourceEs]
+    let injectInput :: EventInjector myNode
+        injectInput = EventInjector myNodeProxy $ \ (SourceEvent eix) valA -> do
+            time <- getTime
+            writeChan inChan [UpdateListE eix [(time, valA)]]
 
     -- Listen for messages from other nodes.
-    asRcv <- forM (Map.assocs channels) $ \(_otherNode, (_, recvChan)) -> forkIO
+    _asRcv <- forM (Map.assocs channels) $ \(_otherNode, (_, recvChan)) -> forkIO
         . readUntillStop recvChan $ \ recvVal -> do
             writeChan inChan recvVal
             putLog "received input"
@@ -451,7 +459,7 @@ actuate ctx
     let (circuit0, initialUpdates) = mkLiveCircuit circuit :: (LiveCircuit myNode, [UpdateList node])
     changesChan :: Chan [UpdateList node] <- newChan
     writeChan changesChan initialUpdates
-    aLiveCircuit <- do
+    _aLiveCircuit <- do
         liveCircuitRef <- newIORef circuit0
         forkIO . readUntillStop inChan $ \ updates -> do
             -- Update state: Calculate for each behavior what is known and up to what time
@@ -465,11 +473,11 @@ actuate ctx
     -- Fullfill responsibilities: Listeners + sending to other nodes
     listenersChan :: Chan (IO ()) <- newChan
     outMsgChan :: Chan (IO ()) <- newChan
-    aResponsibilities <- forkIO . readUntillStop changesChan $ \ changes -> do
+    _aResponsibilities <- forkIO . readUntillStop changesChan $ \ changes -> do
         putLog $ "Got changesChan with changes: " ++ show changes
         forM_ responsabilities $
             \ (OnPossibleChange (bix :: BehaviorIx bixO bixA) isLocalListener action) ->
-                -- TODO double forM_ is inefficient... maybe index changes on BehaviorIxZ?
+                -- TODO double forM_ is inefficient... maybe index changes on BehaviorIx?
                 forM_ changes $ \ case
                     UpdateListB (bix' :: BehaviorIx bixO' bixA') updates
                         | Just Refl <- eqT @(BehaviorIx bixO bixA) @(BehaviorIx bixO' bixA')
@@ -485,16 +493,16 @@ actuate ctx
                     _ -> return ()
 
     -- Thread that just executes listeners
-    aListeners <- forkIO $ readUntillStop listenersChan id
+    _aListeners <- forkIO $ readUntillStop listenersChan id
 
     -- Thread that just sends mesages to other nodes
-    aMsg <- forkIO $ readUntillStop outMsgChan id
+    _aMsg <- forkIO $ readUntillStop outMsgChan id
 
     -- TODO some way to stop gracefully.
 
     putLog "Started all threads."
 
-    return stop
+    return (stop, mkCircuitOut, injectInput)
 
 mkLiveCircuit :: forall (myNode :: node) . NodePC myNode
               => Circuit node -> (LiveCircuit myNode, [UpdateList node])
