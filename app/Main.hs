@@ -23,16 +23,11 @@ import Simulate
 import HMap as HMap
 import Graphics.Gloss.Interface.IO.Game
 
-import Safe
 import Data.Typeable
 import Data.Map as Map
 import Data.Kind
-import Data.Proxy
 import Data.IORef
-import Control.Monad (forM)
-import Control.Monad.IO.Class (liftIO)
-import Data.Time.Clock (NominalDiffTime, getCurrentTime, diffUTCTime)
-import Control.Concurrent (Chan, newChan, threadDelay, writeChan, forkIO)
+import Control.Concurrent (threadDelay, forkIO)
 
 -- Lets make a simple calculator example with 3 clients and a server that we want to do that calculating.
 data Node
@@ -90,7 +85,7 @@ main = do
             threadDelay 1000000
             botAI
 
-    forkIO botAI
+    _ <- forkIO botAI
 
     -- Start Player GUI
     playerGUI
@@ -136,7 +131,7 @@ playerGUI windowPos (Ctx pPosIORef bPosIORef) inputDirSourceE injector = playIO
             _   -> return ()
         return ()
         )
-    (\ dt () -> do
+    (\ _dt () ->
         -- TODO step world... do we need to do this?
         return ()
         )
