@@ -120,7 +120,7 @@ data Event (os :: [node]) (a :: Type) where
     MapE :: (Typeable os, Typeable a, Typeable b)
         => (a -> b) -> EventIx os a -> Event os b
     Sample :: (Typeable os, Typeable a, Typeable b, Typeable c)
-        => (a -> b -> c) -> BehaviorIx os a -> EventIx os b -> Event os c
+        => (Time -> a -> b -> c) -> BehaviorIx os a -> EventIx os b -> Event os c
     SendE ::  forall (fromNode :: node) (fromNodes :: [node]) (toNodes :: [node]) a
         . ( Typeable fromNode
           , GateIxC node fromNodes a
@@ -368,6 +368,7 @@ actuate :: forall (myNode :: node) (ctxF :: node -> Type) mkCircuitOut
               , mkCircuitOut                   -- Result of building the circuit
               , EventInjector myNode
                                     -- ^ function to inject events
+              , IO Time             -- ^ adjusted local time.
               )
 actuate ctx
         myNodeProxy
@@ -503,7 +504,7 @@ actuate ctx
 
     putLog "Started all threads."
 
-    return (stop, mkCircuitOut, injectInput)
+    return (stop, mkCircuitOut, injectInput, getTime)
 
 mkLiveCircuit :: forall (myNode :: node) . NodePC myNode
               => Circuit node -> (LiveCircuit myNode, [UpdateList node])
@@ -616,7 +617,7 @@ lcTransaction lc ups = assert lint (lc', changes)
                 Source {}        -> error "Source Event cannot be derived."
                 SendE _ _ eix'   -> lcEvents lc' eix'
                 MapE f eA        -> (\(occT, occVal) -> (occT, f occVal)) <$> lcEvents' eA
-                Sample f bix eA  -> [(sampleT, f bVal eVal)
+                Sample f bix eA  -> [(sampleT, f sampleT bVal eVal)
                                         | (sampleT, eVal) <- lcEvents' eA
                                         , let bVal = lcBehVal lc' sampleT bix ]
             where
@@ -647,3 +648,10 @@ lcTransaction lc ups = assert lint (lc', changes)
 -- Asserting on LiveCircuitls
 lintLiveCircuit :: LiveCircuit myNode -> LiveCircuit myNode
 lintLiveCircuit = id -- TODO
+
+
+
+-- Combinators
+-- accumE :: a -> Event os (a -> a) -> Event os a
+-- accumE a0 accE =
+

@@ -45,8 +45,11 @@ instance ReifySomeNode Node where
     someNode Bot    = SomeNode (Proxy @Bot)
 
 type Pos = (Float, Float)
+
 data Ctx :: Node -> Type where
     Ctx :: IORef Pos -> IORef Pos -> Ctx n
+
+type Mom a = Moment Node Ctx a
 
 allNodes :: [Node]
 allNodes = [minBound..maxBound]
@@ -65,7 +68,7 @@ main = do
                    ]
 
     -- Start simulation
-    (stop, circOuts, injectors) <- simulate
+    (stop, circOuts, injectors, clocks) <- simulate
         circuit
         nodeCtxs
         Bot
@@ -93,6 +96,7 @@ main = do
         playerCtx
         (playerInputDirSrcEvt $ circOuts Map.! Player)
         (injectors HMap.! (Proxy @Player))
+        (clocks Map.! Player)
 
     --Stop
     stop
@@ -105,8 +109,13 @@ data CircOut = CircOut
 data InputDir = DirUp | DirRight | DirDown | DirLeft
     deriving (Eq, Ord, Show, Read)
 
-playerGUI :: (Int, Int) -> Ctx myNode -> SourceEvent myNode InputDir -> EventInjector myNode -> IO ()
-playerGUI windowPos (Ctx pPosIORef bPosIORef) inputDirSourceE injector = playIO
+playerGUI :: (Int, Int)
+          -> Ctx myNode
+          -> SourceEvent myNode InputDir
+          -> EventInjector myNode
+          -> IO Time
+          -> IO ()
+playerGUI windowPos (Ctx pPosIORef bPosIORef) inputDirSourceE injector getTime = playIO
     (InWindow "NFRP Demo" (500, 500) windowPos)
     black
     60
@@ -121,7 +130,7 @@ playerGUI windowPos (Ctx pPosIORef bPosIORef) inputDirSourceE injector = playIO
     )
     (\ event () -> do
         case event of
-            EventKey (SpecialKey sk) Down _modifiers _mousePos
+            EventKey (SpecialKey sk) keyState _modifiers _mousePos
                 -> maybe (return ()) (injectEvent injector inputDirSourceE) $ case sk of
                     KeyUp    -> Just DirUp
                     KeyRight -> Just DirRight
@@ -139,7 +148,7 @@ playerGUI windowPos (Ctx pPosIORef bPosIORef) inputDirSourceE injector = playIO
 drawCharacter :: Color -> Pos -> Picture
 drawCharacter c (x, y) = Color c (translate x y (Circle 10))
 
-circuit :: Moment Node Ctx CircOut
+circuit :: Mom CircOut
 circuit = do
     (playerDirSE, playerDirE) <- newSourceEvent (Proxy @Player)
     (botDirSE   , botDirE   ) <- newSourceEvent (Proxy @Bot)
@@ -154,7 +163,7 @@ circuit = do
 
     let bind :: forall (myNode :: Node)
              .  (Typeable myNode, IsElem myNode '[Player, Bot])
-             => Proxy myNode -> Moment Node Ctx ()
+             => Proxy myNode -> Mom ()
         bind myNodeP = do
             listenB myNodeP playerPosB (\ (Ctx ref _) pos -> writeIORef ref pos)
             listenB myNodeP botPosB    (\ (Ctx _ ref) pos -> writeIORef ref pos)
@@ -169,3 +178,10 @@ dirToPos DirUp    = (0, 20)
 dirToPos DirRight = (20, 0)
 dirToPos DirDown  = (0, -20)
 dirToPos DirLeft  = (-20, 0)
+
+-- movementControler :: EventIx os (InputDir, KeyState) -> Mom (BehaviorIx os (Time -> Pos))
+-- movementControler inDirE = do
+--     activeDirsB :: BehaviorIx os [InputDir]
+--         <- (beh $ Step []) <$> MapE (\ () -> _) inDirE
+
+--     _

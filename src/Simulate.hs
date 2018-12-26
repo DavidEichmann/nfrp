@@ -38,7 +38,7 @@ simulate :: forall (node :: Type) (ctxF :: node -> Type) mkCircuitOut
          -> IO ( IO ()            -- ^ (returns an IO action that stops the simulation.
                , Map node mkCircuitOut
                , HM.HMap node EventInjector       -- ^ output from building the circuits per node.
-               )
+               , Map node (IO Time))              -- ^ adjusted clocks
 simulate circuitM allNodeCtxMay clockSyncNode = do
 
     let allNodes :: [node]
@@ -67,7 +67,7 @@ simulate circuitM allNodeCtxMay clockSyncNode = do
                  -> IO ( IO ()
                        , mkCircuitOut
                        , EventInjector myNode
-                       )
+                       , IO Time)
         actuateNode ctx myNodeP
             = actuate
                 ctx
@@ -87,12 +87,14 @@ simulate circuitM allNodeCtxMay clockSyncNode = do
                 myNode = sing myNodeP
 
     foldM
-        (\ (stopAcc, outsAcc, injectorsAcc) (NodeCtx nodeP ctx) -> do
-            (stopI, outI, injectorI) <- actuateNode ctx nodeP
+        (\ (stopAcc, outsAcc, injectorsAcc, clocksAcc) (NodeCtx nodeP ctx) -> do
+            (stopI, outI, injectorI, clockI) <- actuateNode ctx nodeP
+            let node = sing nodeP
             return ( stopAcc >> stopI
-                   , insert    (sing nodeP) outI      outsAcc
-                   , HM.insert nodeP        injectorI injectorsAcc
+                   , insert    node  outI      outsAcc
+                   , HM.insert nodeP injectorI injectorsAcc
+                   , insert    node  clockI    clocksAcc
                    )
         )
-        (return(), empty, HM.empty)
+        (return(), empty, HM.empty, empty)
         allNodeCtxMay
