@@ -28,6 +28,7 @@ module NFRP
 import Safe
 import Control.Monad.State
 import Data.Typeable (eqT, (:~:)(Refl))
+import Unsafe.Coerce
 import Data.IORef
 import Data.Proxy
 import Data.Kind
@@ -78,7 +79,6 @@ type family GateIxC node (ns :: [node]) a :: Constraint where
         ( NodePsC ns
         , NodeC node
         , Typeable ns
-        , Typeable a
         , Sings ns node
         , ElemT node ns
         )
@@ -94,19 +94,20 @@ data BehaviorIx' node = forall (os :: [node]) (a :: Type) . GateIxC node os a =>
 newtype BehaviorIx (os :: [node]) (a :: Type) = BehaviorIx { bixVert :: Graph.Vertex }
         deriving (Show, Eq, Ord)
 data Behavior (os :: [node]) (a :: Type) where
-    BIx :: (Typeable os, Typeable a) => BehaviorIx os a -> Behavior os a
-    Step :: (Typeable os, Typeable a)
+    BIx :: (Typeable os) => BehaviorIx os a -> Behavior os a
+    Const :: (Typeable os) => a -> Behavior os a
+    Step :: (Typeable os)
         => a -> Event os a -> Behavior os a
-    MapB :: (Typeable os, Typeable a, Typeable b)
+    MapB :: (Typeable os)
         => (a -> b) -> Behavior os a -> Behavior os b
-    Ap  :: (Typeable os, Typeable a, Typeable b)
+    Ap  :: (Typeable os)
         => Behavior os (a -> b) -> Behavior os a -> Behavior os b
     SendB :: forall (fromNode :: node) (fromNodes :: [node]) (toNodes :: [node]) a
          .  ( Typeable fromNode
             , GateIxC node fromNodes a
             , GateIxC node toNodes   a
             , IsElem fromNode fromNodes
-            , Typeable a)
+            )
          => Proxy fromNode
          -> Proxy toNodes
          -> Behavior fromNodes a
@@ -115,23 +116,35 @@ toBix :: Behavior os a -> BehaviorIx os a
 toBix (BIx bix) = bix
 toBix _ = error "Expected BIx constructor"
 
+-- TODO uggg looks like we need to remove Typeable a constraint from the constructors. Is that doable? we just cant use dynamic?
+instance Typeable os => Functor (Behavior os) where
+    fmap   = MapB
+    a <$ _ = Const a
+
+instance Typeable os => Applicative (Behavior os) where
+    pure  = Const
+    (<*>) = Ap
+
+instance Typeable os => Functor (Event os) where
+    fmap   = MapE
+
 data EventIx' node = forall (o :: [node]) (a :: Type) . (Typeable o, Typeable a) => EventIx' (EventIx o a)
 newtype EventIx (os :: [node]) (a :: Type) = EventIx { eixVert :: Graph.Vertex }
         deriving (Show, Eq, Ord)
 data Event (os :: [node]) (a :: Type) where
-    EIx :: (Typeable os, Typeable a) => EventIx os a -> Event os a
+    EIx :: (Typeable os) => EventIx os a -> Event os a
     Source :: forall (sourceNode :: node) localInput
         .  (Proxy sourceNode)
         -> Event '[sourceNode] localInput
-    MapE :: (Typeable os, Typeable a, Typeable b)
+    MapE :: (Typeable os)
         => (a -> b) -> Event os a -> Event os b
-    Sample :: (Typeable os, Typeable a, Typeable b, Typeable c)
+    Sample :: (Typeable os, Typeable c)
         => (Time -> a -> b -> c) -> Behavior os a -> Event os b -> Event os c
     SendE :: forall (fromNode :: node) (fromNodes :: [node]) (toNodes :: [node]) a
         . ( Typeable fromNode
           , GateIxC node fromNodes a
           , GateIxC node toNodes   a
-          , Typeable a)
+          )
         => Proxy fromNode
         -> Proxy toNodes
         -> Event fromNodes a
@@ -139,23 +152,23 @@ data Event (os :: [node]) (a :: Type) where
 toEix :: Event os a -> EventIx os a
 toEix (EIx eix) = eix
 toEix _ = error "Expected EIx constructor"
-data SourceEvent node a where
-    SourceEvent :: Typeable a => EventIx '[node] a -> SourceEvent node a
+newtype SourceEvent node a where
+    SourceEvent :: EventIx '[node] a -> SourceEvent node a
 
 data Circuit node = Circuit
     { circGraph    :: Graph.Graph
-    , circGateDyn  :: Map.Map Graph.Vertex Dynamic
+    , circGateDyn  :: Map.Map Graph.Vertex Int
                     -- ^Dynamic is a Behavior or Event of some os/type (can be infered from vertex)
     , circAllGates :: [GateIx' node]
     }
 
-circBeh :: forall (os :: [node]) a . (Typeable node, Typeable os, Typeable a)
+circBeh :: forall (os :: [node]) a . (Typeable node, Typeable os)
         => Circuit node -> BehaviorIx os a -> Behavior os a
-circBeh c = flip fromDyn (error "Unexpected type of behavior.") . (circGateDyn c Map.!) . bixVert
+circBeh c = unsafeCoerce . (circGateDyn c Map.!) . bixVert
 
-circEvt :: forall (os :: [node]) a . (Typeable node, Typeable os, Typeable a)
+circEvt :: forall (os :: [node]) a . (Typeable node, Typeable os)
         => Circuit node -> EventIx os a -> Event os a
-circEvt c = flip fromDyn (error "Unexpected type of event.") . (circGateDyn c Map.!) . eixVert
+circEvt c = unsafeCoerce . (circGateDyn c Map.!) . eixVert
 
 data LiveCircuit (myNode :: node) = LiveCircuit
     { lcCircuit :: Circuit node
@@ -195,7 +208,7 @@ instance Eq (BehaviorIx' node) where
 type Moment node ctxF a = State (MomentState ctxF) a
 data MomentState (ctxF :: node -> Type) = MomentState
     { momentNextVert  :: Graph.Vertex
-    , momentBehDyn    :: Map.Map Graph.Vertex Dynamic
+    , momentBehDyn    :: Map.Map Graph.Vertex Int
     , momentEdges     :: [Graph.Edge]
     , momentAllGates  :: [GateIx' node]
     , momentListeners :: [Listener ctxF]
@@ -203,7 +216,7 @@ data MomentState (ctxF :: node -> Type) = MomentState
 
 data Listener (ctxF :: node -> Type)
     = forall n os a
-    . (IsElem n os, Typeable n, Typeable os, Typeable a)
+    . (IsElem n os, Typeable n, Typeable os)
     => Listener (Proxy n) (BehaviorIx os a) (ctxF n -> a -> IO ())
 
 data UpdateList node = forall (os :: [node]) a . GateIxC node os a
@@ -217,7 +230,7 @@ instance Show (UpdateList node) where
                 UpdateListE e us -> show e ++ ") Times=" ++ show (fst <$> us)
 
 data Responsibility localCtx (responsibleNode :: node)
-    = forall (os :: [node]) a . (Typeable os, Typeable a) =>
+    = forall (os :: [node]) a . (Typeable os) =>
         OnPossibleChange
             (BehaviorIx os a)
             Bool    -- ^ Is it a local listerner? As opposed to sending a msg to another node.
@@ -232,6 +245,8 @@ beh :: forall node (os :: [node]) a (ctxF :: node -> Type)
 beh = \b -> case b of
     BIx _
         -> return b
+    Const _
+        -> newBeh b
     Step a e
         -> newBeh =<< Step a <$> evt e
     MapB f b2
@@ -250,7 +265,7 @@ beh = \b -> case b of
                     -- Increment vertex index.
                     (v+1)
                     -- Add behavior to map.
-                    (Map.insert v (toDyn b) bd)
+                    (Map.insert v (unsafeCoerce b) bd)
                     -- Add eges and behavior.
                     (((v,) <$> behDepVerts b) ++ es)
                     (GateIx' (GateIxB behIx) : allGates)
@@ -282,7 +297,7 @@ evt = \e -> case e of
                     -- Increment vertex index.
                     (v+1)
                     -- Add event to map.
-                    (Map.insert v (toDyn e) bd)
+                    (Map.insert v (unsafeCoerce e) bd)
                     -- Add eges and event.
                     (((v,) <$> evtDepVerts e) ++ es)
                     (GateIx' (GateIxE evtIx) : allGates)
@@ -299,6 +314,7 @@ newSourceEvent myNodeP = do
 
 behDepVerts :: Behavior os a -> [Graph.Vertex]
 behDepVerts (BIx bix)     = [bixVert bix]
+behDepVerts (Const _)     = []
 behDepVerts (Step _ e)    = evtDepVerts e
 behDepVerts (MapB _ b)    = behDepVerts b
 behDepVerts (Ap fb ib)    = behDepVerts fb ++ behDepVerts ib
@@ -308,6 +324,7 @@ behDeps :: forall node (os :: [node]) a
         .  GateIxC node os a
         => Behavior os a -> [GateIx' node]
 behDeps (BIx bix)     = [GateIx' (GateIxB bix)]
+behDeps (Const _)     = []
 behDeps (Step _ e)    = evtDeps e
 behDeps (MapB _ b)    = behDeps b
 behDeps (Ap fb ib)    = behDeps fb ++ behDeps ib
@@ -526,13 +543,13 @@ actuate ctx
                 -- TODO double forM_ is inefficient... maybe index changes on BehaviorIx?
                 forM_ changes $ \ case
                     UpdateListB (bix' :: BehaviorIx bixO' bixA') updates
-                        | Just Refl <- eqT @(BehaviorIx bixO bixA) @(BehaviorIx bixO' bixA')
-                        , bix == bix'
+                        -- | Just Refl <- eqT @(BehaviorIx bixO bixA) @(BehaviorIx bixO' bixA')
+                        | bixVert bix == bixVert bix'
                         -> do
                             putLog $ "Found listener for bix: " ++ show bix
                             writeChan
                                 (if isLocalListener then listenersChan else outMsgChan)
-                                (action ctx updates)
+                                (action ctx (unsafeCoerce updates))
                             putLog $ "Sent listener action for bix: " ++ show bix
 
                     -- Note we don't support Event listeners (yet).
@@ -567,6 +584,7 @@ mkLiveCircuit c = (lc, initialUpdatesOwnedBeh ++ initialUpdatesDerived)
                   | isOwned (Proxy @myNode) bix
                   -> case circBeh c bix of
                         BIx _        -> error "Unexpected BIx."
+                        Const val    -> Just (UpdateListB bix [(0, val)])
                         Step bix2 _  -> Just (UpdateListB bix [(0, bix2)])
                         MapB _ _     -> Nothing
                         Ap _ _       -> Nothing
@@ -634,6 +652,7 @@ lcTransaction lc ups = assert lint (lc', changes)
             RemoteUpdate   -> fromUpdatesList
             DerivedUpdate  -> case b of
                 BIx _                            -> error "Unexpected BIx."
+                Const _                          -> lcBehChanges lc' bix   -- No change!
                 SendB _ _ (toBix -> bix')        -> lcBehChanges lc' bix'
                 Step _ (toEix -> eix)            -> lcEvents lc' eix
                 MapB f (toBix -> bixParent)      -> fmap f <$> lcBehChanges lc' bixParent
@@ -684,12 +703,12 @@ lcTransaction lc ups = assert lint (lc', changes)
                     GateIxB (BehaviorIx bv) -> bv
                     GateIxE (EventIx    ev) -> ev
                 changesMay (UpdateListB (BehaviorIx v :: BehaviorIx vo va) vChanges)
-                    | Just Refl <- eqT @(BehaviorIx ns a) @(BehaviorIx vo va)
-                    , v == gv   = Just vChanges
+                    -- | Just Refl <- eqT @(BehaviorIx ns a) @(BehaviorIx vo va)
+                    | v == gv   = Just (unsafeCoerce vChanges)
                     | otherwise = Nothing
                 changesMay (UpdateListE (EventIx    v :: EventIx    vo va) vEvents)
-                    | Just Refl <- eqT @(EventIx ns a) @(EventIx vo va)
-                    , v == gv   = Just vEvents
+                    -- | Just Refl <- eqT @(EventIx ns a) @(EventIx vo va)
+                    | v == gv   = Just (unsafeCoerce vEvents)
                     | otherwise = Nothing
 
 -- Asserting on LiveCircuitls

@@ -153,13 +153,17 @@ circuit = do
     (playerDirSE, playerDirE) <- newSourceEvent (Proxy @Player)
     (botDirSE   , botDirE   ) <- newSourceEvent (Proxy @Bot)
 
-    playerPosUpdateE <- evt $ MapE dirToPos playerDirE
-    playerPosB' <- beh $ Step (0,0) playerPosUpdateE
-    playerPosB  <- beh $ SendB (Proxy @Player) (Proxy @[Player, Bot]) playerPosB'
+    playerPosB
+        <- beh
+        . SendB (Proxy @Player) (Proxy @[Player, Bot])
+        . Step (0,0)
+        $ dirToPos <$> playerDirE
 
-    botPosUpdateE <- evt $ MapE dirToPos botDirE
-    botPosB' <- beh $ Step (0,0) botPosUpdateE
-    botPosB  <- beh $ SendB (Proxy @Bot) (Proxy @[Player, Bot]) botPosB'
+    botPosB
+        <- beh
+        . SendB (Proxy @Bot) (Proxy @[Player, Bot])
+        . Step (0,0)
+        $ dirToPos <$> botDirE
 
     let bind :: forall (myNode :: Node)
              .  (Typeable myNode, IsElem myNode '[Player, Bot])
@@ -182,6 +186,6 @@ dirToPos DirLeft  = (-20, 0)
 -- movementControler :: EventIx os (InputDir, KeyState) -> Mom (BehaviorIx os (Time -> Pos))
 -- movementControler inDirE = do
 --     activeDirsB :: BehaviorIx os [InputDir]
---         <- (beh $ Step []) <$> MapE (\ () -> _) inDirE
+--         <- (beh $ Step []) <$> fmap (\ () -> _) inDirE
 
 --     _
