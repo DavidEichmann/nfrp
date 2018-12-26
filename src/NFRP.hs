@@ -2,6 +2,7 @@
 {-# OPTIONS_GHC -Wno-partial-type-signatures #-}
 
 {-# LANGUAGE PartialTypeSignatures #-}
+{-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TupleSections #-}
@@ -26,7 +27,7 @@ module NFRP
 
 import Safe
 import Control.Monad.State
-import Data.Typeable (cast, eqT, (:~:)(Refl))
+import Data.Typeable (eqT, (:~:)(Refl))
 import Data.IORef
 import Data.Proxy
 import Data.Kind
@@ -45,7 +46,6 @@ import Control.Exception.Base (assert)
 
 import TypeLevelStuff
 
-type family TestC (node :: Type) (proNodeTerm :: nodeType)  :: Constraint where
 
 -- Some common constraint type families
 -- TODO rename to NodeC
@@ -94,12 +94,13 @@ data BehaviorIx' node = forall (os :: [node]) (a :: Type) . GateIxC node os a =>
 newtype BehaviorIx (os :: [node]) (a :: Type) = BehaviorIx { bixVert :: Graph.Vertex }
         deriving (Show, Eq, Ord)
 data Behavior (os :: [node]) (a :: Type) where
+    BIx :: (Typeable os, Typeable a) => BehaviorIx os a -> Behavior os a
     Step :: (Typeable os, Typeable a)
-        => a -> EventIx os a -> Behavior os a
+        => a -> Event os a -> Behavior os a
     MapB :: (Typeable os, Typeable a, Typeable b)
-        => (a -> b) -> BehaviorIx os a -> Behavior os b
+        => (a -> b) -> Behavior os a -> Behavior os b
     Ap  :: (Typeable os, Typeable a, Typeable b)
-        => BehaviorIx os (a -> b) -> BehaviorIx os a -> Behavior os b
+        => Behavior os (a -> b) -> Behavior os a -> Behavior os b
     SendB :: forall (fromNode :: node) (fromNodes :: [node]) (toNodes :: [node]) a
          .  ( Typeable fromNode
             , GateIxC node fromNodes a
@@ -108,28 +109,36 @@ data Behavior (os :: [node]) (a :: Type) where
             , Typeable a)
          => Proxy fromNode
          -> Proxy toNodes
-         -> BehaviorIx fromNodes a
+         -> Behavior fromNodes a
          -> Behavior toNodes a
-data EventIx' node = forall node (o :: [node]) (a :: Type) . (Typeable o, Typeable a) => EventIx' (EventIx o a)
+toBix :: Behavior os a -> BehaviorIx os a
+toBix (BIx bix) = bix
+toBix _ = error "Expected BIx constructor"
+
+data EventIx' node = forall (o :: [node]) (a :: Type) . (Typeable o, Typeable a) => EventIx' (EventIx o a)
 newtype EventIx (os :: [node]) (a :: Type) = EventIx { eixVert :: Graph.Vertex }
         deriving (Show, Eq, Ord)
 data Event (os :: [node]) (a :: Type) where
+    EIx :: (Typeable os, Typeable a) => EventIx os a -> Event os a
     Source :: forall (sourceNode :: node) localInput
         .  (Proxy sourceNode)
         -> Event '[sourceNode] localInput
     MapE :: (Typeable os, Typeable a, Typeable b)
-        => (a -> b) -> EventIx os a -> Event os b
+        => (a -> b) -> Event os a -> Event os b
     Sample :: (Typeable os, Typeable a, Typeable b, Typeable c)
-        => (Time -> a -> b -> c) -> BehaviorIx os a -> EventIx os b -> Event os c
-    SendE ::  forall (fromNode :: node) (fromNodes :: [node]) (toNodes :: [node]) a
+        => (Time -> a -> b -> c) -> Behavior os a -> Event os b -> Event os c
+    SendE :: forall (fromNode :: node) (fromNodes :: [node]) (toNodes :: [node]) a
         . ( Typeable fromNode
           , GateIxC node fromNodes a
           , GateIxC node toNodes   a
           , Typeable a)
         => Proxy fromNode
         -> Proxy toNodes
-        -> EventIx fromNodes a
+        -> Event fromNodes a
         -> Event toNodes a
+toEix :: Event os a -> EventIx os a
+toEix (EIx eix) = eix
+toEix _ = error "Expected EIx constructor"
 data SourceEvent node a where
     SourceEvent :: Typeable a => EventIx '[node] a -> SourceEvent node a
 
@@ -219,73 +228,106 @@ instance Show (Responsibility localCtx responsibilityNode) where
 
 beh :: forall node (os :: [node]) a (ctxF :: node -> Type)
     . GateIxC node os a
-    => Behavior os a -> Moment node ctxF (BehaviorIx os a)
-beh b = do
-    MomentState v bd es allGates ls <- get
-    let behIx = BehaviorIx v
-    put $ MomentState
-            -- Increment vertex index.
-            (v+1)
-            -- Add behavior to map.
-            (Map.insert v (toDyn b) bd)
-            -- Add eges and behavior.
-            (((v,) <$> behDepVerts b) ++ es)
-            (GateIx' (GateIxB behIx) : allGates)
-            ls
-    return behIx
+    => Behavior os a -> Moment node ctxF (Behavior os a)
+beh = \b -> case b of
+    BIx _
+        -> return b
+    Step a e
+        -> newBeh =<< Step a <$> evt e
+    MapB f b2
+        -> newBeh =<< MapB f <$> beh b2
+    Ap bf b2
+        -> newBeh =<< Ap <$> beh bf <*> beh b2
+    SendB pFrom pTos b2
+        -> newBeh =<< SendB pFrom pTos <$> beh b2
+    where
+        -- New BIx flavour of Behavior from a non-BIx Behavior that only references other BIx flavoured behaviors.
+        newBeh :: Behavior os a -> Moment node ctxF (Behavior os a)
+        newBeh b = do
+            MomentState v bd es allGates ls <- get
+            let behIx = BehaviorIx v
+            put $ MomentState
+                    -- Increment vertex index.
+                    (v+1)
+                    -- Add behavior to map.
+                    (Map.insert v (toDyn b) bd)
+                    -- Add eges and behavior.
+                    (((v,) <$> behDepVerts b) ++ es)
+                    (GateIx' (GateIxB behIx) : allGates)
+                    ls
+            return (BIx behIx)
 
+-- | Takes any Event and broadcasts it into a (EIx eix) constructor Event.
 evt :: forall node (os :: [node]) a (ctxF :: node -> Type)
     . GateIxC node os a
-    => Event os a -> Moment node ctxF (EventIx os a)
-evt e = do
-    MomentState v bd es allGates ls <- get
-    let evtIx = EventIx v
-    put $ MomentState
-            -- Increment vertex index.
-            (v+1)
-            -- Add event to map.
-            (Map.insert v (toDyn e) bd)
-            -- Add eges and event.
-            (((v,) <$> evtDepVerts e) ++ es)
-            (GateIx' (GateIxE evtIx) : allGates)
-            ls
-    return evtIx
+    => Event os a -> Moment node ctxF (Event os a)
+evt = \e -> case e of
+    EIx _
+        -> return e
+    Source pNode
+        -> newEvt (Source pNode)
+    MapE f e2
+        -> newEvt =<< MapE f <$> evt e2
+    Sample f b e2
+        -> newEvt =<< Sample f <$> beh b <*> evt e2
+    SendE pFrom pTos e2
+        -> newEvt =<< SendE pFrom pTos <$> evt e2
+    where
+        -- New EIx flavour of Event from a non-EIx Event that only references other EIx flavoured events.
+        newEvt :: Event os a -> Moment node ctxF (Event os a)
+        newEvt e = do
+            MomentState v bd es allGates ls <- get
+            let evtIx = EventIx v
+            put $ MomentState
+                    -- Increment vertex index.
+                    (v+1)
+                    -- Add event to map.
+                    (Map.insert v (toDyn e) bd)
+                    -- Add eges and event.
+                    (((v,) <$> evtDepVerts e) ++ es)
+                    (GateIx' (GateIxE evtIx) : allGates)
+                    ls
+            return (EIx evtIx)
 
 newSourceEvent :: forall node (myNode :: node) (ctxF :: node -> Type) a
           .  (GateIxC node '[myNode] a)
           => Proxy myNode
-          -> Moment node ctxF (SourceEvent myNode a, EventIx '[myNode] a)
+          -> Moment node ctxF (SourceEvent myNode a, Event '[myNode] a)
 newSourceEvent myNodeP = do
-    eix <- evt (Source myNodeP)
-    return (SourceEvent eix, eix)
+    e@(EIx eix) <- evt (Source myNodeP)
+    return (SourceEvent eix, e)
 
 behDepVerts :: Behavior os a -> [Graph.Vertex]
-behDepVerts (Step _ e)    = [eixVert e]
-behDepVerts (MapB _ b)    = [bixVert b]
-behDepVerts (Ap fb ib)    = [bixVert fb, bixVert ib]
-behDepVerts (SendB _ _ b) = [bixVert b]
+behDepVerts (BIx bix)     = [bixVert bix]
+behDepVerts (Step _ e)    = evtDepVerts e
+behDepVerts (MapB _ b)    = behDepVerts b
+behDepVerts (Ap fb ib)    = behDepVerts fb ++ behDepVerts ib
+behDepVerts (SendB _ _ b) = behDepVerts b
 
 behDeps :: forall node (os :: [node]) a
         .  GateIxC node os a
         => Behavior os a -> [GateIx' node]
-behDeps (Step _ e)    = [GateIx' (GateIxE e)]
-behDeps (MapB _ b)    = [GateIx' (GateIxB b)]
-behDeps (Ap fb ib)    = [GateIx' (GateIxB fb), GateIx' (GateIxB ib)]
-behDeps (SendB _ _ b) = [GateIx' (GateIxB b)]
+behDeps (BIx bix)     = [GateIx' (GateIxB bix)]
+behDeps (Step _ e)    = evtDeps e
+behDeps (MapB _ b)    = behDeps b
+behDeps (Ap fb ib)    = behDeps fb ++ behDeps ib
+behDeps (SendB _ _ b) = behDeps b
 
 evtDepVerts :: Event os a -> [Graph.Vertex]
+evtDepVerts (EIx eix)      = [eixVert eix]
 evtDepVerts (Source _)     = []
-evtDepVerts (MapE _ e)     = [eixVert e]
-evtDepVerts (Sample _ b e) = [bixVert b, eixVert e]
-evtDepVerts (SendE _ _ e)    = [eixVert e]
+evtDepVerts (MapE _ e)     = evtDepVerts e
+evtDepVerts (Sample _ b e) = behDepVerts b ++ evtDepVerts e
+evtDepVerts (SendE _ _ e)  = evtDepVerts e
 
 evtDeps :: forall node (os :: [node]) a
         .  GateIxC node os a
         => Event os a -> [GateIx' node]
+evtDeps (EIx eix)      = [GateIx' (GateIxE eix)]
 evtDeps (Source _)     = []
-evtDeps (MapE _ e)     = [GateIx' (GateIxE e)]
-evtDeps (Sample _ b e) = [GateIx' (GateIxB b), GateIx' (GateIxE e)]
-evtDeps (SendE _ _ e)    = [GateIx' (GateIxE e)]
+evtDeps (MapE _ e)     = evtDeps e
+evtDeps (Sample _ b e) = behDeps b ++ evtDeps e
+evtDeps (SendE _ _ e)  = evtDeps e
 
 gateIxDeps :: forall node (os :: [node]) a
            .  GateIxC node os a
@@ -294,9 +336,11 @@ gateIxDeps c (GateIxB bix) = behDeps $ circBeh c bix
 gateIxDeps c (GateIxE eix) = evtDeps $ circEvt c eix
 
 listenB :: forall node (n :: node) (os :: [node]) a ctxF
-        .  (IsElem n os, Typeable os, Typeable n, Typeable a)
-        => Proxy n -> BehaviorIx os a -> (ctxF n -> a -> IO ()) -> Moment node ctxF ()
-listenB node bix listener = modify (\ms -> ms {
+        .  (GateIxC node os a, IsElem n os, Typeable n)
+        => Proxy n -> Behavior os a -> (ctxF n -> a -> IO ()) -> Moment node ctxF ()
+listenB node b listener = do
+    BIx bix <- beh b
+    modify (\ms -> ms {
         momentListeners = Listener node bix listener : momentListeners ms
     })
 
@@ -522,6 +566,7 @@ mkLiveCircuit c = (lc, initialUpdatesOwnedBeh ++ initialUpdatesDerived)
                 GateIx' (GateIxB bix)
                   | isOwned (Proxy @myNode) bix
                   -> case circBeh c bix of
+                        BIx _        -> error "Unexpected BIx."
                         Step bix2 _  -> Just (UpdateListB bix [(0, bix2)])
                         MapB _ _     -> Nothing
                         Ap _ _       -> Nothing
@@ -588,10 +633,11 @@ lcTransaction lc ups = assert lint (lc', changes)
             LocalUpdate    -> fromUpdatesList
             RemoteUpdate   -> fromUpdatesList
             DerivedUpdate  -> case b of
-                SendB _ _ bix'     -> lcBehChanges lc' bix'
-                Step _ eix         -> lcEvents lc' eix
-                MapB f bixParent   -> fmap f <$> lcBehChanges lc' bixParent
-                Ap bixF bixArg     -> apB (lcBehChanges lc' bixF) (lcBehChanges lc' bixArg)
+                BIx _                            -> error "Unexpected BIx."
+                SendB _ _ (toBix -> bix')        -> lcBehChanges lc' bix'
+                Step _ (toEix -> eix)            -> lcEvents lc' eix
+                MapB f (toBix -> bixParent)      -> fmap f <$> lcBehChanges lc' bixParent
+                Ap (toBix -> bixF) (toBix -> bixArg)  -> apB (lcBehChanges lc' bixF) (lcBehChanges lc' bixArg)
             where
                 b = circBeh c bix
                 fromUpdatesList = findUpdates (GateIxB bix) ++ lcBehChanges lc bix
@@ -614,10 +660,11 @@ lcTransaction lc ups = assert lint (lc', changes)
             RemoteUpdate   -> fromUpdatesList
             DerivedUpdate  -> case e of
                 -- Nothing for source event even if it is local, because we will get this as an Update.
-                Source {}        -> error "Source Event cannot be derived."
-                SendE _ _ eix'   -> lcEvents lc' eix'
-                MapE f eA        -> (\(occT, occVal) -> (occT, f occVal)) <$> lcEvents' eA
-                Sample f bix eA  -> [(sampleT, f sampleT bVal eVal)
+                Source {}                    -> error "Source Event cannot be derived."
+                EIx _                        -> error "Unexpected EIx"
+                SendE _ _ (toEix -> eix')         -> lcEvents lc' eix'
+                MapE f (toEix -> eA)              -> (\(occT, occVal) -> (occT, f occVal)) <$> lcEvents' eA
+                Sample f (toBix -> bix) (toEix -> eA)  -> [(sampleT, f sampleT bVal eVal)
                                         | (sampleT, eVal) <- lcEvents' eA
                                         , let bVal = lcBehVal lc' sampleT bix ]
             where
