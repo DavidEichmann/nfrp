@@ -102,7 +102,7 @@ data BehTime
     deriving (Show, Eq)
 
 instance Ord BehTime where
-    compare a b = case a `compare` b of
+    compare a b = case btTime a `compare` btTime b of
         LT -> LT
         EQ -> case (a, b) of
             (Exactly   _, Exactly   _) -> EQ
@@ -624,7 +624,7 @@ mkLiveCircuit c = (lc, initialUpdatesOwnedBeh ++ initialUpdatesDerived)
                   -> case circBeh c bix of
                         BIx _        -> error "Unexpected BIx."
                         Const val    -> Just (UpdateListB bix [(Exactly 0, val)])
-                        Delay _ _     -> Nothing
+                        Delay _ _    -> Nothing
                         Step bix2 _  -> Just (UpdateListB bix [(Exactly 0, bix2)])
                         MapB _ _     -> Nothing
                         Ap _ _       -> Nothing
@@ -749,7 +749,7 @@ lcTransaction lc ups = assert lint (lc', changes)
                 SendE _ _ (toEix -> eix')    -> lcEvents lc' eix'
                 MapE f (toEix -> eA)         -> (\(occT, occVal) -> (occT, f occVal)) <$> lcEvents' eA
                 Sample f (toBix -> bix) (toEix -> eA)
-                                             -> [(sampleT, f sampleT bVal eVal)
+                                             -> [ (sampleT, f sampleT bVal eVal)
                                                 | (sampleT, eVal) <- lcEvents' eA
                                                 , let bVal = lcBehVal lc' (Exactly sampleT) bix ]
             where

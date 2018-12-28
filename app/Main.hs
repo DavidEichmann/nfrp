@@ -130,7 +130,7 @@ playerGUI windowPos (Ctx pPosIORef bPosIORef) inputDirSourceE injector getTime =
     )
     (\ event () -> do
         case event of
-            EventKey (SpecialKey sk) keyState _modifiers _mousePos
+            EventKey (SpecialKey sk) Down _modifiers _mousePos
                 -> maybe (return ()) (injectEvent injector inputDirSourceE) $ case sk of
                     KeyUp    -> Just DirUp
                     KeyRight -> Just DirRight
@@ -164,6 +164,16 @@ circuit = do
         . SendB (Proxy @Bot) (Proxy @[Player, Bot])
         . Step (0,0)
         $ dirToPos <$> botDirE
+
+    pDir  <- beh $ Step  DirUp playerDirE
+    pDirD <- beh $ Delay DirUp pDir
+    pDirBothB    <- beh $ (,) <$> pDir <*> pDirD
+    pDirBothOnEB <- beh
+                    . Step Nothing
+                    $ Sample (\ _time valB _valE -> Just valB) pDirBothB playerDirE
+
+    listenB (Proxy @Player) pDirBothB    (\ _ a -> putStrLn $ "@@@ Expecting same: " ++ show a)
+    listenB (Proxy @Player) pDirBothOnEB (\ _ a -> putStrLn $ "@@@ Expecting diff: " ++ show a)
 
     let bind :: forall (myNode :: Node)
              .  (Typeable myNode, IsElem myNode '[Player, Bot])
