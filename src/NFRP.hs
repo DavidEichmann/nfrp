@@ -96,25 +96,20 @@ type family GateIxC node (ns :: [node]) a :: Constraint where
         , ElemT node ns
         )
 
-data BehChange a
-    = BehChange
-        { bcValue :: a
-        , bcTime  :: Time
-        }
-        -- ^ Value at (and including) time.
-    | BehDelayChange
-        { bcValueAfter :: a    -- ^ Value   just after   bcTime.
-        , bcValueNow   :: a    -- ^ Value   exactly at   bcTime.
-        , bcTime       :: Time
-        }
+data BehTime
+    = Exactly   { btTime :: Time }
+    | JustAfter { btTime :: Time }
+    deriving (Show, Eq)
 
-bcLatestVal :: BehChange a -> a
-bcLatestVal (BehChange a _) = a
-bcLatestVal (BehDelayChange a _ _) = a
-
-instance Functor BehChange where
-    fmap f (BehChange a t) = BehChange (f a) t
-    fmap f (BehDelayChange aA aN t) = BehDelayChange (f aA) (f aN) t
+instance Ord BehTime where
+    compare a b = case a `compare` b of
+        LT -> LT
+        EQ -> case (a, b) of
+            (Exactly   _, Exactly   _) -> EQ
+            (JustAfter _, JustAfter _) -> EQ
+            (Exactly   _, JustAfter _) -> LT
+            (JustAfter _, Exactly   _) -> GT
+        GT -> GT
 
 data SomeNode node = forall (nodeP :: node) . NodePC nodeP => SomeNode (Proxy nodeP)
 class ReifySomeNode (node :: Type) where
@@ -128,7 +123,7 @@ newtype BehaviorIx (os :: [node]) (a :: Type) = BehaviorIx { bixVert :: Graph.Ve
         deriving (Show, Eq, Ord)
 data Behavior (os :: [node]) (a :: Type) where
     BIx :: (Typeable os) => BehaviorIx os a -> Behavior os a
-    Delay :: (Typeable os) => Behavior os a -> Behavior os a
+    Delay :: (Typeable os) => a -> Behavior os a -> Behavior os a
     Const :: (Typeable os) => a -> Behavior os a
     Step :: (Typeable os)
         => a -> Event os a -> Behavior os a
@@ -150,7 +145,6 @@ toBix :: Behavior os a -> BehaviorIx os a
 toBix (BIx bix) = bix
 toBix _ = error "Expected BIx constructor"
 
--- TODO uggg looks like we need to remove Typeable a constraint from the constructors. Is that doable? we just cant use dynamic?
 instance Typeable os => Functor (Behavior os) where
     fmap   = MapB
     a <$ _ = Const a
@@ -207,7 +201,7 @@ circEvt c = unsafeCoerce . (circGateDyn c Map.!) . eixVert
 data LiveCircuit (myNode :: node) = LiveCircuit
     { lcCircuit :: Circuit node
     , lcBehChanges  :: forall (ns :: [node]) a . GateIxC node ns a
-                    => BehaviorIx ns a -> [BehChange a]
+                    => BehaviorIx ns a -> [(BehTime, a)]
                     -- ^ ( Is delayed
                     --   , Value of a behavior at a time. Time must be <= lcBehMaxT else Nothing).
     , lcEvents  :: forall (ns :: [node]) a . GateIxC node ns a
@@ -219,31 +213,23 @@ data LiveCircuit (myNode :: node) = LiveCircuit
 lcGateMaxT :: forall (myNode :: node) (ns :: [node]) a
            . GateIxC node ns a
            => LiveCircuit myNode -> GateIx ns a -> Time
-lcGateMaxT lc (GateIxB b) = headDef (-1) (bcTime <$> lcBehChanges lc b)
-lcGateMaxT lc (GateIxE e) = headDef (-1) (fst    <$> lcEvents lc e)
+lcGateMaxT lc (GateIxB b) = headDef (-1) (btTime . fst <$> lcBehChanges lc b)
+lcGateMaxT lc (GateIxE e) = headDef (-1) (         fst <$> lcEvents     lc e)
+
+lcBehMaxT :: forall (myNode :: node) (ns :: [node]) a
+           . GateIxC node ns a
+           => LiveCircuit myNode -> BehaviorIx ns a -> BehTime
+lcBehMaxT lc bix = headDef (Exactly (-1)) (fst <$> lcBehChanges lc bix)
 
 lcBehVal :: forall node (myNode :: node) (ns :: [node]) a
          .  GateIxC node ns a
-         => LiveCircuit myNode -> Time -> BehaviorIx ns a -> a
+         => LiveCircuit myNode -> BehTime -> BehaviorIx ns a -> a
 lcBehVal lc t bix
-    | t > maxT = err
-    | otherwise
-        = headDef err
-        . mapMaybe (\ c -> case c of
-            BehChange val ct
-                -> if ct <= t
-                    then Just val
-                    else Nothing
-            BehDelayChange valAfter valNow ct
-                -> case ct `compare` t of
-                    LT -> Just valAfter
-                    EQ -> Just valNow
-                    GT -> Nothing
-            )
-        $ cs
+    | t > maxT  = err
+    | otherwise = maybe err snd (find ((<=t) . fst) cs)
     where
         cs = lcBehChanges lc bix
-        maxT = lcGateMaxT lc (GateIxB bix)
+        maxT = lcBehMaxT lc bix
         err = error $
             "Trying to access behavior valur at time " ++ show t
             ++ " but only know till time " ++ show maxT
@@ -268,21 +254,21 @@ data Listener (ctxF :: node -> Type)
     => Listener (Proxy n) (BehaviorIx os a) (ctxF n -> a -> IO ())
 
 data UpdateList node = forall (os :: [node]) a . GateIxC node os a
-                => UpdateListB (BehaviorIx os a) [BehChange a]
+                => UpdateListB (BehaviorIx os a) [(BehTime, a)]
             | forall (os :: [node]) a . GateIxC node os a
                 => UpdateListE (EventIx    os a) [(Time, a)]
 
 instance Show (UpdateList node) where
     show ul = "UpdateList (" ++ case ul of
-                UpdateListB b us -> show b ++ ") Times=" ++ show (bcTime <$> us)
-                UpdateListE e us -> show e ++ ") Times=" ++ show (fst    <$> us)
+                UpdateListB b us -> show b ++ ") Times=" ++ show (fst <$> us)
+                UpdateListE e us -> show e ++ ") Times=" ++ show (fst <$> us)
 
 data Responsibility localCtx (responsibleNode :: node)
     = forall (os :: [node]) a . (Typeable os) =>
         OnPossibleChange
             (BehaviorIx os a)
             Bool    -- ^ Is it a local listerner? As opposed to sending a msg to another node.
-            (localCtx -> [BehChange a] -> IO ())
+            (localCtx -> [(BehTime, a)] -> IO ())
 
 instance Show (Responsibility localCtx responsibilityNode) where
     show (OnPossibleChange bix isLocal _) = "OnPossibleChange (" ++ show bix ++ ") " ++ show isLocal ++ " _"
@@ -295,8 +281,8 @@ beh = \b -> case b of
     -- This makes sure convert all inline Behaviors/Events to BIx/EIx.
     BIx _
         -> return b
-    Delay b2
-        -> newBeh =<< Delay <$> beh b2
+    Delay a0 b2
+        -> newBeh =<< Delay a0 <$> beh b2
     Const _
         -> newBeh b
     Step a e
@@ -367,7 +353,7 @@ newSourceEvent myNodeP = do
 behDepVerts :: Behavior os a -> [Graph.Vertex]
 behDepVerts (BIx bix)     = [bixVert bix]
 behDepVerts (Const _)     = []
-behDepVerts (Delay b)     = behDepVerts b
+behDepVerts (Delay _ b)   = behDepVerts b
 behDepVerts (Step _ e)    = evtDepVerts e
 behDepVerts (MapB _ b)    = behDepVerts b
 behDepVerts (Ap fb ib)    = behDepVerts fb ++ behDepVerts ib
@@ -378,7 +364,7 @@ behDeps :: forall node (os :: [node]) a
         => Behavior os a -> [GateIx' node]
 behDeps (BIx bix)     = [GateIx' (GateIxB bix)]
 behDeps (Const _)     = []
-behDeps (Delay b)     = behDeps b
+behDeps (Delay _ b)   = behDeps b
 behDeps (Step _ e)    = evtDeps e
 behDeps (MapB _ b)    = behDeps b
 behDeps (Ap fb ib)    = behDeps fb ++ behDeps ib
@@ -523,7 +509,7 @@ actuate ctx
                     -> Just $ OnPossibleChange
                                 bix
                                 True
-                                (\ctx' ups -> handler ctx' (bcLatestVal . head $ ups))   -- This case filters for myNode handlers
+                                (\ctx' ups -> handler ctx' (snd . head $ ups))   -- This case filters for myNode handlers
                 _   -> Nothing)
             $ listeners
 
@@ -637,9 +623,9 @@ mkLiveCircuit c = (lc, initialUpdatesOwnedBeh ++ initialUpdatesDerived)
                   | isOwned (Proxy @myNode) bix
                   -> case circBeh c bix of
                         BIx _        -> error "Unexpected BIx."
-                        Const val    -> Just (UpdateListB bix [BehChange val 0])
-                        Delay _      -> Nothing
-                        Step bix2 _  -> Just (UpdateListB bix [BehChange bix2 0])
+                        Const val    -> Just (UpdateListB bix [(Exactly 0, val)])
+                        Delay _ _     -> Nothing
+                        Step bix2 _  -> Just (UpdateListB bix [(Exactly 0, bix2)])
                         MapB _ _     -> Nothing
                         Ap _ _       -> Nothing
                         SendB _ _ _  -> Nothing
@@ -661,17 +647,24 @@ lcTransaction lc ups = assert lint (lc', changes)
 
         changes
             = mapMaybe (\(GateIx' gix) -> let
-                ta = lcGateMaxT lc  gix
-                tb = lcGateMaxT lc' gix
-
-                prune :: (a -> Time) -> [a] -> [a]
-                prune getTime = takeWhile ((> ta) . getTime)
-
-                in if ta == tb
-                    then Nothing
-                    else Just $ case gix of
-                        (GateIxB bix) -> UpdateListB bix (prune bcTime $ lcBehChanges lc' bix)
-                        (GateIxE eix) -> UpdateListE eix (prune fst    $ lcEvents     lc' eix))
+                go :: Ord t
+                    => gix
+                    -> (LiveCircuit myNode -> t)
+                    -> [(t, a)]
+                    -> (gix -> [(t, a)] -> UpdateList node)
+                    -> Maybe (UpdateList node)
+                go ix lcMaxT gateCs mkUpdateList = let
+                    ta = lcMaxT lc
+                    tb = lcMaxT lc'
+                    prune = takeWhile ((> ta) . fst)
+                    in if ta == tb
+                        then Nothing
+                        else Just $ mkUpdateList ix (prune $ gateCs)
+                in
+                    case gix of
+                        (GateIxB bix) -> go bix (flip lcBehMaxT bix)            (lcBehChanges lc' bix) UpdateListB
+                        (GateIxE eix) -> go eix (flip lcGateMaxT (GateIxE eix)) (lcEvents     lc' eix) UpdateListE
+                )
             $ circAllGates c
 
         myNodeP = Proxy @myNode
@@ -685,8 +678,8 @@ lcTransaction lc ups = assert lint (lc', changes)
 
             -- All updates are after maxT
             && all (\up -> case up of
-                    UpdateListB b ul -> all (lcGateMaxT lc (GateIxB b) <) (bcTime <$> ul)
-                    UpdateListE e ul -> all (lcGateMaxT lc (GateIxE e) <) (fst    <$> ul))
+                    UpdateListB b ul -> all (lcBehMaxT  lc b           <) (fst <$> ul)
+                    UpdateListE e ul -> all (lcGateMaxT lc (GateIxE e) <) (fst <$> ul))
                 ups
 
         -- TODO asset that all updates are after their corresponding Event/Behavior's MaxT time.
@@ -702,7 +695,7 @@ lcTransaction lc ups = assert lint (lc', changes)
         -- TODO/NOTE this is super inefficient
         lcBehChanges' :: forall (ns :: [node]) a
                       .  GateIxC node ns a
-                      => BehaviorIx ns a -> [BehChange a]
+                      => BehaviorIx ns a -> [(BehTime, a)]
         lcBehChanges' bix = case updateWay myNodeP b of
             NoUpdate       -> []
             LocalUpdate    -> fromUpdatesList
@@ -710,9 +703,9 @@ lcTransaction lc ups = assert lint (lc', changes)
             DerivedUpdate  -> case b of
                 BIx _                            -> error "Unexpected BIx."
                 Const _                          -> lcBehChanges lc' bix   -- No change!
-                Delay (toBix -> bix')            -> delayBehChanges (lcBehChanges lc' bix)
+                Delay a0 (toBix -> bix')         -> delayBehChanges a0 (lcBehChanges lc' bix')
                 SendB _ _ (toBix -> bix')        -> lcBehChanges lc' bix'
-                Step _ (toEix -> eix)            -> (\ (t,val) -> BehChange val t)
+                Step _ (toEix -> eix)            -> (\ (t, val) -> (Exactly t, val))
                                                     <$> lcEvents lc' eix
                 MapB f (toBix -> bixParent)      -> fmap f <$> lcBehChanges lc' bixParent
                 Ap (toBix -> bixF) (toBix -> bixArg)  -> apB (lcBehChanges lc' bixF) (lcBehChanges lc' bixArg)
@@ -720,54 +713,27 @@ lcTransaction lc ups = assert lint (lc', changes)
                 b = circBeh c bix
                 fromUpdatesList = findBehUpdates bix ++ lcBehChanges lc bix
 
-                delayBehChanges :: [BehChange a] -> [BehChange a]
-                delayBehChanges (BehDelayChange aA aN t : bcs) = _TODO
+                -- Must not have 2 JustAfter t changes in a row (with the same t).
+                delayBehChanges :: a -> [(BehTime, a)] -> [(BehTime, a)]
+                delayBehChanges a0 []
+                    = [(Exactly 0, a0)]
+                delayBehChanges a0 ((Exactly t, a) : cs)
+                    = (JustAfter t, a) : delayBehChanges a0 cs
+                -- Because it's impossible to sample the JustAfter t value for a JustAfter t  befor it,
+                -- we remove it (not it can also not cause any events so we dont need it).
+                delayBehChanges a0 (c0@(JustAfter t1, _) : c1@(bt2, _) : cs)
+                    | t1 == btTime bt2  = delayBehChanges  a0 (c0 : cs)
+                    | otherwise         = c0 : delayBehChanges a0 (c1 : cs)
+                delayBehChanges a0 (c0@(JustAfter _, _) : [])
+                    = c0 : delayBehChanges a0 []
 
-                apB :: [BehChange (j -> k)] -> [BehChange j] -> [BehChange k]
+                apB :: [(BehTime, (j -> k))] -> [(BehTime, j)] -> [(BehTime, k)]
                 apB [] _ = []
                 apB _ [] = []
-                apB (tff:tffs) (taa:taas) = case tf `compare` ta of
-                    EQ -- (tf, f a) : apB tffs taas
-                        -> let
-                               headChange = case (tff, taa) of
-                                ( BehChange f  t  ,
-                                  BehChange a _t )
-                                    -> BehChange (f a) t
-                                ( BehChange          f  t  ,
-                                  BehDelayChange aA aN _t )
-                                    -> BehDelayChange (f aA) (f aN) t
-                                ( BehDelayChange fA fN  t  ,
-                                  BehChange          a _t )
-                                    -> BehDelayChange (fA a) (fN a) t
-                                ( BehDelayChange fA fN  t  ,
-                                  BehDelayChange aA aN _t )
-                                    -> BehDelayChange (fA aA) (fN aN) t
-                            in
-                                headChange : apB tffs taas
-                    LT -- (ta, f a) : apB (tff:tffs) taas
-                        -> let
-                            f = case tff of
-                                BehChange      f'   _ -> f'
-                                BehDelayChange f' _ _ -> f'
-                            headChange = case taa of
-                                BehChange       a    ta -> BehChange              (f a) ta
-                                BehDelayChange aA aN ta -> BehDelayChange (f aA) (f aN) ta
-                            in
-                                headChange : apB (tff:tffs) taas
-                    GT -- (tf, f a) : apB tffs (taa:taas)
-                        -> let
-                            a = case taa of
-                                BehChange      a'   _ -> a'
-                                BehDelayChange a' _ _ -> a'
-                            headChange =  case tff of
-                                BehChange       f    tf -> BehChange              (f a) ta
-                                BehDelayChange fA fN tf -> BehDelayChange (fA a) (fN a) ta
-                            in
-                                headChange : apB tffs (taa:taas)
-                    where
-                        tf = bcTime tff
-                        ta = bcTime taa
-
+                apB ((tf,f):tfs) ((ta,a):tas) = case tf `compare` ta of
+                    EQ -> (tf, f a) : apB tfs tas
+                    LT -> (ta, f a) : apB ((tf,f):tfs) tas
+                    GT -> (tf, f a) : apB tfs ((ta,a):tas)
 
         lcEvents' :: forall (ns :: [node]) a
                   .  GateIxC node ns a
@@ -780,11 +746,12 @@ lcTransaction lc ups = assert lint (lc', changes)
                 -- Nothing for source event even if it is local, because we will get this as an Update.
                 Source {}                    -> error "Source Event cannot be derived."
                 EIx _                        -> error "Unexpected EIx"
-                SendE _ _ (toEix -> eix')         -> lcEvents lc' eix'
-                MapE f (toEix -> eA)              -> (\(occT, occVal) -> (occT, f occVal)) <$> lcEvents' eA
-                Sample f (toBix -> bix) (toEix -> eA)  -> [(sampleT, f sampleT bVal eVal)
-                                        | (sampleT, eVal) <- lcEvents' eA
-                                        , let bVal = lcBehVal lc' sampleT bix ]
+                SendE _ _ (toEix -> eix')    -> lcEvents lc' eix'
+                MapE f (toEix -> eA)         -> (\(occT, occVal) -> (occT, f occVal)) <$> lcEvents' eA
+                Sample f (toBix -> bix) (toEix -> eA)
+                                             -> [(sampleT, f sampleT bVal eVal)
+                                                | (sampleT, eVal) <- lcEvents' eA
+                                                , let bVal = lcBehVal lc' (Exactly sampleT) bix ]
             where
                 e = circEvt c eix
                 fromUpdatesList = findEvtUpdates eix ++ lcEvents lc eix
@@ -798,7 +765,7 @@ lcTransaction lc ups = assert lint (lc', changes)
             . mapMaybe changesMay
             $ ups
             where
-                changesMay (UpdateListB (BehaviorIx _v :: BehaviorIx vo va) vChanges)
+                changesMay (UpdateListB (BehaviorIx _v :: BehaviorIx vo va) _vChanges)
                     = Nothing
                 changesMay (UpdateListE (EventIx    v  :: EventIx    vo va) vEvents)
                     | v == eixVert eix  = Just (unsafeCoerce vEvents)
@@ -806,9 +773,9 @@ lcTransaction lc ups = assert lint (lc', changes)
 
         findBehUpdates :: forall (ns :: [node]) a
                     .  GateIxC node ns a
-                    => BehaviorIx ns a -> [BehChange a]
+                    => BehaviorIx ns a -> [(BehTime, a)]
         findBehUpdates bix
-            = sortBy (flip (compare `on` bcTime))     -- sort into reverse chronological order
+            = sortBy (flip (compare `on` fst))     -- sort into reverse chronological order
             . concat
             . mapMaybe changesMay
             $ ups
@@ -816,7 +783,7 @@ lcTransaction lc ups = assert lint (lc', changes)
                 changesMay (UpdateListB (BehaviorIx v :: BehaviorIx vo va) vChanges)
                     | v == bixVert bix  = Just (unsafeCoerce vChanges)
                     | otherwise         = Nothing
-                changesMay (UpdateListE (EventIx    v :: EventIx    vo va) vEvents)
+                changesMay (UpdateListE (EventIx    v :: EventIx    vo va) _vEvents)
                     = Nothing
 -- Asserting on LiveCircuitls
 lintLiveCircuit :: LiveCircuit myNode -> LiveCircuit myNode
