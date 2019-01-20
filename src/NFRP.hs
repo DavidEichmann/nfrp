@@ -1,8 +1,10 @@
 {-# OPTIONS_GHC -Wno-unticked-promoted-constructors #-}
 {-# OPTIONS_GHC -Wno-partial-type-signatures #-}
 
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TupleSections #-}
@@ -21,8 +23,38 @@
 {-# LANGUAGE GADTs #-}
 
 module NFRP
-    ( module NFRP
+    (
+      MomentTypes (..)
+
+    -- Framework
+    , SourceEvent
+    , EventInjector
+    , newSourceEvent
+    , injectEvent
+    , actuate
+
+    -- Primitives
+    , Behavior (Delay, Const, Step, SendB)
+    , Event ( Sample, SendE )
+    , beh
+    , evt
+    , listenB
+    -- , accumB
+    -- , accumE
+
     , module TypeLevelStuff
+    , UpdateList
+    , Moment
+    , NodeC
+    , NodePC
+    , NodePsC
+    , GateIxC
+
+    , SomeNode (..)
+    , ReifySomeNode (..)
+
+    , Time
+
     ) where
 
 import Safe
@@ -238,24 +270,32 @@ lcBehVal lc t bix
 instance Eq (BehaviorIx' node) where
     (BehaviorIx' (BehaviorIx v1)) == (BehaviorIx' (BehaviorIx v2)) = v1 == v2
 
+
+
+class MomentTypes mt where
+    type MomentNode mt :: Type
+    type MomentCtx mt :: Type
+
+
 -- Now we'd like a monad to build this circuit in
-type Moment node ctxF a = State (MomentState ctxF) a
-data MomentState (ctxF :: node -> Type) = MomentState
+type Moment mt a = State (MomentState mt) a
+    -- deriving (Functor, Applicative, Monad)
+data MomentState momentTypes = MomentState
     { momentNextVert  :: Graph.Vertex
     , momentBehDyn    :: Map.Map Graph.Vertex Int
     , momentEdges     :: [Graph.Edge]
-    , momentAllGates  :: [GateIx' node]
-    , momentListeners :: [Listener ctxF]
+    , momentAllGates  :: [GateIx' (MomentNode momentTypes)]
+    , momentListeners :: [Listener momentTypes]
     }
 
-data Listener (ctxF :: node -> Type)
-    = forall n os a
+data Listener mt
+    = forall (n :: MomentNode mt) (os :: [MomentNode mt]) a
     . (IsElem n os, Typeable n, Typeable os)
-    => Listener (Proxy n) (BehaviorIx os a) (ctxF n -> a -> IO ())
+    => Listener (Proxy n) (BehaviorIx os a) (MomentCtx mt -> a -> IO ())
 
-data UpdateList node = forall (os :: [node]) a . GateIxC node os a
+data UpdateList node = forall os a . GateIxC node os a
                 => UpdateListB (BehaviorIx os a) [(BehTime, a)]
-            | forall (os :: [node]) a . GateIxC node os a
+            | forall os a . GateIxC node os a
                 => UpdateListE (EventIx    os a) [(Time, a)]
 
 instance Show (UpdateList node) where
@@ -263,20 +303,20 @@ instance Show (UpdateList node) where
                 UpdateListB b us -> show b ++ ") Times=" ++ show (fst <$> us)
                 UpdateListE e us -> show e ++ ") Times=" ++ show (fst <$> us)
 
-data Responsibility localCtx (responsibleNode :: node)
-    = forall (os :: [node]) a . (Typeable os) =>
+data Responsibility mt (responsibleNode :: MomentNode mt)
+    = forall (os :: [MomentNode mt]) a . (Typeable os) =>
         OnPossibleChange
             (BehaviorIx os a)
             Bool    -- ^ Is it a local listerner? As opposed to sending a msg to another node.
-            (localCtx -> [(BehTime, a)] -> IO ())
+            (MomentCtx mt -> [(BehTime, a)] -> IO ())
 
 instance Show (Responsibility localCtx responsibilityNode) where
     show (OnPossibleChange bix isLocal _) = "OnPossibleChange (" ++ show bix ++ ") " ++ show isLocal ++ " _"
 
 -- Use this when a behavior is going to be used in multiple places. The value will hence only be calculated once.
-beh :: forall node (os :: [node]) a (ctxF :: node -> Type)
-    . GateIxC node os a
-    => Behavior os a -> Moment node ctxF (Behavior os a)
+beh :: forall mt os a
+    .  (MomentTypes mt, GateIxC (MomentNode mt) os a)
+    => Behavior os a -> Moment mt (Behavior os a)
 beh = \b -> case b of
     -- This makes sure convert all inline Behaviors/Events to BIx/EIx.
     BIx _
@@ -295,7 +335,7 @@ beh = \b -> case b of
         -> newBeh =<< SendB pFrom pTos <$> beh b2
     where
         -- New BIx flavour of Behavior from a non-BIx Behavior that only references other BIx flavoured behaviors.
-        newBeh :: Behavior os a -> Moment node ctxF (Behavior os a)
+        newBeh :: Behavior os a -> Moment mt (Behavior os a)
         newBeh b = do
             MomentState v bd es allGates ls <- get
             let behIx = BehaviorIx v
@@ -311,9 +351,9 @@ beh = \b -> case b of
             return (BIx behIx)
 
 -- | Takes any Event and broadcasts it into a (EIx eix) constructor Event.
-evt :: forall node (os :: [node]) a (ctxF :: node -> Type)
-    . GateIxC node os a
-    => Event os a -> Moment node ctxF (Event os a)
+evt :: forall mt (os :: [MomentNode mt]) a
+    . (MomentTypes mt, GateIxC (MomentNode mt) os a)
+    => Event os a -> Moment mt (Event os a)
 evt = \e -> case e of
     EIx _
         -> return e
@@ -327,7 +367,7 @@ evt = \e -> case e of
         -> newEvt =<< SendE pFrom pTos <$> evt e2
     where
         -- New EIx flavour of Event from a non-EIx Event that only references other EIx flavoured events.
-        newEvt :: Event os a -> Moment node ctxF (Event os a)
+        newEvt :: Event os a -> Moment mt (Event os a)
         newEvt e = do
             MomentState v bd es allGates ls <- get
             let evtIx = EventIx v
@@ -342,10 +382,10 @@ evt = \e -> case e of
                     ls
             return (EIx evtIx)
 
-newSourceEvent :: forall node (myNode :: node) (ctxF :: node -> Type) a
-          .  (GateIxC node '[myNode] a)
+newSourceEvent :: forall mt (myNode :: MomentNode mt) a
+          .  (MomentTypes mt, GateIxC (MomentNode mt) '[myNode] a)
           => Proxy myNode
-          -> Moment node ctxF (SourceEvent myNode a, Event '[myNode] a)
+          -> Moment mt (SourceEvent myNode a, Event '[myNode] a)
 newSourceEvent myNodeP = do
     e@(EIx eix) <- evt (Source myNodeP)
     return (SourceEvent eix, e)
@@ -392,17 +432,17 @@ gateIxDeps :: forall node (os :: [node]) a
 gateIxDeps c (GateIxB bix) = behDeps $ circBeh c bix
 gateIxDeps c (GateIxE eix) = evtDeps $ circEvt c eix
 
-listenB :: forall node (n :: node) (os :: [node]) a ctxF
-        .  (GateIxC node os a, IsElem n os, Typeable n)
-        => Proxy n -> Behavior os a -> (ctxF n -> a -> IO ()) -> Moment node ctxF ()
+listenB :: forall mt (n :: MomentNode mt) (os :: [MomentNode mt]) a
+        . (MomentTypes mt, GateIxC (MomentNode mt) os a, IsElem n os, Typeable n)
+        => Proxy n -> Behavior os a -> (MomentCtx mt -> a -> IO ()) -> Moment mt ()
 listenB node b listener = do
     BIx bix <- beh b
     modify (\ms -> ms {
         momentListeners = Listener node bix listener : momentListeners ms
     })
 
-buildCircuit :: forall node (ctxF :: node -> Type) out
-             .  Moment node ctxF out -> (Circuit node, [Listener ctxF], out)
+buildCircuit :: MomentTypes mt
+             => Moment mt out -> (Circuit (MomentNode mt), [Listener mt], out)
 buildCircuit builder
     = ( Circuit graph behDyn allBehs
       , ls
@@ -457,14 +497,15 @@ data EventInjector myNode where
 injectEvent :: EventInjector myNode -> SourceEvent myNode a -> a -> IO ()
 injectEvent (EventInjector _ injector) = injector
 
-actuate :: forall (myNode :: node) (ctxF :: node -> Type) mkCircuitOut
-        .  (NodePC myNode)
-        => ctxF myNode
+actuate :: forall mt (myNode :: MomentNode mt) mkCircuitOut
+        .  (MomentTypes mt, NodePC myNode)
+        => MomentCtx mt
         -> Proxy myNode                -- What node to run.
-        -> node                        -- Clock sync node
+        -> MomentNode mt           -- Clock sync node
         -> IO Time                     -- Local clock
-        -> Moment node ctxF mkCircuitOut               -- The circuit to build
-        -> Map.Map node (Chan [UpdateList node], Chan [UpdateList node])   -- (send, receive) Chanels to other nodes
+        -> Moment mt mkCircuitOut         -- The circuit to build
+        -> Map.Map (MomentNode mt) (Chan [UpdateList (MomentNode mt)], Chan [UpdateList (MomentNode mt)])
+                                       -- (send, receive) Chanels to other nodes
         -> IO ( IO ()               -- IO action that stops the actuation
               , mkCircuitOut                   -- Result of building the circuit
               , EventInjector myNode
@@ -501,11 +542,13 @@ actuate ctx
     let getTime = trace "TODO create node wide synchronized getTime function" getLocalTime
 
     -- Gather Responsabilities (list of "on some behavior changed, perform some IO action")
-    let myResponsabilitiesListeners :: [Responsibility (ctxF myNode) myNode]
+    let myResponsabilitiesListeners :: [Responsibility mt myNode]
         myResponsabilitiesListeners
-            = mapMaybe (\case
-                Listener (_ :: Proxy myNode') bix handler
-                    | Just Refl <- eqT @myNode @myNode'
+            = mapMaybe (\ l -> case l of
+                Listener myNode2P bix handler
+                -- Listener (myNode2P) bix handler
+                    -- | Just Refl <- eqT @(Proxy myNode) @myNode2
+                    | Just Refl <- eqP (Proxy @myNode) myNode2P
                     -> Just $ OnPossibleChange
                                 bix
                                 True
@@ -513,8 +556,11 @@ actuate ctx
                 _   -> Nothing)
             $ listeners
 
+        eqP :: forall a b . (Typeable a, Typeable b) => Proxy a -> Proxy b -> Maybe (a :~: b)
+        eqP _ _ = eqT
 
-        myResponsabilitiesMessage :: [Responsibility (ctxF myNode) myNode]
+
+        myResponsabilitiesMessage :: [Responsibility mt myNode]
         myResponsabilitiesMessage
             = mapMaybe (\(GateIx' g) -> case g of
                 GateIxB bix -> case circBeh circuit bix of
@@ -535,7 +581,7 @@ actuate ctx
             $ circAllGates circuit
 
         -- My node's responsabilities
-        responsabilities :: [Responsibility (ctxF myNode) myNode]
+        responsabilities :: [Responsibility mt myNode]
         responsabilities = myResponsabilitiesMessage ++ myResponsabilitiesListeners
 
     putLog $ show myResponsabilitiesListeners ++ " my listener responsabilities"
@@ -543,7 +589,7 @@ actuate ctx
     putLog $ show myResponsabilitiesMessage ++ " my message responsabilities"
 
     -- A single change to compile all local inputs and messages from other nodes.
-    inChan :: Chan [UpdateList node] <- newChan
+    inChan :: Chan [UpdateList (MomentNode mt)] <- newChan
 
     -- Listen for local inputs (time is assigned here)
     let injectInput :: EventInjector myNode
@@ -559,8 +605,8 @@ actuate ctx
 
     -- Thread that just processes inChan, keeps track of the whole circuit and
     -- decides what listeners to execute (sending them to listenersChan/msgChan).
-    let (circuit0, initialUpdates) = mkLiveCircuit circuit :: (LiveCircuit myNode, [UpdateList node])
-    changesChan :: Chan [UpdateList node] <- newChan
+    let (circuit0, initialUpdates) = mkLiveCircuit circuit :: (LiveCircuit myNode, [UpdateList (MomentNode mt)])
+    changesChan :: Chan [UpdateList (MomentNode mt)] <- newChan
     writeChan changesChan initialUpdates
     _aLiveCircuit <- do
         liveCircuitRef <- newIORef circuit0
@@ -579,10 +625,10 @@ actuate ctx
     _aResponsibilities <- forkIO . readUntillStop changesChan $ \ changes -> do
         putLog $ "Got changesChan with changes: " ++ show changes
         forM_ responsabilities $
-            \ (OnPossibleChange (bix :: BehaviorIx bixO bixA) isLocalListener action) ->
+            \ (OnPossibleChange bix isLocalListener action) ->
                 -- TODO double forM_ is inefficient... maybe index changes on BehaviorIx?
                 forM_ changes $ \ case
-                    UpdateListB (bix' :: BehaviorIx bixO' bixA') updates
+                    UpdateListB bix' updates
                         -- | Just Refl <- eqT @(BehaviorIx bixO bixA) @(BehaviorIx bixO' bixA')
                         | bixVert bix == bixVert bix'
                         -> do
@@ -785,6 +831,7 @@ lcTransaction lc ups = assert lint (lc', changes)
                     | otherwise         = Nothing
                 changesMay (UpdateListE (EventIx    v :: EventIx    vo va) _vEvents)
                     = Nothing
+
 -- Asserting on LiveCircuitls
 lintLiveCircuit :: LiveCircuit myNode -> LiveCircuit myNode
 lintLiveCircuit = id -- TODO
@@ -795,3 +842,24 @@ lintLiveCircuit = id -- TODO
 -- accumE :: a -> Event os (a -> a) -> Event os a
 -- accumE a0 accE =
 
+
+{-
+withDelay :: (GateIxC (MomentNode mt) os a, MomentTypes mt)
+          => a -> (Behavior os a -> Moment mt (Behavior os a, r)) -> Moment mt r
+withDelay a0 withDelayF = mdo
+    bD :: Behavior os a
+        <- beh $ Delay a0 b
+    (b,r) <- withDelayF bD
+    return r
+
+accumB :: MomentTypes mt
+       => a -> Event os (a -> a) -> Moment mt (Behavior os a)
+accumB a0 updateE = Step a0 <$> accumE a0 updateE
+
+accumE :: (Typeable a, GateIxC (MomentNode mt) os a, MomentTypes mt)
+       => a -> Event os (a -> a) -> Moment mt (Event os a)
+accumE a0 updateE = withDelay a0 $ \ aD -> do
+    aE <- evt $ Sample (\ _time a' updater -> updater a') aD updateE
+    aB <- beh $ Step a0 aE
+    return (aB, aE)
+-}

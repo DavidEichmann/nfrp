@@ -25,7 +25,6 @@ import Graphics.Gloss.Interface.IO.Game
 
 import Data.Typeable
 import Data.Map as Map
-import Data.Kind
 import Data.IORef
 import Control.Concurrent (threadDelay, forkIO)
 
@@ -46,15 +45,21 @@ instance ReifySomeNode Node where
 
 type Pos = (Float, Float)
 
-data Ctx :: Node -> Type where
-    Ctx :: IORef Pos -> IORef Pos -> Ctx n
+data Ctx = Ctx (IORef Pos) (IORef Pos)
 
-type Mom a = Moment Node Ctx a
+data MT = MT
+
+instance MomentTypes MT where
+    type MomentNode MT = Node
+    type MomentCtx MT  = Ctx
+
+
+type Mom a = Moment MT a
 
 allNodes :: [Node]
 allNodes = [minBound..maxBound]
 
-newCtx :: IO (Ctx node)
+newCtx :: IO Ctx
 newCtx = Ctx
     <$> newIORef (0,0)
     <*> newIORef (0,0)
@@ -63,8 +68,8 @@ main :: IO ()
 main = do
     playerCtx <- newCtx
     botCtx    <- newCtx
-    let nodeCtxs = [ NodeCtx (Proxy @Player) playerCtx
-                   , NodeCtx (Proxy @Bot)    botCtx
+    let nodeCtxs = [ NodeCtx (Proxy @MT) (Proxy @Player) playerCtx
+                   , NodeCtx (Proxy @MT) (Proxy @Bot)    botCtx
                    ]
 
     -- Start simulation
@@ -110,7 +115,7 @@ data InputDir = DirUp | DirRight | DirDown | DirLeft
     deriving (Eq, Ord, Show, Read)
 
 playerGUI :: (Int, Int)
-          -> Ctx myNode
+          -> Ctx
           -> SourceEvent myNode InputDir
           -> EventInjector myNode
           -> IO Time
