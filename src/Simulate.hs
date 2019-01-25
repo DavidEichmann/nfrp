@@ -20,21 +20,20 @@ import Data.Map (Map, fromList, (!), empty, insert)
 import NFRP
 import qualified HMap as HM
 
-import Data.Kind
 import Control.Monad (foldM)
 import Data.Time.Clock (NominalDiffTime, getCurrentTime, diffUTCTime)
 import Control.Concurrent (Chan, newChan)
 
 data NodeCtx mt where
   NodeCtx :: forall mt (myNode :: MomentNode mt)
-          .  (MomentTypes mt, NodePC myNode)
+          .  NodePC myNode
           => Proxy mt
           -> Proxy (myNode :: MomentNode mt)
           -> MomentCtx mt
           -> NodeCtx mt
 
 simulate :: forall mt mkCircuitOut
-         .  (MomentTypes mt, NodeC (MomentNode mt))
+         .  NodeC (MomentNode mt)
          => Moment mt mkCircuitOut   -- ^ Ciruit to simulate
          -> [NodeCtx mt]             -- ^ Nodes  to simulate
          -> (MomentNode mt)          -- ^ clockSyncNode

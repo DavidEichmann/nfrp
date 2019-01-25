@@ -47,12 +47,7 @@ type Pos = (Float, Float)
 
 data Ctx = Ctx (IORef Pos) (IORef Pos)
 
-data MT = MT
-
-instance MomentTypes MT where
-    type MomentNode MT = Node
-    type MomentCtx MT  = Ctx
-
+type MT = MomentTypes Node Ctx
 
 type Mom a = Moment MT a
 

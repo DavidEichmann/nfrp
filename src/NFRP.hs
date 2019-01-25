@@ -24,7 +24,9 @@
 
 module NFRP
     (
-      MomentTypes (..)
+      MomentTypes
+    , MomentNode
+    , MomentCtx
 
     -- Framework
     , SourceEvent
@@ -34,10 +36,11 @@ module NFRP
     , actuate
 
     -- Primitives
-    , Behavior (Delay, Const, Step, SendB)
+    , Behavior ( Delay, Const, Step, SendB )
     , Event ( Sample, SendE )
     , beh
     , evt
+    , withDelay
     , listenB
     -- , accumB
     -- , accumE
@@ -270,12 +273,14 @@ lcBehVal lc t bix
 instance Eq (BehaviorIx' node) where
     (BehaviorIx' (BehaviorIx v1)) == (BehaviorIx' (BehaviorIx v2)) = v1 == v2
 
+data MomentTypes
+    node
+    ctx
 
-
-class MomentTypes mt where
-    type MomentNode mt :: Type
-    type MomentCtx mt :: Type
-
+type family MomentNode mts where
+    MomentNode (MomentTypes node ctx) = node
+type family MomentCtx mts where
+    MomentCtx (MomentTypes node ctx) = ctx
 
 -- Now we'd like a monad to build this circuit in
 type Moment mt a = State (MomentState mt) a
@@ -315,7 +320,7 @@ instance Show (Responsibility localCtx responsibilityNode) where
 
 -- Use this when a behavior is going to be used in multiple places. The value will hence only be calculated once.
 beh :: forall mt os a
-    .  (MomentTypes mt, GateIxC (MomentNode mt) os a)
+    .  (GateIxC (MomentNode mt) os a)
     => Behavior os a -> Moment mt (Behavior os a)
 beh = \b -> case b of
     -- This makes sure convert all inline Behaviors/Events to BIx/EIx.
@@ -352,7 +357,7 @@ beh = \b -> case b of
 
 -- | Takes any Event and broadcasts it into a (EIx eix) constructor Event.
 evt :: forall mt (os :: [MomentNode mt]) a
-    . (MomentTypes mt, GateIxC (MomentNode mt) os a)
+    . (GateIxC (MomentNode mt) os a)
     => Event os a -> Moment mt (Event os a)
 evt = \e -> case e of
     EIx _
@@ -383,7 +388,7 @@ evt = \e -> case e of
             return (EIx evtIx)
 
 newSourceEvent :: forall mt (myNode :: MomentNode mt) a
-          .  (MomentTypes mt, GateIxC (MomentNode mt) '[myNode] a)
+          .  (GateIxC (MomentNode mt) '[myNode] a)
           => Proxy myNode
           -> Moment mt (SourceEvent myNode a, Event '[myNode] a)
 newSourceEvent myNodeP = do
@@ -433,7 +438,7 @@ gateIxDeps c (GateIxB bix) = behDeps $ circBeh c bix
 gateIxDeps c (GateIxE eix) = evtDeps $ circEvt c eix
 
 listenB :: forall mt (n :: MomentNode mt) (os :: [MomentNode mt]) a
-        . (MomentTypes mt, GateIxC (MomentNode mt) os a, IsElem n os, Typeable n)
+        . (GateIxC (MomentNode mt) os a, IsElem n os, Typeable n)
         => Proxy n -> Behavior os a -> (MomentCtx mt -> a -> IO ()) -> Moment mt ()
 listenB node b listener = do
     BIx bix <- beh b
@@ -441,8 +446,7 @@ listenB node b listener = do
         momentListeners = Listener node bix listener : momentListeners ms
     })
 
-buildCircuit :: MomentTypes mt
-             => Moment mt out -> (Circuit (MomentNode mt), [Listener mt], out)
+buildCircuit :: Moment mt out -> (Circuit (MomentNode mt), [Listener mt], out)
 buildCircuit builder
     = ( Circuit graph behDyn allBehs
       , ls
@@ -498,7 +502,7 @@ injectEvent :: EventInjector myNode -> SourceEvent myNode a -> a -> IO ()
 injectEvent (EventInjector _ injector) = injector
 
 actuate :: forall mt (myNode :: MomentNode mt) mkCircuitOut
-        .  (MomentTypes mt, NodePC myNode)
+        .  (NodePC myNode)
         => MomentCtx mt
         -> Proxy myNode                -- What node to run.
         -> MomentNode mt           -- Clock sync node
@@ -839,22 +843,27 @@ lintLiveCircuit = id -- TODO
 
 
 -- Combinators
+
 -- accumE :: a -> Event os (a -> a) -> Event os a
--- accumE a0 accE =
+-- accumE a0 accE = withDelay a0 $ \ prevValB
+--     -> Step a0 (Sample (\ _time prevVal acc -> acc prevVal) prevValB accE)
 
 
-{-
-withDelay :: (GateIxC (MomentNode mt) os a, MomentTypes mt)
+
+withDelay :: (GateIxC (MomentNode mt) os a)
           => a -> (Behavior os a -> Moment mt (Behavior os a, r)) -> Moment mt r
 withDelay a0 withDelayF = mdo
-    bD :: Behavior os a
-        <- beh $ Delay a0 b
+    bD <- beh $ Delay a0 b
     (b,r) <- withDelayF bD
     return r
 
-accumB :: MomentTypes mt
-       => a -> Event os (a -> a) -> Moment mt (Behavior os a)
-accumB a0 updateE = Step a0 <$> accumE a0 updateE
+-- accumB :: MomentTypes mt
+--        => a -> Event os (a -> a) -> Moment mt (Behavior os a)
+-- accumB a0 accE = withDelay a0 $ \ prevValB -> do
+--     let beh = Step a0 $ Sample (\ _time prevVal acc -> acc prevVal) prevValB accE
+--     return (beh, beh)
+-- -- accumB a0 updateE = Step a0 <$> accumE a0 updateE
+{-
 
 accumE :: (Typeable a, GateIxC (MomentNode mt) os a, MomentTypes mt)
        => a -> Event os (a -> a) -> Moment mt (Event os a)
