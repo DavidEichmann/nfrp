@@ -39,10 +39,6 @@ instance Sing Player where
 instance Sing Bot where
     sing _ = Bot
 
-instance ReifySomeNode Node where
-    someNode Player = SomeNode (Proxy @Player)
-    someNode Bot    = SomeNode (Proxy @Bot)
-
 type Pos = (Float, Float)
 
 data Ctx = Ctx (IORef Pos) (IORef Pos)
@@ -63,8 +59,8 @@ main :: IO ()
 main = do
     playerCtx <- newCtx
     botCtx    <- newCtx
-    let nodeCtxs = [ NodeCtx (Proxy @MT) (Proxy @Player) playerCtx
-                   , NodeCtx (Proxy @MT) (Proxy @Bot)    botCtx
+    let nodeCtxs = [ NodeCtx Player playerCtx
+                   , NodeCtx Bot    botCtx
                    ]
 
     -- Start simulation
@@ -74,7 +70,7 @@ main = do
         Bot
 
     -- Start Bot GUI
-    let botInjector = injectors HMap.! (Proxy @Bot)
+    let botInjector = injectors Map.! Bot
         botSrcEvt = botInputDirSrcEvt $ circOuts Map.! Bot
 
         botAI = do
@@ -95,24 +91,25 @@ main = do
         (700, 100)
         playerCtx
         (playerInputDirSrcEvt $ circOuts Map.! Player)
-        (injectors HMap.! (Proxy @Player))
+        (injectors Map.! Player)
         (clocks Map.! Player)
 
     --Stop
     stop
 
 data CircOut = CircOut
-    { playerInputDirSrcEvt :: SourceEvent Player InputDir
-    , botInputDirSrcEvt    :: SourceEvent Bot    InputDir
+    { playerInputDirSrcEvt :: SourceEvent Node InputDir -- Player
+    , botInputDirSrcEvt    :: SourceEvent Node InputDir -- Bot
     }
 
 data InputDir = DirUp | DirRight | DirDown | DirLeft
     deriving (Eq, Ord, Show, Read)
 
-playerGUI :: (Int, Int)
+playerGUI :: (Eq node, Show node)
+          => (Int, Int)
           -> Ctx
-          -> SourceEvent myNode InputDir
-          -> EventInjector myNode
+          -> SourceEvent node InputDir
+          -> EventInjector node
           -> IO Time
           -> IO ()
 playerGUI windowPos (Ctx pPosIORef bPosIORef) inputDirSourceE injector getTime = playIO
@@ -150,40 +147,38 @@ drawCharacter c (x, y) = Color c (translate x y (Circle 10))
 
 circuit :: Mom CircOut
 circuit = do
-    (playerDirSE, playerDirE) <- newSourceEvent (Proxy @Player)
-    (botDirSE   , botDirE   ) <- newSourceEvent (Proxy @Bot)
+    (playerDirSE, playerDirE) <- newSourceEvent Player
+    (botDirSE   , botDirE   ) <- newSourceEvent Bot
 
     playerPosB
         <- beh
-        . SendB (Proxy @Player) (Proxy @[Player, Bot])
-        . Step (0,0)
+        . sendB Player [Player, Bot]
+        . step (0,0)
         $ dirToPos <$> playerDirE
 
     botPosB
         <- beh
-        . SendB (Proxy @Bot) (Proxy @[Player, Bot])
-        . Step (0,0)
+        . sendB Bot [Player, Bot]
+        . step (0,0)
         $ dirToPos <$> botDirE
 
-    pDir  <- beh $ Step  DirUp playerDirE
-    pDirD <- beh $ Delay DirUp pDir
+    pDir  <- beh $ step  DirUp playerDirE
+    pDirD <- beh $ delay DirUp pDir
     pDirBothB    <- beh $ (,) <$> pDir <*> pDirD
     pDirBothOnEB <- beh
-                    . Step Nothing
-                    $ Sample (\ _time valB _valE -> Just valB) pDirBothB playerDirE
+                    . step Nothing
+                    $ sample (\ _time valB _valE -> Just valB) pDirBothB playerDirE
 
-    listenB (Proxy @Player) pDirBothB    (\ _ a -> putStrLn $ "@@@ Expecting same: " ++ show a)
-    listenB (Proxy @Player) pDirBothOnEB (\ _ a -> putStrLn $ "@@@ Expecting diff: " ++ show a)
+    listenB Player pDirBothB    (\ _ a -> putStrLn $ "@@@ Expecting same: " ++ show a)
+    listenB Player pDirBothOnEB (\ _ a -> putStrLn $ "@@@ Expecting diff: " ++ show a)
 
-    let bind :: forall (myNode :: Node)
-             .  (Typeable myNode, IsElem myNode '[Player, Bot])
-             => Proxy myNode -> Mom ()
-        bind myNodeP = do
-            listenB myNodeP playerPosB (\ (Ctx ref _) pos -> writeIORef ref pos)
-            listenB myNodeP botPosB    (\ (Ctx _ ref) pos -> writeIORef ref pos)
+    let bind ::Node -> Mom ()
+        bind node = do
+            listenB node playerPosB (\ (Ctx ref _) pos -> writeIORef ref pos)
+            listenB node botPosB    (\ (Ctx _ ref) pos -> writeIORef ref pos)
 
-    bind (Proxy @Player)
-    bind (Proxy @Bot)
+    bind Player
+    bind Bot
 
     return (CircOut playerDirSE botDirSE)
 

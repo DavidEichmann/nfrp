@@ -15,65 +15,60 @@
 
 module Simulate where
 
-import Data.Typeable
+import Data.Kind
 import Data.Map (Map, fromList, (!), empty, insert)
 import NFRP
-import qualified HMap as HM
 
 import Control.Monad (foldM)
 import Data.Time.Clock (NominalDiffTime, getCurrentTime, diffUTCTime)
 import Control.Concurrent (Chan, newChan)
 
 data NodeCtx mt where
-  NodeCtx :: forall mt (myNode :: MomentNode mt)
-          .  NodePC myNode
-          => Proxy mt
-          -> Proxy (myNode :: MomentNode mt)
+  NodeCtx :: MomentNode mt
           -> MomentCtx mt
           -> NodeCtx mt
 
-simulate :: forall mt mkCircuitOut
-         .  NodeC (MomentNode mt)
-         => Moment mt mkCircuitOut   -- ^ Ciruit to simulate
-         -> [NodeCtx mt]             -- ^ Nodes  to simulate
-         -> (MomentNode mt)          -- ^ clockSyncNode
+simulate :: forall node (ctx :: Type) mkCircuitOut
+         .  NodeC node
+         => Moment (MomentTypes node ctx) mkCircuitOut   -- ^ Ciruit to simulate
+         -> [NodeCtx (MomentTypes node ctx)]             -- ^ Nodes  to simulate
+         -> node          -- ^ clockSyncNode
          -> IO ( IO ()               -- ^ (returns an IO action that stops the simulation.
-               , Map (MomentNode mt) mkCircuitOut
-               , HM.HMap (MomentNode mt) EventInjector       -- ^ output from building the circuits per (MomentNode mt).
-               , Map (MomentNode mt) (IO Time))              -- ^ adjusted clocks
+               , Map node mkCircuitOut
+               , Map node (EventInjector node)  -- ^ output from building the circuits per node.
+               , Map node (IO Time))              -- ^ adjusted clocks
 simulate circuitM allNodeCtxMay clockSyncNode = do
 
-    let allNodes :: [MomentNode mt]
-        allNodes = map (\ (NodeCtx _ nodeP _) -> sing nodeP) allNodeCtxMay
+    let allNodes :: [node]
+        allNodes = map (\ (NodeCtx node _) -> node) allNodeCtxMay
 
     t0 <- getCurrentTime
 
-    let nodePairs :: [(MomentNode mt, MomentNode mt)]
+    let nodePairs :: [(node, node)]
         nodePairs = [ (nodeFrom, nodeTo)
                     | nodeFrom <- allNodes
                     , nodeTo   <- allNodes
                     , nodeFrom /= nodeTo
                     ]
 
-    netChans :: Map (MomentNode mt, MomentNode mt) (Chan [UpdateList (MomentNode mt)])
+    netChans :: Map (node, node) (Chan [UpdateList])
         <- fromList <$> sequence
             [ do
                 c  <- newChan
                 return ((nodeFrom, nodeTo), c)
             | (nodeFrom, nodeTo) <- nodePairs ]
 
-    let actuateNode :: forall (myNode :: MomentNode mt)
-                 .  (NodePC myNode)
-                 => MomentCtx mt
-                 -> Proxy myNode
-                 -> IO ( IO ()
-                       , mkCircuitOut
-                       , EventInjector myNode
-                       , IO Time)
-        actuateNode ctx myNodeP
+    let actuateNode
+            :: ctx
+            -> node
+            -> IO ( IO ()
+                , mkCircuitOut
+                , EventInjector node
+                , IO Time)
+        actuateNode ctx myNode
             = actuate
                 ctx
-                myNodeP
+                myNode
                 clockSyncNode
                 ((round :: NominalDiffTime -> Integer)
                     .   (* 10^(12::Int))
@@ -85,18 +80,15 @@ simulate circuitM allNodeCtxMay clockSyncNode = do
                         ( netChans ! (myNode, otherNode)
                         , netChans ! (otherNode, myNode)))
                     | otherNode <- allNodes, myNode /= otherNode])
-            where
-                myNode = sing myNodeP
 
     foldM
-        (\ (stopAcc, outsAcc, injectorsAcc, clocksAcc) (NodeCtx _ nodeP ctx) -> do
-            (stopI, outI, injectorI, clockI) <- actuateNode ctx nodeP
-            let node = sing nodeP
+        (\ (stopAcc, outsAcc, injectorsAcc, clocksAcc) (NodeCtx node ctx) -> do
+            (stopI, outI, injectorI, clockI) <- actuateNode ctx node
             return ( stopAcc >> stopI
                    , insert    node  outI      outsAcc
-                   , HM.insert nodeP injectorI injectorsAcc
+                   , insert    node  injectorI injectorsAcc
                    , insert    node  clockI    clocksAcc
                    )
         )
-        (return(), empty, HM.empty, empty)
+        (return(), empty, empty, empty)
         allNodeCtxMay
