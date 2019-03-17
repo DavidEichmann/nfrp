@@ -72,8 +72,8 @@ main = mdo
                     <$> fmap (\iwa -> [ClientA | iwa]) isWorkingA'Server
                     <*> fmap (\iwb -> [ClientB | iwb]) isWorkingB'Server
 
-            listenB Server workersBeh (\ _ workers -> do
-                putStrLn $ "@@@ BAM! " ++ show workers
+            listenB Server workersBeh (\ _ workers t -> do
+                putStrLn $ "@@@ BAM! " ++ show t ++ ": " ++ show workers
                 labelSetText workersLabel' (show workers))
 
             return (Map.fromList

@@ -112,9 +112,13 @@ type family NodeC node :: Constraint where
 data BehTime
     = Exactly   { btTime :: Time }
     | JustAfter { btTime :: Time }
+    | Inf
     deriving (Show, Eq)
 
 instance Ord BehTime where
+    compare Inf Inf = EQ
+    compare Inf _ = GT
+    compare _ Inf = LT
     compare a b = case btTime a `compare` btTime b of
         LT -> LT
         EQ -> case (a, b) of
@@ -122,6 +126,8 @@ instance Ord BehTime where
             (JustAfter _, JustAfter _) -> EQ
             (Exactly   _, JustAfter _) -> LT
             (JustAfter _, Exactly   _) -> GT
+            (Inf, _) -> error "Impossible"
+            (_, Inf) -> error "Impossible"
         GT -> GT
 
 data Owners node
@@ -263,13 +269,17 @@ data LiveCircuit node = LiveCircuit
 
 
 lcGateMaxT :: NodeC node
-           => LiveCircuit node -> GateIx a -> Time
-lcGateMaxT lc (GateIxB b) = headDef (-1) (btTime . fst <$> lcBehChanges lc b)
-lcGateMaxT lc (GateIxE e) = headDef (-1) (         fst <$> lcEvents     lc e)
+           => LiveCircuit node -> GateIx a -> BehTime
+lcGateMaxT lc (GateIxB b) = headDef (Exactly (-1)) (          fst <$> lcBehChanges lc b)
+lcGateMaxT lc (GateIxE e) = headDef (Exactly (-1)) (Exactly . fst <$> lcEvents     lc e)
 
 lcBehMaxT :: NodeC node
            => LiveCircuit node -> BehaviorIx a -> BehTime
 lcBehMaxT lc bix = headDef (Exactly (-1)) (fst <$> lcBehChanges lc bix)
+
+lcEvtMaxT :: NodeC node
+           => LiveCircuit node -> EventIx a -> Time
+lcEvtMaxT lc eix = headDef (-1) (fst <$> lcEvents lc eix)
 
 lcBehVal :: NodeC node
          => LiveCircuit node -> BehTime -> BehaviorIx a -> a
@@ -309,7 +319,7 @@ data MomentState momentTypes = MomentState
 
 data Listener mt
     = forall a
-    . Listener (MomentNode mt) (BehaviorIx a) (MomentCtx mt -> a -> IO ())
+    . Listener (MomentNode mt) (BehaviorIx a) (MomentCtx mt -> a -> BehTime -> IO ())
 
 data UpdateList
     = forall a . UpdateListB (BehaviorIx a) [(BehTime, a)]
@@ -451,7 +461,7 @@ evtDepVerts (SendE _ _ e)    = evtDepVerts e
 -- gateIxDeps c (GateIxE eix) = evtDeps $ circEvt c eix
 
 listenB :: (NodeC (MomentNode mt))
-        => (MomentNode mt) -> Behavior (MomentNode mt) a -> (MomentCtx mt -> a -> IO ()) -> Moment mt ()
+        => (MomentNode mt) -> Behavior (MomentNode mt) a -> (MomentCtx mt -> a -> BehTime -> IO ()) -> Moment mt ()
 listenB node b listener
     | node `elemOwners` owners b = do
         BIx _ bix <- beh b
@@ -594,7 +604,9 @@ actuate ctx
                                 myNode
                                 bix
                                 True
-                                (\ctx' ups -> handler ctx' (snd . head $ ups))
+                                (\ctx' ups -> let
+                                    (time, val) = head ups
+                                    in handler ctx' val time)
                 _   -> Nothing)
             $ listeners
 
@@ -714,7 +726,7 @@ mkLiveCircuit myNode c = (lc, initialUpdatesOwnedBeh ++ initialUpdatesDerived)
                   | circBeh c bix `isObservableTo` myNode
                   -> case circBeh c bix of
                         BIx _ _        -> error "Unexpected BIx."
-                        Const _ val    -> Just (UpdateListB bix [(Exactly 0, val)])
+                        Const _ val    -> Just (UpdateListB bix [(Inf, val),(Exactly 0, val)])
                         Delay _ _ _    -> Nothing
                         Step _ bix2 _  -> Just (UpdateListB bix [(Exactly 0, bix2)])
                         MapB _ _ _     -> Nothing
@@ -728,7 +740,7 @@ mkLiveCircuit myNode c = (lc, initialUpdatesOwnedBeh ++ initialUpdatesDerived)
 lcTransaction :: forall node
               .  NodeC node
               => LiveCircuit node -> [UpdateList] -> (LiveCircuit node, [UpdateList])
-lcTransaction lc ups = assert lint (lc', changes)
+lcTransaction lc ups = lint (lc', changes)
     where
         myNode = lcNode lc
         lc' = lintLiveCircuit LiveCircuit
@@ -755,24 +767,32 @@ lcTransaction lc ups = assert lint (lc', changes)
                         else Just $ mkUpdateList ix (prune $ gateCs)
                 in
                     case gix of
-                        (GateIxB bix) -> go bix (flip lcBehMaxT bix)            (lcBehChanges lc' bix) UpdateListB
-                        (GateIxE eix) -> go eix (flip lcGateMaxT (GateIxE eix)) (lcEvents     lc' eix) UpdateListE
+                        (GateIxB bix) -> go bix (flip lcBehMaxT bix) (lcBehChanges lc' bix) UpdateListB
+                        (GateIxE eix) -> go eix (flip lcEvtMaxT eix) (lcEvents     lc' eix) UpdateListE
                 )
             $ circAllGates c
 
         lint
-            -- All updates are for Behaviors/Events are NOT derived/no-update
-            =  all (not . flip elem [DerivedUpdate, NoUpdate])
-                (fmap (\up -> case up of
-                        UpdateListB b _ -> updateWay myNode (circBeh c b)
-                        UpdateListE e _ -> updateWay myNode (circEvt c e))
-                    ups)
+            -- Not quite true: initial values of step behaviors means you get an initial update
+            -- for that behavior, yet the update way is Derived.
+            -- -- All input updates are for Behaviors/Events NOT derived/no-update
+            -- = assert (all (\ updateWay' -> updateWay' `notElem` [DerivedUpdate, NoUpdate])
+            --     (fmap (\up -> case up of
+            --             UpdateListB b _ -> updateWay myNode (circBeh c b)
+            --             UpdateListE e _ -> updateWay myNode (circEvt c e))
+            --         ups))
 
-            -- All updates are after maxT
-            && all (\up -> case up of
-                    UpdateListB b ul -> all (lcBehMaxT  lc b           <) (fst <$> ul)
-                    UpdateListE e ul -> all (lcGateMaxT lc (GateIxE e) <) (fst <$> ul))
-                ups
+            -- All changes are after old maxT
+            = assert (all (\up -> case up of
+                    UpdateListB b ul -> all (lcBehMaxT  lc b           <) (          fst <$> ul)
+                    UpdateListE e ul -> all (lcGateMaxT lc (GateIxE e) <) (Exactly . fst <$> ul))
+                changes)
+
+            -- All changes are before or equal to new maxT
+            . assert (all (\up -> case up of
+                    UpdateListB b ul -> all (lcBehMaxT  lc' b           >=) (          fst <$> ul)
+                    UpdateListE e ul -> all (lcGateMaxT lc' (GateIxE e) >=) (Exactly . fst <$> ul))
+                changes)
 
         -- TODO asset that all updates are after their corresponding Event/Behavior's MaxT time.
         --      we have at most 1 UpdateList per gate
@@ -807,6 +827,8 @@ lcTransaction lc ups = assert lint (lc', changes)
                 delayBehChanges :: a -> [(BehTime, a)] -> [(BehTime, a)]
                 delayBehChanges a0 []
                     = [(Exactly 0, a0)]
+                delayBehChanges a0 (c0@(Inf, _) : cs)
+                    = c0 : delayBehChanges a0 cs
                 delayBehChanges a0 ((Exactly t, a) : cs)
                     = (JustAfter t, a) : delayBehChanges a0 cs
                 -- Because it's impossible to sample the JustAfter t value for a JustAfter t  befor it,
@@ -820,10 +842,33 @@ lcTransaction lc ups = assert lint (lc', changes)
                 apB :: [(BehTime, (j -> k))] -> [(BehTime, j)] -> [(BehTime, k)]
                 apB [] _ = []
                 apB _ [] = []
-                apB ((tf,f):tfs) ((ta,a):tas) = case tf `compare` ta of
-                    EQ -> (tf, f a) : apB tfs tas
-                    LT -> (ta, f a) : apB ((tf,f):tfs) tas
-                    GT -> (tf, f a) : apB tfs ((ta,a):tas)
+                apB tffs@((tf0,f0):_) taas@((ta0,a0):_)
+                    = case tf0 `compare` ta0 of
+                        EQ -> apB' True  tffs True  taas
+                        LT -> apB' False tffs True  taas
+                        GT -> apB' True  tffs False taas
+
+                -- "current time" is newer of 2 head times
+                -- Bool's are true if value is known at current time
+                apB' :: Bool -> [(BehTime, (j -> k))]
+                     -> Bool -> [(BehTime,  j      )]
+                     ->                   [(BehTime,       k )]
+                apB' _ [] _ _ = []
+                apB' _ _ _ [] = []
+                apB' f00May tffs@((tf0,f0):f1's) a00May taas@((ta0,a0):a1's)
+                    = case tf0 `compare` ta0 of
+                        EQ -> (ta0, f0 a0) : apB' True f1's
+                                                  True a1's
+                        -- Current time is ta0
+                        LT -> if f00May
+                            then (ta0, f0 a0) : apB' True  tffs True  a1's
+                            else                apB' False tffs True  a1's
+
+                        -- Current time is tf0
+                        GT -> if a00May
+                            then (tf0, f0 a0) : apB' True  f1's True  taas
+                            else                apB' True  f1's False taas
+
 
         lcEvents' :: EventIx a -> [(Time, a)]
         lcEvents' eix = case updateWay myNode e of

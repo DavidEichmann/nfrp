@@ -164,13 +164,13 @@ circuit = do
                     . step Nothing
                     $ sample (\ _time valB _valE -> Just valB) pDirBothB playerDirE
 
-    listenB Player pDirBothB    (\ _ a -> putStrLn $ "@@@ Expecting same: " ++ show a)
-    listenB Player pDirBothOnEB (\ _ a -> putStrLn $ "@@@ Expecting diff: " ++ show a)
+    listenB Player pDirBothB    (\ _ a _ -> putStrLn $ "@@@ Expecting same: " ++ show a)
+    listenB Player pDirBothOnEB (\ _ a _ -> putStrLn $ "@@@ Expecting diff: " ++ show a)
 
     let bind ::Node -> Mom ()
         bind node = do
-            listenB node playerPosB (\ (Ctx ref _) pos -> writeIORef ref pos)
-            listenB node botPosB    (\ (Ctx _ ref) pos -> writeIORef ref pos)
+            listenB node playerPosB (\ (Ctx ref _) pos _ -> writeIORef ref pos)
+            listenB node botPosB    (\ (Ctx _ ref) pos _ -> writeIORef ref pos)
 
     bind Player
     bind Bot
