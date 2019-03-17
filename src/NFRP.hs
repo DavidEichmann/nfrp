@@ -127,10 +127,16 @@ instance Ord BehTime where
 data Owners node
     = All
     | Some [node]
+    deriving (Show)
 
 elemOwners :: Eq node => node -> Owners node -> Bool
 elemOwners _ All       = True
 elemOwners x (Some xs) = x `elem` xs
+
+union :: Eq node => Owners node -> Owners node -> Owners node
+union All _ = All
+union _ All = All
+union (Some a) (Some b) = Some (a `List.union` b)
 
 intersect :: Eq node => Owners node -> Owners node -> Owners node
 intersect All All = All
@@ -168,17 +174,19 @@ constB :: a -> Behavior node a
 constB = Const All
 step :: a -> Event node a -> Behavior node a
 step a e = Step (owners e) a e
-sendB' :: (Show node, Ord node, Typeable node) =>
-           node -> Owners node -> Behavior node a -> Behavior node a
-sendB' from tos b
-    | from `elemOwners` owners b = SendB from tos b
-    | otherwise = error $ "Trying to send a behavior from non-owner"
+send' :: (Show node, Eq node, HasOwners gate) =>
+           (node -> Owners node -> gate node a -> p)
+           -> node -> Owners node -> gate node a -> p
+send' sendG from tos g
+    | from `elemOwners` owners g = sendG from (tos `union` (Some [from])) g
+    | otherwise = error $ "Trying to send a behavior from `" ++ show from
+                        ++ "` not in owners: " ++ show (owners g)
 sendB :: (Show node, Ord node, Typeable node) =>
            node -> [node] -> Behavior node a -> Behavior node a
-sendB    from tos = sendB' from (Some tos)
+sendB    from tos = send' SendB from (Some tos)
 sendBAll :: (Show node, Ord node, Typeable node) =>
               node -> Behavior node a -> Behavior node a
-sendBAll from     = sendB' from All
+sendBAll from     = send' SendB from All
 
 instance Functor (Behavior node) where
     fmap f b = MapB (owners b) f b
@@ -212,15 +220,17 @@ sample :: Eq node =>
             (Time -> a -> b -> c)
             -> Behavior node a -> Event node b -> Event node c
 sample f b e = Sample (owners e `intersect` owners b) f b e
-sendE' :: Eq node =>
-            node -> Owners node -> Event node a -> Event node a
-sendE' from tos e
-    | from `elemOwners` owners e = SendE from tos e
-    | otherwise = error $ "Trying to send an event from non-owner"
-sendE :: Eq node => node -> [node] -> Event node a -> Event node a
-sendE from tos = sendE' from (Some tos)
-sendEAll :: Eq node => node -> Event node a -> Event node a
-sendEAll from  = sendE' from All
+-- sendE' :: Eq node =>
+--             node -> Owners node -> Event node a -> Event node a
+-- sendE' from tos e
+--     | from `elemOwners` owners e = SendE from tos e
+--     | otherwise = error $ "Trying to send an event from non-owner"
+sendE :: (Show node, Ord node, Typeable node)
+      => node -> [node] -> Event node a -> Event node a
+sendE from tos = send' SendE from (Some tos)
+sendEAll :: (Show node, Ord node, Typeable node)
+         => node -> Event node a -> Event node a
+sendEAll from  = send' SendE from All
 
 data SourceEvent node a where
     SourceEvent :: node -> EventIx a -> SourceEvent node a
@@ -442,11 +452,13 @@ evtDepVerts (SendE _ _ e)    = evtDepVerts e
 
 listenB :: (NodeC (MomentNode mt))
         => (MomentNode mt) -> Behavior (MomentNode mt) a -> (MomentCtx mt -> a -> IO ()) -> Moment mt ()
-listenB node b listener = do
-    BIx _ bix <- beh b
-    modify (\ms -> ms {
-        momentListeners = Listener node bix listener : momentListeners ms
-    })
+listenB node b listener
+    | node `elemOwners` owners b = do
+        BIx _ bix <- beh b
+        modify (\ms -> ms {
+            momentListeners = Listener node bix listener : momentListeners ms
+        })
+    | otherwise = error "Trying to listen to non-owned behavior"
 
 buildCircuit :: Moment mt out -> (Circuit (MomentNode mt), [Listener mt], out)
 buildCircuit builder

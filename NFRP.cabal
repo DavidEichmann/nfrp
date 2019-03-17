@@ -51,6 +51,21 @@ executable Main
         NFRP -any,
         safe -any,
         gtk3 -any,
+        time -any
+
+executable Circles
+    main-is: Circles.hs
+    hs-source-dirs: app
+    default-language: Haskell2010
+    ghc-options: -Wall -threaded -rtsopts -with-rtsopts=-N
+    build-depends:
+        base ==4.11.1.0,
+        containers >=0.5.9,
+        async -any,
+        network -any,
+        NFRP -any,
+        safe -any,
+        gtk3 -any,
         time -any,
         ncurses -any,
         gloss -any
