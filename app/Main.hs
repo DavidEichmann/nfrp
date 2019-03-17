@@ -2,9 +2,6 @@
 
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE TupleSections #-}
-{-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE TypeInType #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -20,10 +17,8 @@ module Main where
 
 import NFRP
 import Simulate
-import HMap as HMap
 import Graphics.Gloss.Interface.IO.Game
 
-import Data.Typeable
 import Data.Map as Map
 import Data.IORef
 import Control.Concurrent (threadDelay, forkIO)
