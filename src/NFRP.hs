@@ -176,10 +176,13 @@ toBix _ = error "Expected BIx constructor"
 
 delay :: a -> Behavior node a -> Behavior node a
 delay a b = Delay (owners b) a b
+
 constB :: a -> Behavior node a
 constB = Const All
+
 step :: a -> Event node a -> Behavior node a
 step a e = Step (owners e) a e
+
 send' :: (Show node, Eq node, HasOwners gate) =>
            (node -> Owners node -> gate node a -> p)
            -> node -> Owners node -> gate node a -> p
@@ -190,6 +193,7 @@ send' sendG from tos g
 sendB :: (Show node, Ord node, Typeable node) =>
            node -> [node] -> Behavior node a -> Behavior node a
 sendB    from tos = send' SendB from (Some tos)
+
 sendBAll :: (Show node, Ord node, Typeable node) =>
               node -> Behavior node a -> Behavior node a
 sendBAll from     = send' SendB from All
@@ -231,9 +235,11 @@ sample f b e = Sample (owners e `intersect` owners b) f b e
 -- sendE' from tos e
 --     | from `elemOwners` owners e = SendE from tos e
 --     | otherwise = error $ "Trying to send an event from non-owner"
+
 sendE :: (Show node, Ord node, Typeable node)
       => node -> [node] -> Event node a -> Event node a
 sendE from tos = send' SendE from (Some tos)
+
 sendEAll :: (Show node, Ord node, Typeable node)
          => node -> Event node a -> Event node a
 sendEAll from  = send' SendE from All
