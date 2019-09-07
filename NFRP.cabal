@@ -14,9 +14,10 @@ extra-source-files:
 
 library
     exposed-modules:
-          NFRP
-        , Simulate
+          Actuate
         , HMap
+        , NFRP
+        , Simulate
     other-modules:
         TypeLevelStuff
     hs-source-dirs: src

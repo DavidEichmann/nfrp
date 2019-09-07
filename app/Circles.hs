@@ -147,13 +147,13 @@ circuit = do
 
     playerPosB
         <- beh
-        . sendB Player [Player, Bot]
+        . sendBAll Player
         . step (0,0)
         $ dirToPos <$> playerDirE
 
     botPosB
         <- beh
-        . sendB Bot [Player, Bot]
+        . sendBAll Bot
         . step (0,0)
         $ dirToPos <$> botDirE
 

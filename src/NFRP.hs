@@ -47,6 +47,7 @@ module NFRP
     -- , accumB
     -- , accumE
 
+    , module Actuate
     , module TypeLevelStuff
     , UpdateList
     , Moment
@@ -71,6 +72,8 @@ import Data.Dynamic
 import Data.Maybe (mapMaybe)
 import qualified Data.List as List
 import Data.List (find, sortBy)
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.Function (on)
 import qualified Data.Graph as Graph
 import qualified Data.Map as Map
@@ -81,6 +84,7 @@ import Control.Concurrent.Async
 import Debug.Trace
 import Control.Exception.Base (assert)
 
+import Actuate
 import TypeLevelStuff
 
 {-
@@ -152,6 +156,9 @@ intersect (Some a) (Some b) = Some (List.intersect a b)
 
 data GateIx' = forall (a :: Type) . GateIx' (GateIx a)
 data GateIx (a :: Type) = GateIxB (BehaviorIx a) | GateIxE (EventIx a)
+
+data Gate' node = forall (a :: Type) . Gate' (Gate node a)
+data Gate node (a :: Type) = GateB (Behavior node a) | GateE (Event node a)
 
 data BehaviorIx' = forall (a :: Type) . BehaviorIx' (BehaviorIx a)
 newtype BehaviorIx (a :: Type) = BehaviorIx { bixVert :: Graph.Vertex }
@@ -249,16 +256,31 @@ data SourceEvent node a where
 
 data Circuit node = Circuit
     { circGraph    :: Graph.Graph
-    , circGateDyn  :: Map.Map Graph.Vertex Int
-                    -- ^Dynamic is a Behavior or Event of some os/type (can be infered from vertex)
-    , circAllGates :: [GateIx']
+    , circGraphT   :: Graph.Graph  -- ^ transposed
+    , circGates    :: Map.Map Graph.Vertex (Gate' node)
+    , circGateIxs  :: Map.Map Graph.Vertex GateIx'
     }
 
+class CircParents a where
+    parents :: Circuit node -> a -> [GateIx']
+instance CircParents Graph.Vertex where
+    parents c
+        = fmap (circGateIxs c Map.!)
+        . Graph.reachable (circGraphT c)
+instance CircParents (BehaviorIx a) where
+    parents c = parents c . bixVert
+instance CircParents (EventIx a) where
+    parents c = parents c . eixVert
+
 circBeh :: Circuit node -> BehaviorIx a -> Behavior node a
-circBeh c = unsafeCoerce . (circGateDyn c Map.!) . bixVert
+circBeh c ix = case circGates c Map.! bixVert ix of
+                Gate' (GateB b) -> unsafeCoerce b
+                _ -> error "Expected GateB but got GateE"
 
 circEvt :: Circuit node -> EventIx a -> Event node a
-circEvt c = unsafeCoerce . (circGateDyn c Map.!) . eixVert
+circEvt c ix = unsafeCoerce $ case circGates c Map.! eixVert ix of
+                Gate' (GateE e) -> unsafeCoerce e
+                _ -> error "Expected GateE but got GateB"
 
 data LiveCircuit node = LiveCircuit
     { lcCircuit :: Circuit node
@@ -317,9 +339,10 @@ type Moment mt a = State (MomentState mt) a
     -- deriving (Functor, Applicative, Monad)
 data MomentState momentTypes = MomentState
     { momentNextVert  :: Graph.Vertex
-    , momentBehDyn    :: Map.Map Graph.Vertex Int
+    -- ^ The next available gate ID.
+    , momentGates     :: Map.Map Graph.Vertex (Gate' (MomentNode momentTypes))
+    , momentGateIxs   :: Map.Map Graph.Vertex GateIx'
     , momentEdges     :: [Graph.Edge]
-    , momentAllGates  :: [GateIx']
     , momentListeners :: [Listener momentTypes]
     }
 
@@ -337,11 +360,13 @@ instance Show UpdateList where
                 UpdateListE e us -> show e ++ ") Times=" ++ show (fst <$> us)
 
 data Responsibility node ctx
+    -- | When maxT increases for a behavior do some IO.
     = forall a . OnPossibleChange
             node    -- ^ Which node's responsibility is this.
             (BehaviorIx a)
             Bool    -- ^ Is it a local listerner? As opposed to sending a msg to another node.
             (ctx -> [(BehTime, a)] -> IO ())
+    -- TODO Event based responsibility
 
 instance Show node => Show (Responsibility node localCtx) where
     show (OnPossibleChange node bix isLocal _)
@@ -354,7 +379,7 @@ instance Show node => Show (Responsibility node localCtx) where
         ++ " _"
 
 -- Use this when a behavior is going to be used in multiple places. The value will hence only be calculated once.
-beh :: NodeC (MomentNode mt)
+beh :: forall mt node a . (node ~ MomentNode mt, NodeC (MomentNode mt))
     => Behavior node a -> Moment mt (Behavior node a)
 beh = \b -> case b of
     -- This makes sure convert all inline Behaviors/Events to BIx/EIx.
@@ -376,21 +401,21 @@ beh = \b -> case b of
         -- New BIx flavour of Behavior from a non-BIx Behavior that only references other BIx flavoured behaviors.
         newBeh :: Behavior node a -> Moment mt (Behavior node a)
         newBeh b = do
-            MomentState v bd es allGates ls <- get
+            MomentState v gates gateIxs edges listeners <- get
             let behIx = BehaviorIx v
             put $ MomentState
                     -- Increment vertex index.
                     (v+1)
-                    -- Add behavior to map.
-                    (Map.insert v (unsafeCoerce b) bd)
+                    -- Add behavior(Ix) to map.
+                    (Map.insert v (Gate'   (GateB b))       gates  )
+                    (Map.insert v (GateIx' (GateIxB behIx)) gateIxs)
                     -- Add eges and behavior.
-                    (((v,) <$> behDepVerts b) ++ es)
-                    (GateIx' (GateIxB behIx) : allGates)
-                    ls
+                    (((v,) <$> behDepVerts b) ++ edges)
+                    listeners
             return (BIx (owners b) behIx)
 
 -- | Takes any Event node and broadcasts it into a (EIx eix) constructor Event.
-evt :: NodeC (MomentNode mt)
+evt :: forall node a mt . (node ~ MomentNode mt, NodeC (MomentNode mt))
     => Event node a -> Moment mt (Event node a)
 evt = \e -> case e of
     EIx _ _
@@ -405,22 +430,22 @@ evt = \e -> case e of
         -> newEvt =<< SendE pFrom pTos <$> evt e2
     where
         -- New EIx flavour of Event from a non-EIx Event that only references other EIx flavoured events.
-        newEvt :: Event os a -> Moment mt (Event os a)
+        newEvt :: Event node a -> Moment mt (Event node a)
         newEvt e = do
-            MomentState v bd es allGates ls <- get
+            MomentState v gates gateIxs es ls <- get
             let evtIx = EventIx v
             put $ MomentState
                     -- Increment vertex index.
                     (v+1)
                     -- Add event to map.
-                    (Map.insert v (unsafeCoerce e) bd)
+                    (Map.insert v (Gate'   (GateE e))       gates  )
+                    (Map.insert v (GateIx' (GateIxE evtIx)) gateIxs)
                     -- Add eges and event.
                     (((v,) <$> evtDepVerts e) ++ es)
-                    (GateIx' (GateIxE evtIx) : allGates)
                     ls
             return (EIx (owners e) evtIx)
 
-newSourceEvent :: NodeC (MomentNode mt)
+newSourceEvent :: (node ~ MomentNode mt, NodeC (MomentNode mt))
     => node
     -> Moment mt (SourceEvent node a, Event node a)
 newSourceEvent myNode = do
@@ -478,12 +503,12 @@ listenB node b listener
 
 buildCircuit :: Moment mt out -> (Circuit (MomentNode mt), [Listener mt], out)
 buildCircuit builder
-    = ( Circuit graph behDyn allBehs
+    = ( Circuit graph (Graph.transposeG graph) gates gateIxs
       , ls
       , out
       )
     where
-        (out, MomentState nextVIx behDyn edges allBehs ls) = runState builder (MomentState 0 Map.empty [] [] [])
+        (out, MomentState nextVIx gates gateIxs edges ls) = runState builder (MomentState 0 Map.empty Map.empty [] [])
         graph = Graph.buildG (0, nextVIx - 1) edges
 
 data UpdateWay
@@ -638,14 +663,48 @@ actuate ctx
                     SendE {} -> error "TODO support sending events" -- Just $ OnEvent bix False _doSend
                     _ -> Nothing
                 )
-            $ circAllGates circuit
+            $ Map.elems (circGateIxs circuit)
+
+        -- | We want to keep lBehMaxT as high as possible, but it is equal to the minimum of the maxTs of the input gates.
+        -- Hence, when we receive an updated for a behavior, we need to pull from all the other inputs in order to
+        -- increase maxT and make use of the latest update. Else we may get "stuck" waiting for an update of input behaviors (that may not come unless
+        -- the nodes that own the input gates send an update).
+        myResponsabilitiesPull :: [(GateIx', [GateIx'])]
+                                    -- ^ (gate, input gates)
+                                    -- When this gate is updated request an update
+                                    -- from all input gate nodes (to increate maxT of all inputs for the gate).
+        myResponsabilitiesPull
+            = mapMaybe (\(GateIx' g) -> case g of
+                GateIxB bix -> let
+                    behInputs = parents circuit bix
+                    in _
+                    --     case circBeh circuit bix of
+                    -- SendB fromNode toNodes _bix
+                    --     | fromNode == myNode
+                    --     -> Just $ OnPossibleChange myNode bix False
+                    --         (\ _ bixUpdates -> let
+                    --             toNodes' = filter (/= myNode) $ case toNodes of
+                    --                 All     -> Map.keys channels
+                    --                 Some ns -> ns
+                    --             in forM_ toNodes' $ \ toNode -> let
+                    --                     sendChan = fst (channels Map.! toNode)
+                    --                     in do
+                    --                         putLog "Sending updates"
+                    --                         writeChan sendChan [UpdateListB bix bixUpdates]
+                    --         )
+                    -- _ -> Nothing
+                GateIxE eix -> case circEvt circuit eix of
+                    SendE {} -> error "TODO support sending events" -- Just $ OnEvent bix False _doSend
+                    _ -> Nothing
+                )
+            $ Map.elems (circGateIxs circuit)
 
         -- My node's responsabilities
         responsabilities :: [Responsibility node ctx]
         responsabilities = myResponsabilitiesMessage ++ myResponsabilitiesListeners
 
     putLog $ show myResponsabilitiesListeners ++ " my listener responsabilities"
-    putLog $ show (length $ circAllGates circuit) ++ " gates"
+    putLog $ show (length $ circGateIxs circuit) ++ " gates"
     putLog $ show myResponsabilitiesMessage ++ " my message responsabilities"
 
     -- A single change to compile all local inputs and messages from other nodes.
@@ -740,7 +799,7 @@ mkLiveCircuit myNode c = (lc, initialUpdatesOwnedBeh ++ initialUpdatesDerived)
                         SendB _ _ _    -> Nothing
                 _ -> Nothing
             )
-            (circAllGates c)
+            (Map.elems (circGateIxs c))
 
 -- Transactionally update the circuit. Returns (_, changed behaviors/events (lcBehMaxT has increased))
 lcTransaction :: forall node
@@ -776,7 +835,7 @@ lcTransaction lc ups = lint (lc', changes)
                         (GateIxB bix) -> go bix (flip lcBehMaxT bix) (lcBehChanges lc' bix) UpdateListB
                         (GateIxE eix) -> go eix (flip lcEvtMaxT eix) (lcEvents     lc' eix) UpdateListE
                 )
-            $ circAllGates c
+            $ Map.elems (circGateIxs c)
 
         lint
             -- Not quite true: initial values of step behaviors means you get an initial update
@@ -933,7 +992,7 @@ lintLiveCircuit = id -- TODO
 -- accumE a0 accE = withDelay a0 $ \ prevValB
 --     -> Step a0 (Sample (\ _time prevVal acc -> acc prevVal) prevValB accE)
 
-withDelay :: (NodeC (MomentNode mt))
+withDelay :: (node ~ MomentNode mt, NodeC (MomentNode mt))
           => a -> (Behavior node a -> Moment mt (Behavior node a, r)) -> Moment mt r
 withDelay a0 withDelayF = mdo
     bD <- beh $ Delay (owners b) a0 b
