@@ -280,35 +280,36 @@ circEvt c ix = unsafeCoerce $ case circGates c Map.! eixVert ix of
                 Gate' (GateE e) -> unsafeCoerce e
                 _ -> error "Expected GateE but got GateB"
 
+data GateRep time a = GateRep
+    { grepMaxT :: time              -- ^ In a live circuit, grepChanges is committed up to this time.
+    , grepChanges :: [(time, a)]    -- ^ Value changes in reverse chronolgical order. All times are <= grepMaxT.
+    } deriving Show
+
 data LiveCircuit node = LiveCircuit
     { lcCircuit :: Circuit node
-    , lcBehChanges  :: forall a  .
-                    BehaviorIx a -> [(BehTime, a)]
-                    -- ^ ( Is delayed
-                    --   , Value of a behavior at a time. Time must be <= lcBehMaxT else Nothing).
-    , lcEvents      :: forall a .
-                    EventIx a -> [(Time, a)]
-                    -- ^ Complete events up to lcGateMaxT time in reverse chronological order.
-    , lcNode        :: node
-                    -- ^ What node the circuit is running on.
+    , lcBehs :: forall a . BehaviorIx a -> GateRep BehTime a
+    , lcEvts :: forall a . EventIx    a -> GateRep Time    a
+    , lcNode :: node
+             -- ^ What node the circuit is running on.
     }
 
+lcBehChanges  :: LiveCircuit node -> BehaviorIx a -> [(BehTime, a)]
+lcBehChanges circuit = grepChanges . lcBehs circuit
 
-lcGateMaxT :: NodeC node
-           => LiveCircuit node -> GateIx a -> BehTime
-lcGateMaxT lc (GateIxB b) = headDef (Exactly (-1)) (          fst <$> lcBehChanges lc b)
-lcGateMaxT lc (GateIxE e) = headDef (Exactly (-1)) (Exactly . fst <$> lcEvents     lc e)
+lcEvents      :: LiveCircuit node -> EventIx a -> [(Time, a)]
+lcEvents     circuit = grepChanges . lcEvts circuit
 
-lcBehMaxT :: NodeC node
-           => LiveCircuit node -> BehaviorIx a -> BehTime
-lcBehMaxT lc bix = headDef (Exactly (-1)) (fst <$> lcBehChanges lc bix)
+lcGateMaxT :: NodeC node => LiveCircuit node -> GateIx a -> BehTime
+lcGateMaxT lc (GateIxB b) = lcBehMaxT lc b
+lcGateMaxT lc (GateIxE e) = Exactly $ lcEvtMaxT lc e
 
-lcEvtMaxT :: NodeC node
-           => LiveCircuit node -> EventIx a -> Time
-lcEvtMaxT lc eix = headDef (-1) (fst <$> lcEvents lc eix)
+lcBehMaxT :: NodeC node => LiveCircuit node -> BehaviorIx a -> BehTime
+lcBehMaxT lc bix = grepMaxT $ lcBehs lc bix
 
-lcBehVal :: NodeC node
-         => LiveCircuit node -> BehTime -> BehaviorIx a -> a
+lcEvtMaxT :: NodeC node => LiveCircuit node -> EventIx a -> Time
+lcEvtMaxT lc eix = grepMaxT $ lcEvts lc eix
+
+lcBehVal :: NodeC node => LiveCircuit node -> BehTime -> BehaviorIx a -> a
 lcBehVal lc t bix
     | t > maxT  = err
     | otherwise = maybe err snd (find ((<=t) . fst) cs)
@@ -779,10 +780,12 @@ mkLiveCircuit :: NodeC node
 mkLiveCircuit myNode c = (lc, initialUpdatesOwnedBeh ++ initialUpdatesDerived)
     where
         (lc, initialUpdatesDerived) = lcTransaction LiveCircuit
-            { lcCircuit     = c
-            , lcBehChanges  = const []
-            , lcEvents      = const []
-            , lcNode        = myNode
+            { lcCircuit = c
+            -- , lcBehChanges  = const []
+            , lcBehs = const $ GateRep (Exactly (-1)) []
+            -- , lcEvents      = const []
+            , lcEvts = const $ GateRep (-1) []
+            , lcNode = myNode
             } initialUpdatesOwnedBeh
 
         initialUpdatesOwnedBeh = mapMaybe
@@ -811,8 +814,12 @@ lcTransaction lc ups = lint (lc', changes)
         lc' = lintLiveCircuit LiveCircuit
                 { lcNode        = myNode
                 , lcCircuit     = c
-                , lcBehChanges  = lcBehChanges'
-                , lcEvents      = lcEvents'
+                , lcBehs        = \ bix -> GateRep
+                                            (headDef (Exactly (-1)) (fst <$> lcBehChanges' bix))
+                                            (lcBehChanges' bix)
+                , lcEvts        = \ eix -> GateRep
+                                            (headDef (-1) (fst <$> lcEvents' eix))
+                                            (lcEvents' eix)
                 }
 
         changes
