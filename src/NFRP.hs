@@ -865,9 +865,9 @@ lcTransaction lc ups = lint (lc', changes)
                     ( Just (GateRep maxT  _)
                      ,Just (GateRep maxT' updates') )
                         -> let newUpdates = takeWhile ((> maxT) . fst) updates'
-                            in if null newUpdates
-                                then Nothing
-                                else Just $ mkUpdateList ix maxT' newUpdates
+                            in if maxT < maxT'
+                                then Just $ mkUpdateList ix maxT' newUpdates
+                                else Nothing
                     (Just _, Nothing) -> error "Impossible! Somehow we lost all info about a gate."
                 in
                     case gix of
