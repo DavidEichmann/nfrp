@@ -9,11 +9,6 @@ TODO
 
     4. [ ] Make sure to request initial values of behaviors!
 
-    Also you'll need to make explicit that actually maxT is some "top" for source
-    events and possibly derivitives. This means that if an update is requested, we can
-    use the current local clock time for such gates (as opposed to what happens currently
-    which is maxT is just the time of the latest event occurence).
-
 2. [X] Listeners are getting invalid value? as in the case above:
     -- c { a = 0@00, b=0@0, c=0@0 }
     -- a = 1 (t = 10)

@@ -14,7 +14,8 @@ extra-source-files:
 
 library
     exposed-modules:
-          HMap
+          Actuate
+        , HMap
         , NFRP
         , Simulate
     other-modules:
