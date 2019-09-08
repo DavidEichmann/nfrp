@@ -101,6 +101,8 @@ then there is no way to delay events.
 
 -}
 
+heartbeatFeq :: Int
+heartbeatFeq = 1 -- per second
 
 -- Some common constraint type families
 type family NodeC node :: Constraint where
@@ -226,7 +228,7 @@ instance Eq node => Applicative (Behavior node) where
 instance Functor (Event node) where
     fmap f b = MapE (owners b) f b
 
--- data EventIx' = forall (a :: Type) . (Typeable a) => EventIx' (EventIx a)
+data EventIx' = forall a . EventIx' (EventIx a)
 newtype EventIx (a :: Type) = EventIx { eixVert :: Graph.Vertex }
         deriving (Show, Eq, Ord)
 data Event node a where
@@ -613,6 +615,11 @@ injectEvent (EventInjector nA injector) se@(SourceEvent nB _)
                         ++ show nB ++ "\""
     | otherwise  = injector se
 
+data InChanData
+    = InChan_Heartbeat
+    | forall a . InChan_LocalUpdate (EventIx a) a
+    | InChan_RemoteUpdate [UpdateList]
+
 actuate :: forall node ctx mkCircuitOut
         .  (NodeC node)
         => ctx
@@ -696,41 +703,14 @@ actuate ctx
                 )
             $ Map.elems (circGateIxs circuit)
 
-            {-
-        -- | We want to keep lBehMaxT as high as possible, but it is equal to the minimum of the maxTs of the input gates.
-        -- Hence, when we receive an updated for a behavior, we need to pull from all the other inputs in order to
-        -- increase maxT and make use of the latest update. Else we may get "stuck" waiting for an update of input behaviors (that may not come unless
-        -- the nodes that own the input gates send an update).
-        myResponsabilitiesPull :: [(GateIx', [GateIx'])]
-                                    -- ^ (gate, input gates)
-                                    -- When this gate is updated request an update
-                                    -- from all input gate nodes (to increate maxT of all inputs for the gate).
-        myResponsabilitiesPull
-            = mapMaybe (\(GateIx' g) -> case g of
-                GateIxB bix -> let
-                    behInputs = parents circuit bix
-                    in _
-                    --     case circBeh circuit bix of
-                    -- SendB fromNode toNodes _bix
-                    --     | fromNode == myNode
-                    --     -> Just $ OnPossibleChange myNode bix False
-                    --         (\ _ bixUpdates -> let
-                    --             toNodes' = filter (/= myNode) $ case toNodes of
-                    --                 All     -> Map.keys channels
-                    --                 Some ns -> ns
-                    --             in forM_ toNodes' $ \ toNode -> let
-                    --                     sendChan = fst (channels Map.! toNode)
-                    --                     in do
-                    --                         putLog "Sending updates"
-                    --                         writeChan sendChan [UpdateListB bix bixUpdates]
-                    --         )
-                    -- _ -> Nothing
-                GateIxE eix -> case circEvt circuit eix of
-                    SendE {} -> error "TODO support sending events" -- Just $ OnEvent bix False _doSend
-                    _ -> Nothing
+        allSourceEvts :: [EventIx']
+        allSourceEvts
+            -- Find all Send gates.
+            = mapMaybe (\gateIx'@(GateIx' g) -> case g of
+                GateIxB bix -> Nothing
+                GateIxE eix -> Just (EventIx' eix)
                 )
             $ Map.elems (circGateIxs circuit)
-            -}
 
         -- My node's responsabilities
         responsabilities :: [Responsibility node ctx]
@@ -741,21 +721,32 @@ actuate ctx
     putLog $ show myResponsabilitiesMessage ++ " my message responsabilities"
 
     -- A single change to compile all local inputs and messages from other nodes.
-    inChan :: Chan [UpdateList] <- newChan
+    inChan :: Chan InChanData <- newChan
 
     -- Listen for local inputs (time is assigned here)
     let injectInput :: EventInjector node
         injectInput = EventInjector myNode $ \ (SourceEvent myNodeSE eix) valA -> do
             when (myNode /= myNodeSE) (error $ "EventInjector and SourceEvent have different nodes: "
                                             ++ show myNode ++ " and " ++ show myNodeSE)
-            time <- getTime
-            writeChan inChan [UpdateListE eix time [(time, valA)]]
+            writeChan inChan (InChan_LocalUpdate eix valA)
 
     -- Listen for messages from other nodes.
     _asRcv <- forM (Map.assocs channels) $ \(_otherNode, (_, recvChan)) -> forkIO
         . readUntillStop recvChan $ \ recvVal -> do
-            writeChan inChan recvVal
+            writeChan inChan (InChan_RemoteUpdate recvVal)
             putLog "received input"
+
+    -- Heartbeat
+    _aHrtbt <- let loop = do
+                        e <- race
+                                readStop
+                                (threadDelay (1000000 `div` heartbeatFeq))
+                        case e of
+                            Left () -> return ()
+                            Right _ -> do
+                                writeChan inChan InChan_Heartbeat
+                                loop
+                    in forkIO loop
 
     -- Thread that just processes inChan, keeps track of the whole circuit and
     -- decides what listeners to execute (sending them to listenersChan/msgChan).
@@ -764,9 +755,19 @@ actuate ctx
     writeChan changesChan initialUpdates
     _aLiveCircuit <- do
         liveCircuitRef <- newIORef circuit0
-        forkIO . readUntillStop inChan $ \ updates -> do
+        forkIO . readUntillStop inChan $ \ inChanData -> do
             -- Update state: Calculate for each behavior what is known and up to what time
             oldLiveCircuit <- readIORef liveCircuitRef
+            updates <- case inChanData of
+                InChan_RemoteUpdate ups -> return ups
+                InChan_LocalUpdate eix valA -> do
+                    time <- getTime
+                    return [UpdateListE eix time [(time, valA)]]
+                InChan_Heartbeat -> do
+                    time <- getTime
+                    return $ map
+                        (\ (EventIx' eix) -> UpdateListE eix time [])
+                        allSourceEvts
             putLog $ "Got inChan updates for " ++ show updates
             let (newLiveCircuit, changes) = lcTransaction oldLiveCircuit updates
             putLog $ "Changes from lcTransaction: " ++ show changes
