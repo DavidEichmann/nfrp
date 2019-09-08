@@ -47,7 +47,6 @@ module NFRP
     -- , accumB
     -- , accumE
 
-    , module Actuate
     , module TypeLevelStuff
     , UpdateList
     , Moment
@@ -84,7 +83,6 @@ import Control.Concurrent.Async
 import Debug.Trace
 import Control.Exception.Base (assert)
 
-import Actuate
 import TypeLevelStuff
 
 {-
@@ -665,6 +663,7 @@ actuate ctx
                 )
             $ Map.elems (circGateIxs circuit)
 
+            {-
         -- | We want to keep lBehMaxT as high as possible, but it is equal to the minimum of the maxTs of the input gates.
         -- Hence, when we receive an updated for a behavior, we need to pull from all the other inputs in order to
         -- increase maxT and make use of the latest update. Else we may get "stuck" waiting for an update of input behaviors (that may not come unless
@@ -698,6 +697,7 @@ actuate ctx
                     _ -> Nothing
                 )
             $ Map.elems (circGateIxs circuit)
+            -}
 
         -- My node's responsabilities
         responsabilities :: [Responsibility node ctx]
