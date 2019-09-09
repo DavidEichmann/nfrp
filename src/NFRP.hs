@@ -673,9 +673,10 @@ actuate ctx
                                 myNode
                                 bix
                                 True
-                                (\ctx' maxT ups -> let
-                                    (_updateTime, val) = head ups
-                                    in handler ctx' val maxT)
+                                (\ctx' maxT ups -> case ups of
+                                    (_updateTime, val) : _ -> handler ctx' val maxT
+                                    [] -> return () -- maxT has increased, but the value has not changed
+                                    )
                 _   -> Nothing)
             $ listeners
 
@@ -871,7 +872,7 @@ lcTransaction lc ups = lint (lc', changes)
                     (Just _, Nothing) -> error "Impossible! Somehow we lost all info about a gate."
                 in
                     case gix of
-                        (GateIxB bix) -> go bix (flip lcBehs bix)    UpdateListB
+                        (GateIxB bix) -> go bix (flip lcBehs bix) UpdateListB
                         (GateIxE eix) -> go eix (flip lcEvts eix) UpdateListE
                 )
             $ Map.elems (circGateIxs c)
@@ -952,7 +953,7 @@ lcTransaction lc ups = lint (lc', changes)
                         return $ GateRep maxT' updates'
             where
                 b = circBeh c bix
-                fromUpdatesList = findBehUpdates bix <> lcBehs lc bix
+                fromUpdatesList = updateGateRep (findBehUpdates bix) (lcBehs lc bix)
 
                 delayBehRep :: a -> GateRep BehTime a -> GateRep BehTime a
                 delayBehRep a0 (GateRep maxT updates) = GateRep (delayBehTime maxT) (delayBehChanges a0 updates)
@@ -1030,30 +1031,38 @@ lcTransaction lc ups = lint (lc', changes)
 
             where
                 e = circEvt c eix
-                fromUpdatesList = findEvtUpdates eix <> lcEvts lc eix
+                fromUpdatesList = updateGateRep (findEvtUpdates eix) (lcEvts lc eix)
 
-        findGateUpdates :: (UpdateList -> Maybe (GateRep t a)) -> Maybe (GateRep t a)
+
+
+        updateGateRep :: Maybe (t, [(t, a)]) -> Maybe (GateRep t a) -> Maybe (GateRep t a)
+        updateGateRep Nothing Nothing = Nothing
+        updateGateRep Nothing x = x
+        updateGateRep (Just (maxT, us)) Nothing
+            = Just $ GateRep maxT us
+        updateGateRep (Just (maxT', us')) (Just (GateRep _maxT us))
+            = Just $ GateRep maxT' (us' ++ us)
+
+        findGateUpdates :: (UpdateList -> Maybe (t, [(t, a)])) -> Maybe (t, [(t, a)]) -- ^ Maybe (maxT, updates maybe nul)
         findGateUpdates changesMay = case mapMaybe changesMay ups of
             [] -> Nothing
             [x] -> Just x
             _ -> error "Currently don't support multiple update lists on the same gate."
 
-        findEvtUpdates :: EventIx a -> Maybe (GateRep Time a)
+        findEvtUpdates :: EventIx a -> Maybe (Time, [(Time, a)])
         findEvtUpdates eix = findGateUpdates changesMay
             where
                 changesMay (UpdateListB (BehaviorIx _v :: BehaviorIx va) _maxT _vChanges) = Nothing
                 changesMay (UpdateListE (EventIx    v  :: EventIx   va) maxT vEvents)
-                    | v == eixVert eix  = let updates = unsafeCoerce vEvents
-                                            in if null updates then Nothing else Just $ GateRep maxT updates
+                    | v == eixVert eix  = Just (maxT, unsafeCoerce vEvents)
                     | otherwise = Nothing
 
-        findBehUpdates :: BehaviorIx a -> Maybe (GateRep BehTime a)
+        findBehUpdates :: BehaviorIx a -> Maybe (BehTime, [(BehTime, a)])
         findBehUpdates bix = findGateUpdates changesMay
             where
                 changesMay (UpdateListE (EventIx    _v  :: EventIx   va) _maxT _vEvents) = Nothing
                 changesMay (UpdateListB (BehaviorIx v :: BehaviorIx va) maxT vChanges)
-                    | v == bixVert bix  = let updates = unsafeCoerce vChanges
-                                            in if null updates then Nothing else Just $ GateRep maxT updates
+                    | v == bixVert bix  = Just (maxT, unsafeCoerce vChanges)
                     | otherwise = Nothing
 
 -- Asserting on LiveCircuitls
