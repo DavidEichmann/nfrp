@@ -107,7 +107,7 @@ playerGUI :: (Eq node, Show node)
           -> EventInjector node
           -> IO Time
           -> IO ()
-playerGUI windowPos (Ctx pPosIORef bPosIORef) inputDirSourceE injector getTime = playIO
+playerGUI windowPos (Ctx pPosIORef bPosIORef) inputDirSourceE injector _getTime = playIO
     (InWindow "NFRP Demo" (500, 500) windowPos)
     black
     60

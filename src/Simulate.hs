@@ -17,11 +17,13 @@ module Simulate where
 
 import Data.Kind
 import Data.Map (Map, fromList, (!), empty, insert)
-import NFRP
 
 import Control.Monad (foldM)
 import Data.Time.Clock (NominalDiffTime, getCurrentTime, diffUTCTime)
 import Control.Concurrent (Chan, newChan)
+
+import NFRP
+import LiveCircuit
 
 data NodeCtx mt where
   NodeCtx :: MomentNode mt

@@ -14,9 +14,13 @@ extra-source-files:
 
 library
     exposed-modules:
-          HMap
+          Circuit
+        , GateRep
+        , HMap
+        , LiveCircuit
         , NFRP
         , Simulate
+        , Time
     other-modules:
         TypeLevelStuff
     hs-source-dirs: src

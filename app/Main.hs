@@ -20,7 +20,6 @@ import NFRP
 import Simulate
 
 import Data.Map as Map
-import Data.IORef
 import Control.Monad.IO.Class
 -- import Control.Concurrent (threadDelay, forkIO)
 
