@@ -37,8 +37,8 @@ data LiveCircuit node = LiveCircuit
 
     -- These are Nothing if no data is available.
     -- If Just, knowlage is complete from time=0. I.e. minT=0.
-    , lcBehs :: forall a . BehaviorIx a -> Maybe (GateRep TimeDI a)
-    , lcEvts :: forall a . EventIx    a -> Maybe (GateRep Time    a)
+    , lcBehs :: forall a . BehaviorIx a -> Maybe (BMap a)
+    , lcEvts :: forall a . EventIx    a -> Maybe (EMap a)
 
     , lcNode :: node
              -- ^ What node the circuit is running on.
@@ -61,18 +61,12 @@ lcEvtMaxT :: NodeC node => LiveCircuit node -> EventIx a -> Maybe TimeDI
 lcEvtMaxT lc eix = grepMaxT <$> lcEvts lc eix
 
 lcBehVal :: NodeC node => LiveCircuit node -> TimeDI -> BehaviorIx a -> a
-lcBehVal lc t bix = case lcBehs lc bix of
-    Nothing -> error $ "Trying to access behavior value at time " ++ show t
-                    ++ " but no values are known for the behavior"
-    Just (GateRep maxT cs _minT) -> if t > maxT
-        then error $ "Trying to access behavior value at time " ++ show t
-                    ++ " but MaxT=" ++ show maxT
-        else maybe
-                (error $
-                    "Trying to access behavior value at time " ++ show t
-                    ++ " but only know for time range: " ++ show (maxT, fst <$> cs))
-                snd
-                (find ((<=t) . fst) cs)
+lcBehVal lc t bix = let
+    bmap = fromMaybe
+            (error $ "Trying to access behavior value at time " ++ show t
+                    ++ " but no values are known for the behavior")
+            (lcBehs lc bix)
+    in lookupBMapErr "in lcBehVal" t bmap
 
 data UpdateWay
     = LocalUpdate    -- ^ updated directly by a local update event (local event)
@@ -167,26 +161,36 @@ lcTransaction lc ups = lint (lc', changes)
         changes :: [UpdateList]
         changes
             = mapMaybe (\(GateIx' gix) -> let
-                go :: Ord t
+                go :: (GateMap gmap,  Ord t)
                     => gix
-                    -> (LiveCircuit node -> Maybe (GateRep t a))
-                    -> (gix -> TimeDI -> [(t, a)] -> TimeD -> UpdateList)
-                    -> (t -> TimeDI)
+                    -> (LiveCircuit node -> Maybe (gmap a))
+                    -> (gix -> gmap a -> UpdateList)
                     -> Maybe UpdateList
-                go ix lcGate mkUpdateList tToDI = case (lcGate lc, lcGate lc') of
+                go ix lcGate mkUpdateList = case (lcGate lc, lcGate lc') of
                     (Nothing, Nothing)
                         -> Nothing
-                    (Nothing, Just (GateRep maxT' updates' minT))
-                        -> Just $ mkUpdateList ix maxT' updates' minT
-                    ( Just (GateRep maxT  _         _minT)
-                     ,Just (GateRep maxT'  updates' _minT') )
-                        -> if maxT < maxT'
-                            then Just $ mkUpdateList
-                                            ix
-                                            maxT'
-                                            (takeWhile ((> maxT) . tToDI . fst) updates')
-                                            (toTimeErr "Unexpected DI_Inf for event maxT" maxT)
-                            else Nothing
+                    (Nothing, Just gmap)
+                        -> Just $ mkUpdateList ix gmap
+                    ( Just gmap, Just gmap' )
+                        -> let  -- This is the difference of the old and new. it assumes that
+                                -- the new is just the old with some chronologially newer info.
+                                -- TODO do we ever need to support the case that information "from
+                                -- the past" is gained?
+                                diffIsh = if maxT < maxT'
+                                            then Nothing
+                                            else Just (takeFrom (delayTime maxT) gmap)
+                                                    -- ^ TODO the inability to
+                                                    -- delay an already delayed
+                                                    -- time may cause issue
+                                                    -- here: we may end up
+                                                    -- returning the old latest
+                                                    -- value even if it was
+                                                    -- already detected as
+                                                    -- change in a previous
+                                                    -- iteration.
+                                maxT  = gateMaxT gmap
+                                maxT' = gateMaxT gmap'
+                            in mkUpdateList ix <$> diffIsh
                     (Just _, Nothing) -> error "Impossible! Somehow we lost all info about a gate."
                 in
                     case gix of
@@ -195,12 +199,12 @@ lcTransaction lc ups = lint (lc', changes)
                 )
             $ Map.elems (circGateIxs c)
 
-        lintBehRep :: Maybe (GateRep TimeDI a) -> Maybe (GateRep TimeDI a)
+        lintBehRep :: Maybe (BMap a) -> Maybe (BMap a)
         lintBehRep  Nothing = Nothing
-        lintBehRep (Just br@(GateRep maxT cs minT))
+        lintBehRep (Just bmap)
             = assert (not (
-                null cs &&
-                maxT >= toTime minT
+                gateNull bmap &&
+                gateMaxT bmap >= toTime minT
                 )) (Just br)
 
         lint
@@ -244,7 +248,7 @@ lcTransaction lc ups = lint (lc', changes)
         -- have missed.
 
         -- TODO/NOTE this is super inefficient
-        lcBehs' :: BehaviorIx a -> Maybe (GateRep TimeDI a)
+        lcBehs' :: BehaviorIx a -> Maybe (BMap a)
         lcBehs' bix = lintBehRep $ case updateWay myNode b of
             NoUpdate       -> Nothing
             LocalUpdate    -> fromUpdatesList
@@ -361,13 +365,13 @@ lcTransaction lc ups = lint (lc', changes)
                 e = circEvt c eix
                 fromUpdatesList = findEvtUpdates eix <> lcEvts lc eix
 
-        findGateUpdates :: (UpdateList -> Maybe (GateRep t a)) -> Maybe (GateRep t a) -- ^ Maybe (maxT, updates maybe nul)
+        findGateUpdates :: (UpdateList -> Maybe x) -> Maybe x -- ^ Maybe (maxT, updates maybe nul)
         findGateUpdates changesMay = case mapMaybe changesMay ups of
             [] -> Nothing
             [x] -> Just x
             _ -> error "Currently don't support multiple update lists on the same gate."
 
-        findEvtUpdates :: EventIx a -> Maybe (GateRep Time a)
+        findEvtUpdates :: EventIx a -> Maybe (EMap a)
         findEvtUpdates eix = findGateUpdates changesMay
             where
                 changesMay (UpdateListB (BehaviorIx _v :: BehaviorIx va) _maxT _vChanges _minT) = Nothing
@@ -375,7 +379,7 @@ lcTransaction lc ups = lint (lc', changes)
                     | v == eixVert eix  = Just (GateRep maxT (unsafeCoerce vEvents) minT)
                     | otherwise = Nothing
 
-        findBehUpdates :: BehaviorIx a -> Maybe (GateRep TimeDI a)
+        findBehUpdates :: BehaviorIx a -> Maybe (BMap a)
         findBehUpdates bix = findGateUpdates changesMay
             where
                 changesMay (UpdateListE (EventIx    _v  :: EventIx   va) _maxT _vEvents _minT) = Nothing
@@ -389,8 +393,8 @@ lintLiveCircuit = id -- TODO
 
 -- | Index, max time incl., changes, min time incl.
 data UpdateList
-    = forall a . UpdateListB (BehaviorIx a) TimeDI [(TimeDI, a)] TimeD
-    | forall a . UpdateListE (EventIx    a) TimeDI [(Time,   a)] TimeD
+    = forall a . UpdateListB (BehaviorIx a) (BMap a)
+    | forall a . UpdateListE (EventIx    a) (EMap a)
 
 instance Show UpdateList where
     show ul = "UpdateList (" ++ case ul of
