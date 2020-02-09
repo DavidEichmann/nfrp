@@ -73,7 +73,7 @@ data Responsibility node ctx
             node    -- ^ Which node's responsibility is this.
             (BehaviorIx a)
             Bool    -- ^ Is it a local listerner? As opposed to sending a msg to another node.
-            (ctx -> BehTime -> [(BehTime, a)] -> IO ())
+            (ctx -> TimeDI -> [(TimeDI, a)] -> TimeD -> IO ())
     -- TODO Event based responsibility
 
 instance Show node => Show (Responsibility node localCtx) where
@@ -144,7 +144,7 @@ actuate ctx
                                 myNode
                                 bix
                                 True
-                                (\ctx' maxT ups -> case ups of
+                                (\ctx' maxT ups _minT -> case ups of
                                     (_updateTime, val) : _ -> handler ctx' val maxT
                                     [] -> return () -- maxT has increased, but the value has not changed
                                     )
@@ -158,7 +158,7 @@ actuate ctx
                     SendB fromNode toNodes _bix
                         | fromNode == myNode
                         -> Just $ OnPossibleChange myNode bix False
-                            (\ _ maxT bixUpdates -> let
+                            (\ _ maxT bixUpdates minT -> let
                                 toNodes' = filter (/= myNode) $ case toNodes of
                                     All     -> Map.keys channels
                                     Some ns -> ns
@@ -166,7 +166,7 @@ actuate ctx
                                         sendChan = fst (channels Map.! toNode)
                                         in do
                                             putLog "Sending updates"
-                                            writeChan sendChan [UpdateListB bix maxT bixUpdates]
+                                            writeChan sendChan [UpdateListB bix maxT bixUpdates minT]
                             )
                     _ -> Nothing
                 GateIxE eix -> case circEvt circuit eix of
@@ -220,7 +220,7 @@ actuate ctx
                     in forkIO loop
 
     -- Thread that just processes inChan, keeps track of the whole circuit and
-    -- decides what listeners to execute (sending them to listenersChan/msgChan).
+    -- decides what listeners to execute (sending them to changesChan).
     let (circuit0, initialUpdates) = mkLiveCircuit myNode circuit :: (LiveCircuit node, [UpdateList])
     changesChan :: Chan [UpdateList] <- newChan
     writeChan changesChan initialUpdates
@@ -229,15 +229,26 @@ actuate ctx
         forkIO . readUntillStop inChan $ \ inChanData -> do
             -- Update state: Calculate for each behavior what is known and up to what time
             oldLiveCircuit <- readIORef liveCircuitRef
+            let eixMinT :: _
+                eixMinT eix = case lcEvtMaxT oldLiveCircuit eix of
+                                Just (DI_JustAfter _)
+                                    -> error $ "Live circuit has an event maxT of \"DI_JustAfter\"."
+                                            ++ " This should not happen as we do not allow delaying events."
+                                Just DI_Inf
+                                    -> error "Got an event update even though maxT is already infinity"
+                                -- No data yet. This is the first event update so minT is 0
+                                Nothing -> D_Exactly 0
+                                -- We have data up to time t, so
+                                Just (DI_Exactly t) -> D_JustAfter t
             updates <- case inChanData of
                 InChan_RemoteUpdate ups -> return ups
                 InChan_LocalUpdate eix valA -> do
                     time <- getTime
-                    return [UpdateListE eix time [(time, valA)]]
+                    return [UpdateListE eix (toTime time) [(toTime time, valA)] (eixMinT eix)]
                 InChan_Heartbeat -> do
                     time <- getTime
                     return $ map
-                        (\ (EventIx' eix) -> UpdateListE eix time [])
+                        (\ (EventIx' eix) -> UpdateListE eix (toTime time) [] (eixMinT eix))
                         allSourceEvts
             putLog $ "Got inChan updates for " ++ show updates
             let (newLiveCircuit, changes) = lcTransaction oldLiveCircuit updates
@@ -254,14 +265,14 @@ actuate ctx
             \ (OnPossibleChange respNode bix isLocalListener action) ->
                 -- TODO double forM_ is inefficient... maybe index changes on BehaviorIx?
                 when (respNode == myNode) $ forM_ changes $ \ case
-                    UpdateListB bix' maxT updates
+                    UpdateListB bix' maxT updates minT
                         -- | Just Refl <- eqT @(BehaviorIx bixO bixA) @(BehaviorIx bixO' bixA')
                         | bixVert bix == bixVert bix'
                         -> do
                             putLog $ "Found listener for bix: " ++ show bix
                             writeChan
                                 (if isLocalListener then listenersChan else outMsgChan)
-                                (action ctx maxT (unsafeCoerce updates))
+                                (action ctx maxT (unsafeCoerce updates) minT)
                             putLog $ "Sent listener action for bix: " ++ show bix
 
                     -- Note we don't support Event listeners (yet).

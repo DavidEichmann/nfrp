@@ -194,7 +194,7 @@ data MomentState momentTypes = MomentState
 
 data Listener mt
     = forall a
-    . Listener (MomentNode mt) (BehaviorIx a) (MomentCtx mt -> a -> BehTime -> IO ())
+    . Listener (MomentNode mt) (BehaviorIx a) (MomentCtx mt -> a -> TimeDI -> IO ())
 
 data Owners node
     = All
@@ -378,7 +378,7 @@ evtDepVerts (SendE _ _ e)    = evtDepVerts e
 -- gateIxDeps c (GateIxE eix) = evtDeps $ circEvt c eix
 
 listenB :: (NodeC (MomentNode mt))
-        => (MomentNode mt) -> Behavior (MomentNode mt) a -> (MomentCtx mt -> a -> BehTime -> IO ()) -> Moment mt ()
+        => (MomentNode mt) -> Behavior (MomentNode mt) a -> (MomentCtx mt -> a -> TimeDI -> IO ()) -> Moment mt ()
 listenB node b listener
     | node `elemOwners` owners b = do
         BIx _ bix <- beh b

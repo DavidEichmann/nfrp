@@ -1,58 +1,149 @@
 {-# OPTIONS_GHC -Wno-unticked-promoted-constructors #-}
 {-# OPTIONS_GHC -Wno-partial-type-signatures #-}
 
-{-# LANGUAGE PartialTypeSignatures #-}
-{-# LANGUAGE UndecidableSuperClasses #-}
-{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE ExistentialQuantification #-}
-{-# LANGUAGE TypeInType #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE PartialTypeSignatures #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE TypeInType #-}
 {-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE UndecidableSuperClasses #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE GADTs #-}
 
 module Time
     ( Time
-    , BehTime (..)
-    , minTimeBehTime
-    , delayBehTime
+    , TimeD (..)
+    , TimeDI (..)
+
+    , ToTime (..)
+    , ToTimeErr (..)
+    , CompareTime (..)
+    , DelayTime (..)
+    , minTime
+
+    , (>.)
+    , (<.)
+    , (==.)
     ) where
 
+-- EQSimple time
 type Time = Integer -- TODO Int64? nanoseconds?
 
-data BehTime
-    = Exactly   { btTime :: Time }
-    | JustAfter { btTime :: Time }
-    | Inf
+-- | Time with possible delay.
+data TimeD
+    = D_Exactly Time
+    | D_JustAfter Time
     deriving (Show, Eq)
 
-minTimeBehTime :: Time -> BehTime -> Time
-minTimeBehTime t (Exactly bt)   = min bt t
--- TODO this is a bit inacurate. We may be off by an infinitesimal amount of time :-(
-minTimeBehTime t (JustAfter bt) = min bt t
-minTimeBehTime t Inf            = t
-
-delayBehTime :: BehTime -> BehTime
-delayBehTime (Exactly t)   = JustAfter t
-delayBehTime (JustAfter t) = JustAfter t
-delayBehTime Inf           = Inf
-
-instance Ord BehTime where
-    compare Inf Inf = EQ
-    compare Inf _ = GT
-    compare _ Inf = LT
-    compare a b = case btTime a `compare` btTime b of
+instance Ord TimeD where
+    compare (D_Exactly a) (D_Exactly b) = compare a b
+    compare (D_JustAfter a) (D_JustAfter b) = compare a b
+    compare (D_Exactly a) (D_JustAfter b) = case compare a b of
         LT -> LT
-        EQ -> case (a, b) of
-            (Exactly   _, Exactly   _) -> EQ
-            (JustAfter _, JustAfter _) -> EQ
-            (Exactly   _, JustAfter _) -> LT
-            (JustAfter _, Exactly   _) -> GT
-            (Inf, _) -> error "Impossible"
-            (_, Inf) -> error "Impossible"
+        EQ -> LT
         GT -> GT
+    compare (D_JustAfter a) (D_Exactly b) = case compare a b of
+        LT -> LT
+        EQ -> GT
+        GT -> GT
+
+-- | Time with possible delay and possibly infinity.
+data TimeDI
+    = DI_Exactly Time
+    | DI_JustAfter Time
+    | DI_Inf
+    deriving (Show, Eq)
+
+type family BigTime a b where
+    BigTime Time Time     = Time
+    BigTime Time TimeD    = TimeD
+    BigTime Time TimeDI   = TimeDI
+    BigTime TimeD Time    = TimeD
+    BigTime TimeD TimeD   = TimeD
+    BigTime TimeD TimeDI  = TimeDI
+    BigTime TimeDI Time   = TimeDI
+    BigTime TimeDI TimeD  = TimeDI
+    BigTime TimeDI TimeDI = TimeDI
+
+class ToTime a b where toTime :: a -> b
+instance ToTime Time   Time    where toTime = id
+instance ToTime TimeD  TimeD   where toTime = id
+instance ToTime TimeDI TimeDI  where toTime = id
+instance ToTime Time   TimeD   where
+    toTime = D_Exactly
+instance ToTime Time TimeDI where
+    toTime = DI_Exactly
+instance ToTime TimeD TimeDI where
+    toTime (D_Exactly   t) = DI_Exactly   t
+    toTime (D_JustAfter t) = DI_JustAfter t
+
+class ToTimeErr a b where toTimeErr :: String -> a -> b
+instance ToTimeErr TimeDI TimeD where
+    toTimeErr err dit = case dit of
+        DI_Exactly t -> D_Exactly t
+        DI_JustAfter t -> D_JustAfter t
+        DI_Inf -> error $ "toTimeErr: " ++ err
+
+
+(<.) :: CompareTime a b => a -> b -> Bool
+a <. b = LT == compareTime a b
+
+(>.) :: CompareTime a b => a -> b -> Bool
+a >. b = GT == compareTime a b
+
+(==.) :: CompareTime a b => a -> b -> Bool
+a ==. b = EQ == compareTime a b
+
+minTime :: (c ~ BigTime a b, ToTime a c, ToTime b c, Ord c) => a -> b -> c
+minTime a b = min (toTime a) (toTime b)
+
+class CompareTime a b where
+    compareTime :: a -> b -> Ordering
+    default compareTime :: CompareTime b a => a -> b -> Ordering
+    compareTime = flip compareTime
+
+instance CompareTime Time   Time   where compareTime = compare
+instance CompareTime TimeD  TimeD  where compareTime = compare
+instance CompareTime TimeDI TimeDI where compareTime = compare
+
+instance CompareTime Time   TimeD where compareTime = flip compareTimeFromConvert
+instance CompareTime TimeD  Time  where compareTime = compareTimeFromConvert
+
+compareTimeFromConvert :: (Ord a, ToTime b a) => a -> b -> Ordering
+compareTimeFromConvert a b = compare a (toTime b)
+
+instance Ord TimeDI where
+    compare DI_Inf DI_Inf = EQ
+    compare DI_Inf _ = GT
+    compare _ DI_Inf = LT
+    compare (DI_Exactly   a) (DI_Exactly   b) = compare a b
+    compare (DI_JustAfter a) (DI_JustAfter b) = compare a b
+    compare (DI_Exactly   a) (DI_JustAfter b) = case compare a b of
+        LT -> LT
+        EQ -> LT
+        GT -> GT
+    compare (DI_JustAfter a) (DI_Exactly   b) = case compare a b of
+        LT -> LT
+        EQ -> GT
+        GT -> GT
+
+class DelayTime t where
+    delayTime :: t -> t
+
+instance DelayTime TimeD where
+    delayTime (D_Exactly t)   = D_JustAfter t
+    -- NOTE that we apply the general assumption that 2 infinitesimals == 1 infinitesmal
+    delayTime (D_JustAfter t) = D_JustAfter t
+
+instance DelayTime TimeDI where
+    delayTime (DI_Exactly t)   = DI_JustAfter t
+    -- NOTE that we apply the general assumption that 2 infinitesimals == 1 infinitesmal
+    delayTime (DI_JustAfter t) = DI_JustAfter t
+    delayTime DI_Inf           = DI_Inf
