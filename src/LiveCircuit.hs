@@ -150,7 +150,7 @@ mkLiveCircuit myNode c = (lc, initialUpdatesOwnedBeh ++ initialUpdatesDerived)
             )
             (Map.elems (circGateIxs c))
 
--- Transactionally update the circuit. Returns (_, changed behaviors/events (lcBehMaxT has increased))
+-- Transactionally update the circuit. Returns (new live circuit, changed behaviors/events (lcBehMaxT has increased))
 lcTransaction :: forall node
               .  NodeC node
               => LiveCircuit node -> [UpdateList] -> (LiveCircuit node, [UpdateList])
@@ -269,7 +269,8 @@ lcTransaction lc ups = lint (lc', changes)
                         GateRep maxTF   fUpdates   minTF   <- lcBehs lc' bixF
                         GateRep maxTArg argUpdates minTArg <- lcBehs lc' bixArg
                         when (minTF /= minTArg)
-                            (error "TODO support Ap of Bheaviors with unequal minT")
+                            (error $ "TODO support Ap of Bheaviors with unequal minT ("
+                                ++ show minTF ++ " /= " ++ show minTArg ++ ")")
                         let maxT' = min maxTF maxTArg
                             updates' = apB True (dropUntilTime maxT' fUpdates)
                                            True (dropUntilTime maxT' argUpdates)

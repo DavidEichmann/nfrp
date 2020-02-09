@@ -128,7 +128,7 @@ actuate ctx
     let (circuit, listeners, mkCircuitOut) = buildCircuit mkCircuit
 
         putLog :: String -> IO ()
-        putLog str = putStrLn $ show myNode ++ ": " ++ str
+        putLog str = return () -- putStrLn $ "\033[34" ++ show myNode ++ "\033[0m: " ++ str
 
     -- Clock synchronize with clockSyncNode if not myNode and wait for starting time. (TODO regularly synchronize clocks).
     -- Else accept clock sync with all other nodes, then braodcast a starting time (to start the circuit).
