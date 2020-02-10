@@ -7,7 +7,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE RankNTypes #-}
@@ -27,7 +26,7 @@ module GateRep
     , EMap
     ) where
 
-import Data.Maybe (fromMaybe, isNothing)
+import Data.Maybe (isNothing)
 
 import Time
 
@@ -119,164 +118,23 @@ lookupBMapErr err t bmap = case lookupBMap t bmap of
     Nothing -> error $ "lookupBMapErr: time out of bounds: " ++ err
     Just a -> a
 
--- | Is a value known. Usually used inrelation to a span of time.
-data KnownState
-    = Known
-    | Unknown
-    deriving (Eq)
-data EMapEl a
-    = OccurKnown Time a
-    -- ^ An event occurence and an implied Know state change/continuation.
-    | Knowlage TimeDI KnownState
-    -- ^ Change of known/unknown state.
-    deriving (Functor)
-
-emapElTime :: EMapEl a -> TimeDI
-emapElTime (OccurKnown t _) = toTime t
-emapElTime (Knowlage t _) = t
-
-emapElKnownState :: EMapEl a -> KnownState
-emapElKnownState (OccurKnown _ _) = Known
-emapElKnownState (Knowlage _ k) = k
-
-emapElKnownVariantAndEqual :: EMapEl a -> EMapEl a -> Bool
-emapElKnownVariantAndEqual (Knowlage t1 k1) (Knowlage t2 k2) = t1 == t2 && k1 == k2
-emapElKnownVariantAndEqual _ _ = False
-
 -- | An event style map. Represents a partial mapping from time to events (see lookupEMap).
-newtype EMap a = EMap [EMapEl a]
-    -- ^ EMap
-    -- You can imagine there is an implicit (Knowlage (-Infintiy) Unknown) at the end of the list.
-    -- Invariants:
-    --   * List is in reverse chronological order.
-    --     time(i) > time(i+1)
-    --   * Hence the list is empty or ends with a change to Known state.
-    --   * there are no consecutive Know nor consecutive Unknonw elements of the Knowlage variant.
-    --   * there are no Knowlage Know elements directly after OccurKnown elements.
+newtype EMap a = EMap { emapToBMap :: BMap (Maybe a) }
+    -- ^ EMap Has the invariant that all known values of Just anything must be
+    -- at a Time (i.e. not TimeDI) and must be instantaneous i.e. be followed
+    -- immediately (DI_JustAfter) by a unknown or a known Nothing.
     deriving (Functor)
-
--- | Create an EMap from the underlying list. Returns Nothing if invalid (see EMap documentation for invariants).
-emap :: [EMapEl a] -> Maybe (EMap a)
-emap allXs = if isValid allXs then Just (EMap allXs) else Nothing
-    where
-    isValid [] = True
-    isValid [x] = emapElKnownState x == Known
-    -- No Knowlage Known after Occurs.
-    isValid (Knowlage _ Known : OccurKnown _ _ : _) = False
-    -- No consecutive equal Knowlage variant entries.
-    isValid (Knowlage _ ks1 : Knowlage _ ks2 : _) | ks1 == ks2 = False
-    -- Strictly increasing time
-    isValid (x : y : _) | emapElTime x <= emapElTime y = False
-    -- Ok so far, check the tail.
-    isValid (_:xs) = isValid xs
-
--- TODO you could use the representation I started in the more_complicated_EMap
--- to facilitate writing code that generates correct EMaps by construction
-
--- | Create an EMap from the underlying list, but also remove consecutive
--- Knowlage elements of equal Knowlage State. Errors is time is not strictly decreasing.
-emapCleanupErr :: [EMapEl a] -> EMap a
-emapCleanupErr = EMap . clean
-    where
-
-    clean [] = []
-    -- Last element has Know state. Unknown state is resundant.
-    clean [x@(Knowlage _ Unknown)] = []
-    clean [x] = [x]
-    -- Knowlage Known after Occurs is redundant
-    clean (Knowlage _ Known : xs@(OccurKnown _ _ : _)) = clean xs
-    -- Consecutive equal Knowlage variants entries are redundant.
-    -- If Knowlage state is equal, redundancy is clear.
-    -- Else knowlage state is unequal, so we have a left bias. This is a bit ugly but uself.
-    clean (x@(Knowlage _ ks1) : Knowlage _ ks2 : xs) = clean (x:xs)
-    -- Strictly increasing time
-    clean (x : y : _) | emapElTime x <= emapElTime y = error "emapCleanupErr: time is not strictly increasing."
-    -- Ok so far, clean the tail.
-    clean (x:xs) = x : clean xs
 
 instance GateMap EMap where
-    gateNull (EMap []) = True
-    gateNull _ = False  -- ^ The only other gateNull case is a list of only Stop values,
-                    -- but that is not a valid EMap, so we dont Check (it must
-                    -- be empty of end in a Start).
+    gateNull = gateNull . emapToBMap
+    takeFrom minTInc = EMap . takeFrom minTInc . emapToBMap
+    gateMaxT = gateMaxT . emapToBMap
+    union a b = EMap $ union (emapToBMap a) (emapToBMap b)
 
-    takeFrom minTInc (EMap allXs) = emapCleanupErr (go allXs)
-        where
-        go [] = []
-        go (x:xs) = case x of
-            Knowlage t knownState -> case compare t minTInc of
-                GT -> x : go xs
-                EQ -> [x]
-                LT -> case knownState of
-                        Known -> [Knowlage minTInc Known]
-                        Unknown -> [] -- Unknown state at the end is implicit.
-            OccurKnown t _ -> let tDI = toTime t in case compare tDI minTInc of
-                GT -> x : go xs
-                EQ -> [x]
-                LT -> [Knowlage minTInc Known]
-
-    gateMaxT (EMap []) = Nothing
-    gateMaxT (EMap (Knowlage t Unknown : _)) = Just t
-    gateMaxT (EMap (Knowlage _ Known   : _)) = Just DI_Inf
-    gateMaxT (EMap (OccurKnown _ _     : _)) = Just DI_Inf
-
-    union = zipEMap _
-    --   (\ mayMayA mayMayB -> case (mayMayA, mayMayB) of
-    --     (Just aMay, Nothing) -> Just aMay
-    --     (Nothing, Just bMay) -> Just bMay
-    --     (Nothing, Nothing) -> Nothing
-    --     (Just _, Just _) -> error "union: Attempting union on BMaps with overlapping knowlage."
-    --     )
-
-emapToBmap :: EMap
-
--- | Zip emaps.
-zipEMap
-    :: (EMapSample a -> EMapSample b -> EMapSample c)
-    -- ^ Combine values. For both inputs and output, Nothing means unknown events.
-    -- Hence this zip function allows you to modify the known time spans.
-    -- If you think of events as behaviors of maybe a value, then this makes more intuitive sense.
-    -> EMap a
-    -> EMap b
-    -> EMap c
-zipEMap f (EMap allAs) (EMap allBs) = emapCleanupErr $ go allAs allBs
-    where
-    go as [] = map
-                    _
-                    -- (\case
-                    --     OccurKnown t a ->
-
-                    --     Start t -> Start t
-                    --     StartOccur (t, a) -> case f (Just (Just a)) Nothing of
-                    --             Just (Just c) -> StartOccur (t, c)
-                    --             Just Nothing -> Start (toTime t)
-                    --             Nothing -> Start (toTime t)
-                    --     Stop t -> Stop t
-                    --     StopOccur (t, a) -> case f (Just (Just a)) Nothing of
-                    --             Just (Just c) -> StopOccur (t, c)
-                    --             Just Nothing -> Stop (toTime t)
-                    --             Nothing -> Stop (toTime t)
-                    -- )
-                    as
-    go [] bs = map
-                    _
-                    -- (\case
-                    --     Start t -> Start t
-                    --     StartOccur (t, b) -> case f Nothing (Just (Just b)) of
-                    --             Just (Just c) -> StartOccur (t, c)
-                    --             Just Nothing -> Start (toTime t)
-                    --             Nothing -> Start (toTime t)
-                    --     Stop t -> Stop t
-                    --     StopOccur (t, b) -> case f Nothing (Just (Just b)) of
-                    --             Just (Just c) -> StopOccur (t, c)
-                    --             Just Nothing -> Stop (toTime t)
-                    --             Nothing -> Stop (toTime t)
-                    -- )
-                    bs
-    go (a:as) (b:bs) = case compare ta tb of
-        LT -> _
-        EQ -> _
-        GT -> _
-        where
-        ta = emapElTime a
-        tb = emapElTime b
+-- -- | Zip emaps.
+-- zipEMap
+--     :: _
+--     -> EMap a
+--     -> EMap b
+--     -> EMap c
+-- zipEMap f emapA emapB = EMap $ zipBMap f (emapToBMap emapA) (emapToBMap emapB)
