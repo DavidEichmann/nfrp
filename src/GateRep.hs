@@ -119,28 +119,16 @@ lookupBMapErr err t bmap = case lookupBMap t bmap of
     Nothing -> error $ "lookupBMapErr: time out of bounds: " ++ err
     Just a -> a
 
-data ElOccurKnown a
-    = ElOccurKnown
-        Time    -- ^ Occurence time.
-        a       -- ^ Occurence value.
-        (Either (ElOccurKnown a)
-                (ElUnknown a))
-                -- ^ previous item.
-    deriving (Functor)
-data ElKnown a
-    = ElKnown
-        TimeDI
-        -- ^ Start of known time span.
-        (Maybe (ElUnknown a))
-        -- ^ Nothing is the end of the list, Else the previous element.
-    deriving (Functor)
-data ElUnknown a
-    = ElUnknown
-        TimeDI
-        -- ^ Start of unknown time span.
-        (Either (ElOccurKnown a)
-                (ElKnown a))
-                -- ^ previous item.
+-- | Is a value known. Usually used inrelation to a span of time.
+data KnownState
+    = Known
+    | Unknown
+    deriving (Eq)
+data EMapEl a
+    = OccurKnown Time a
+    -- ^ An event occurence and an implied Know state change/continuation.
+    | Knowlage TimeDI KnownState
+    -- ^ Change of known/unknown state.
     deriving (Functor)
 
 emapElTime :: EMapEl a -> TimeDI
@@ -159,10 +147,12 @@ emapElKnownVariantAndEqual _ _ = False
 newtype EMap a = EMap [EMapEl a]
     -- ^ EMap
     -- You can imagine there is an implicit (Knowlage (-Infintiy) Unknown) at the end of the list.
-    -- List is in reverse chronological order.
-    -- Hence the list is empty or ends with a change to Known state.
-    -- there are no consecutive Know nor consecutive Unknonw elements of the Knowlage variant.
-    --   time(i) > time(i+1)
+    -- Invariants:
+    --   * List is in reverse chronological order.
+    --     time(i) > time(i+1)
+    --   * Hence the list is empty or ends with a change to Known state.
+    --   * there are no consecutive Know nor consecutive Unknonw elements of the Knowlage variant.
+    --   * there are no Knowlage Know elements directly after OccurKnown elements.
     deriving (Functor)
 
 -- | Create an EMap from the underlying list. Returns Nothing if invalid (see EMap documentation for invariants).
@@ -171,29 +161,37 @@ emap allXs = if isValid allXs then Just (EMap allXs) else Nothing
     where
     isValid [] = True
     isValid [x] = emapElKnownState x == Known
-    isValid (x:y:_)
-        -- No consecutive equal Knowlage variant entries.
-        | not (emapElKnownVariantAndEqual x y)
-        -- Strictly increasing time
-        || emapElTime x >= emapElTime y
-        = False
+    -- No Knowlage Known after Occurs.
+    isValid (Knowlage _ Known : OccurKnown _ _ : _) = False
+    -- No consecutive equal Knowlage variant entries.
+    isValid (Knowlage _ ks1 : Knowlage _ ks2 : _) | ks1 == ks2 = False
+    -- Strictly increasing time
+    isValid (x : y : _) | emapElTime x <= emapElTime y = False
+    -- Ok so far, check the tail.
     isValid (_:xs) = isValid xs
+
+-- TODO you could use the representation I started in the more_complicated_EMap
+-- to facilitate writing code that generates correct EMaps by construction
 
 -- | Create an EMap from the underlying list, but also remove consecutive
 -- Knowlage elements of equal Knowlage State. Errors is time is not strictly decreasing.
 emapCleanupErr :: [EMapEl a] -> EMap a
-emapCleanupErr
-    = fromMaybe (error "emapCleanupErr: invalid EMap")
-    . emap
-    . clean
+emapCleanupErr = EMap . clean
     where
+
     clean [] = []
+    -- Last element has Know state. Unknown state is resundant.
+    clean [x@(Knowlage _ Unknown)] = []
     clean [x] = [x]
-    clean (x1:x2:xs)
-        | let Knowlage t1 ks1 = x1
-              Knowlage t2 ks2 = x2
-          in t1 == t2 && ks1 == ks2
-        = x2 : clean xs
+    -- Knowlage Known after Occurs is redundant
+    clean (Knowlage _ Known : xs@(OccurKnown _ _ : _)) = clean xs
+    -- Consecutive equal Knowlage variants entries are redundant.
+    -- If Knowlage state is equal, redundancy is clear.
+    -- Else knowlage state is unequal, so we have a left bias. This is a bit ugly but uself.
+    clean (x@(Knowlage _ ks1) : Knowlage _ ks2 : xs) = clean (x:xs)
+    -- Strictly increasing time
+    clean (x : y : _) | emapElTime x <= emapElTime y = error "emapCleanupErr: time is not strictly increasing."
+    -- Ok so far, clean the tail.
     clean (x:xs) = x : clean xs
 
 instance GateMap EMap where
@@ -218,18 +216,23 @@ instance GateMap EMap where
                 LT -> [Knowlage minTInc Known]
 
     gateMaxT (EMap []) = Nothing
-    gateMaxT (EMap (x:_)) = Just $ emapElTime x
+    gateMaxT (EMap (Knowlage t Unknown : _)) = Just t
+    gateMaxT (EMap (Knowlage _ Known   : _)) = Just DI_Inf
+    gateMaxT (EMap (OccurKnown _ _     : _)) = Just DI_Inf
 
-    union = zipEMap (\ mayMayA mayMayB -> case (mayMayA, mayMayB) of
-        (Just aMay, Nothing) -> Just aMay
-        (Nothing, Just bMay) -> Just bMay
-        (Nothing, Nothing) -> Nothing
-        (Just _, Just _) -> error "union: Attempting union on BMaps with overlapping knowlage."
-        )
+    union = zipEMap _
+    --   (\ mayMayA mayMayB -> case (mayMayA, mayMayB) of
+    --     (Just aMay, Nothing) -> Just aMay
+    --     (Nothing, Just bMay) -> Just bMay
+    --     (Nothing, Nothing) -> Nothing
+    --     (Just _, Just _) -> error "union: Attempting union on BMaps with overlapping knowlage."
+    --     )
+
+emapToBmap :: EMap
 
 -- | Zip emaps.
 zipEMap
-    :: ((KnownState, Maybe a) -> (KnownState, Maybe b) -> (KnownState, Maybe b))
+    :: (EMapSample a -> EMapSample b -> EMapSample c)
     -- ^ Combine values. For both inputs and output, Nothing means unknown events.
     -- Hence this zip function allows you to modify the known time spans.
     -- If you think of events as behaviors of maybe a value, then this makes more intuitive sense.
