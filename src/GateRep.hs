@@ -27,7 +27,7 @@ module GateRep
     , EMap
     ) where
 
-import Data.Maybe (isNothing)
+import Data.Maybe (fromMaybe, isNothing)
 
 import Time
 
@@ -119,36 +119,82 @@ lookupBMapErr err t bmap = case lookupBMap t bmap of
     Nothing -> error $ "lookupBMapErr: time out of bounds: " ++ err
     Just a -> a
 
-data EMapEl a
-    = Start TimeDI
-    -- ^ Known time span starts.
-    -- Interpreting `EMap a` as `BMap (Maybe a)`, this can be thought of as a
-    -- BMap list entry of `[..., (t, Just Nothing),
-    -- ...]`.
-    | StartOccur (Time, a)
-    -- ^ Known time span starts/continues with a value occurence.
-    | Stop TimeDI
-    -- ^ Known time span stops.
-    | StopOccur (Time, a)
-    -- ^ Known time span stops with a value occurence. If directly after a
-    -- Stop/StopOccur, then this is an instantenious span of knowlage.
+data ElOccurKnown a
+    = ElOccurKnown
+        Time    -- ^ Occurence time.
+        a       -- ^ Occurence value.
+        (Either (ElOccurKnown a)
+                (ElUnknown a))
+                -- ^ previous item.
+    deriving (Functor)
+data ElKnown a
+    = ElKnown
+        TimeDI
+        -- ^ Start of known time span.
+        (Maybe (ElUnknown a))
+        -- ^ Nothing is the end of the list, Else the previous element.
+    deriving (Functor)
+data ElUnknown a
+    = ElUnknown
+        TimeDI
+        -- ^ Start of unknown time span.
+        (Either (ElOccurKnown a)
+                (ElKnown a))
+                -- ^ previous item.
     deriving (Functor)
 
 emapElTime :: EMapEl a -> TimeDI
-emapElTime (Start t) = t
-emapElTime (StartOccur (t, _)) = toTime t
-emapElTime (Stop t) = t
-emapElTime (StopOccur (t, _)) = toTime t
+emapElTime (OccurKnown t _) = toTime t
+emapElTime (Knowlage t _) = t
+
+emapElKnownState :: EMapEl a -> KnownState
+emapElKnownState (OccurKnown _ _) = Known
+emapElKnownState (Knowlage _ k) = k
+
+emapElKnownVariantAndEqual :: EMapEl a -> EMapEl a -> Bool
+emapElKnownVariantAndEqual (Knowlage t1 k1) (Knowlage t2 k2) = t1 == t2 && k1 == k2
+emapElKnownVariantAndEqual _ _ = False
 
 -- | An event style map. Represents a partial mapping from time to events (see lookupEMap).
 newtype EMap a = EMap [EMapEl a]
     -- ^ EMap
-    -- You can imagine there is an implicit (Stop -Infintiy) at the end of the list.
+    -- You can imagine there is an implicit (Knowlage (-Infintiy) Unknown) at the end of the list.
     -- List is in reverse chronological order.
-    -- Hence the list is empty or ends with a Start/StartOccur value and
-    -- there are no consecutive Starts nor consecutive Stops (though occur versions my repeate).
+    -- Hence the list is empty or ends with a change to Known state.
+    -- there are no consecutive Know nor consecutive Unknonw elements of the Knowlage variant.
     --   time(i) > time(i+1)
     deriving (Functor)
+
+-- | Create an EMap from the underlying list. Returns Nothing if invalid (see EMap documentation for invariants).
+emap :: [EMapEl a] -> Maybe (EMap a)
+emap allXs = if isValid allXs then Just (EMap allXs) else Nothing
+    where
+    isValid [] = True
+    isValid [x] = emapElKnownState x == Known
+    isValid (x:y:_)
+        -- No consecutive equal Knowlage variant entries.
+        | not (emapElKnownVariantAndEqual x y)
+        -- Strictly increasing time
+        || emapElTime x >= emapElTime y
+        = False
+    isValid (_:xs) = isValid xs
+
+-- | Create an EMap from the underlying list, but also remove consecutive
+-- Knowlage elements of equal Knowlage State. Errors is time is not strictly decreasing.
+emapCleanupErr :: [EMapEl a] -> EMap a
+emapCleanupErr
+    = fromMaybe (error "emapCleanupErr: invalid EMap")
+    . emap
+    . clean
+    where
+    clean [] = []
+    clean [x] = [x]
+    clean (x1:x2:xs)
+        | let Knowlage t1 ks1 = x1
+              Knowlage t2 ks2 = x2
+          in t1 == t2 && ks1 == ks2
+        = x2 : clean xs
+    clean (x:xs) = x : clean xs
 
 instance GateMap EMap where
     gateNull (EMap []) = True
@@ -156,27 +202,20 @@ instance GateMap EMap where
                     -- but that is not a valid EMap, so we dont Check (it must
                     -- be empty of end in a Start).
 
-    takeFrom minTInc (EMap allXs) = EMap (go allXs)
+    takeFrom minTInc (EMap allXs) = emapCleanupErr (go allXs)
         where
         go [] = []
         go (x:xs) = case x of
-            Start t -> case compare t minTInc of
+            Knowlage t knownState -> case compare t minTInc of
                 GT -> x : go xs
                 EQ -> [x]
-                LT -> [Start minTInc]
-            StartOccur (t, _) -> let tDI = toTime t in case compare tDI minTInc of
+                LT -> case knownState of
+                        Known -> [Knowlage minTInc Known]
+                        Unknown -> [] -- Unknown state at the end is implicit.
+            OccurKnown t _ -> let tDI = toTime t in case compare tDI minTInc of
                 GT -> x : go xs
                 EQ -> [x]
-                LT -> [Start minTInc]
-            Stop t -> case compare t minTInc of
-                GT -> x: go xs
-                -- Stop is implicit
-                EQ -> []
-                LT -> []
-            StopOccur (t, _) -> let tDI = toTime t in case compare tDI minTInc of
-                GT -> x : go xs
-                EQ -> [x]
-                LT -> [Start minTInc]
+                LT -> [Knowlage minTInc Known]
 
     gateMaxT (EMap []) = Nothing
     gateMaxT (EMap (x:_)) = Just $ emapElTime x
@@ -190,42 +229,46 @@ instance GateMap EMap where
 
 -- | Zip emaps.
 zipEMap
-    :: (Maybe (Maybe a) -> Maybe (Maybe b) -> Maybe (Maybe c))
+    :: ((KnownState, Maybe a) -> (KnownState, Maybe b) -> (KnownState, Maybe b))
     -- ^ Combine values. For both inputs and output, Nothing means unknown events.
     -- Hence this zip function allows you to modify the known time spans.
     -- If you think of events as behaviors of maybe a value, then this makes more intuitive sense.
     -> EMap a
     -> EMap b
     -> EMap c
-zipEMap f (EMap allAs) (EMap allBs) = EMap (cleanup $ go allAs allBs)
+zipEMap f (EMap allAs) (EMap allBs) = emapCleanupErr $ go allAs allBs
     where
     go as [] = map
-                    (\case
-                        Start t -> Start t
-                        StartOccur (t, a) -> case f (Just (Just a)) Nothing of
-                                Just (Just c) -> StartOccur (t, c)
-                                Just Nothing -> Start (toTime t)
-                                Nothing -> Start (toTime t)
-                        Stop t -> Stop t
-                        StopOccur (t, a) -> case f (Just (Just a)) Nothing of
-                                Just (Just c) -> StopOccur (t, c)
-                                Just Nothing -> Stop (toTime t)
-                                Nothing -> Stop (toTime t)
-                    )
+                    _
+                    -- (\case
+                    --     OccurKnown t a ->
+
+                    --     Start t -> Start t
+                    --     StartOccur (t, a) -> case f (Just (Just a)) Nothing of
+                    --             Just (Just c) -> StartOccur (t, c)
+                    --             Just Nothing -> Start (toTime t)
+                    --             Nothing -> Start (toTime t)
+                    --     Stop t -> Stop t
+                    --     StopOccur (t, a) -> case f (Just (Just a)) Nothing of
+                    --             Just (Just c) -> StopOccur (t, c)
+                    --             Just Nothing -> Stop (toTime t)
+                    --             Nothing -> Stop (toTime t)
+                    -- )
                     as
     go [] bs = map
-                    (\case
-                        Start t -> Start t
-                        StartOccur (t, b) -> case f Nothing (Just (Just b)) of
-                                Just (Just c) -> StartOccur (t, c)
-                                Just Nothing -> Start (toTime t)
-                                Nothing -> Start (toTime t)
-                        Stop t -> Stop t
-                        StopOccur (t, b) -> case f Nothing (Just (Just b)) of
-                                Just (Just c) -> StopOccur (t, c)
-                                Just Nothing -> Stop (toTime t)
-                                Nothing -> Stop (toTime t)
-                    )
+                    _
+                    -- (\case
+                    --     Start t -> Start t
+                    --     StartOccur (t, b) -> case f Nothing (Just (Just b)) of
+                    --             Just (Just c) -> StartOccur (t, c)
+                    --             Just Nothing -> Start (toTime t)
+                    --             Nothing -> Start (toTime t)
+                    --     Stop t -> Stop t
+                    --     StopOccur (t, b) -> case f Nothing (Just (Just b)) of
+                    --             Just (Just c) -> StopOccur (t, c)
+                    --             Just Nothing -> Stop (toTime t)
+                    --             Nothing -> Stop (toTime t)
+                    -- )
                     bs
     go (a:as) (b:bs) = case compare ta tb of
         LT -> _
@@ -234,7 +277,3 @@ zipEMap f (EMap allAs) (EMap allBs) = EMap (cleanup $ go allAs allBs)
         where
         ta = emapElTime a
         tb = emapElTime b
-
-    -- | Remove consecutive Starts and Stops.
-    cleanup :: [EMapEl c] -> [EMapEl c]
-    cleanup = _
