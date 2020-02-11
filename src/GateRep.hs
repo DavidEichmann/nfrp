@@ -22,8 +22,11 @@ module GateRep
     , BMap
     , lookupBMap
     , lookupBMapErr
-    , bmapSingleton
+    , instantaneousBMap
+    , constBMap
     , EMap
+    , instantaneousEMap
+    , onceEMap
     ) where
 
 import Data.Maybe (isNothing)
@@ -36,10 +39,12 @@ class Functor m => GateMap m where
     gateNull = isNothing . gateMaxT
     -- | Get the maximum time of which we have knowlage. Nothing means we have no knowlage.
     gateMaxT :: m a -> Maybe TimeDI
+    -- | Get the minimum time of which we have knowlage. Nothing means we have no knowlage.
+    gateMinT :: m a -> Maybe TimeDI
     -- | Take only the data at and after a given time.
     takeFrom :: TimeDI -> m a -> m a
     -- | Combine the knowlage of this gate. Any overlap of time will result in an error.
-    union :: m a -> m a -> m a
+    gateUnion :: m a -> m a -> m a
 
 
 -- | A behavior style map. Represents a partial mapping from time to value (see lookupBMap).
@@ -63,6 +68,16 @@ lookupBMap t (BMap allXs) = go allXs
         | t >= t_i  = aMay_i
         | otherwise = go xs
 
+-- | One moment of knowlage.
+-- knowlage: exactly t and no other time.
+instantaneousBMap :: Time -> a -> BMap a
+instantaneousBMap t a = BMap [(DI_JustAfter t, Nothing), (DI_Exactly t, Just a)]
+
+-- | Constant value.
+-- knowlage: t to Infinity
+constBMap :: Time -> a -> BMap a
+constBMap t a = BMap [(DI_Exactly t, Just a)]
+
 instance GateMap BMap where
     gateNull (BMap []) = True
     gateNull _ = False -- Note that the last element in BMap is not Nothing
@@ -78,12 +93,15 @@ instance GateMap BMap where
     gateMaxT (BMap []) = Nothing
     gateMaxT (BMap ((t,_):_)) = Just t
 
-    union = zipBMap $ \ aMay bMay -> case (aMay, bMay) of
+    gateMinT (BMap []) = Nothing
+    gateMinT (BMap xs) = Just (fst (last xs))
+
+    gateUnion = zipBMap $ \ aMay bMay -> case (aMay, bMay) of
         (Nothing, Nothing) -> Nothing
         (Just a, Nothing) -> Just a
         (Nothing, Just a) -> Just a
-        -- TODO I think this may happen always when taking union of delayed BMaps
-        (Just _, Just _) -> error "union: Attempting union on BMaps with overlapping knowlage."
+        -- TODO I think this may happen always when taking gateUnion of delayed BMaps
+        (Just _, Just _) -> error "gateUnion: Attempting gateUnion on BMaps with overlapping knowlage."
 
 
 -- | Zip BMaps. Values are combined with the given function.
@@ -107,11 +125,16 @@ zipBMap f (BMap allAs) (BMap allBs) = BMap (go allAs allBs)
 instance DelayTime (BMap a) where
     -- | You'll likely want to add an instantenious value at time 0 after
     -- applying this delay.
-    delayTime (BMap xs) = BMap ((\(t,a) -> (delayTime t, a)) <$> xs)
-
-
-bmapSingleton :: TimeDI -> TimeDI -> a -> BMap a
-bmapSingleton start stop value = BMap [(delayTime stop, Nothing), (start, Just value)]
+    delayTime (BMap allXs) = BMap $ clean ((\(t,a) -> (delayTime t, a)) <$> allXs)
+        where
+        -- Remove consecutive `DI_JustAfter t` (or equal t) values. This is
+        -- justified because we only allow sampling on DI_Exactly times, so only
+        -- the left most consecutive value will ever be visible.
+        clean [] = []
+        clean [x] = [x]
+        clean (x1@(DI_JustAfter t1, _):(DI_JustAfter t2,_):xs)
+            | t1 == t2 = clean (x1:xs)
+        clean (x:xs) = x : clean xs
 
 lookupBMapErr :: String -> TimeDI -> BMap a -> a
 lookupBMapErr err t bmap = case lookupBMap t bmap of
@@ -123,13 +146,48 @@ newtype EMap a = EMap { emapToBMap :: BMap (Maybe a) }
     -- ^ EMap Has the invariant that all known values of Just anything must be
     -- at a Time (i.e. not TimeDI) and must be instantaneous i.e. be followed
     -- immediately (DI_JustAfter) by a unknown or a known Nothing.
+    -- NOTE we want to maintain the invariant that Event's cannot be delayed,
+    -- so one must be careful not to do e.g. `EMap . delayTime . empToBMap`. Hence
+    -- empToBMap is not exported.
     deriving (Functor)
 
 instance GateMap EMap where
     gateNull = gateNull . emapToBMap
     takeFrom minTInc = EMap . takeFrom minTInc . emapToBMap
     gateMaxT = gateMaxT . emapToBMap
-    union a b = EMap $ union (emapToBMap a) (emapToBMap b)
+    gateMinT = gateMinT . emapToBMap
+    gateUnion a b = EMap $ gateUnion (emapToBMap a) (emapToBMap b)
+
+-- | Knowlage of one event occurence.
+-- knowlage: exactly t and no other time.
+instantaneousEMap :: Time -> Maybe a -> EMap a
+instantaneousEMap t aMay = EMap (instantaneousBMap t aMay)
+
+-- | A single event occurence over a time span
+onceEMap
+    :: Maybe TimeDI
+    -- ^ When knowlage starts (Nothing means start on event occurence).
+    -> Time
+    -- ^ When event occurs.
+    -> a
+    -- ^ Event value.
+    -> Maybe TimeDI
+    -- ^ When knowlage ends (Nothing means Infinity).
+    -> EMap a
+onceEMap knowlageStartTimeMay eventTime _ _
+    | maybe False (> toTime eventTime) knowlageStartTimeMay
+    = error "onceEMap: knowlage start time is after (or equal to) event time."
+onceEMap _ eventTime _ knowlageEndTimeMay
+    | maybe False (toTime eventTime >) knowlageEndTimeMay
+    = error "onceEMap: event time is after (or equal to) knowlage end time."
+onceEMap knowlageStartTimeMay eventTime eventValue knowlageEndTimeMay
+    = EMap $ BMap $ concat
+        [ [(knowlageEndTime, Nothing) | Just knowlageEndTime <- [knowlageEndTimeMay]]
+        , [ (DI_JustAfter eventTime, Just Nothing)
+          , (DI_Exactly eventTime, Just (Just eventValue))
+          ]
+        , [(knowlageStartTime, Just Nothing) | Just knowlageStartTime <- [knowlageStartTimeMay]]
+        ]
 
 -- -- | Zip emaps.
 -- zipEMap

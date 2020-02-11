@@ -23,7 +23,7 @@ module LiveCircuit where
 import Control.Exception.Base (assert)
 import Control.Monad (when)
 import Data.Kind
-import Data.Maybe (mapMaybe)
+import Data.Maybe (fromMaybe, mapMaybe)
 import Data.List (find)
 import qualified Data.Map as Map
 import Unsafe.Coerce
@@ -44,21 +44,21 @@ data LiveCircuit node = LiveCircuit
              -- ^ What node the circuit is running on.
     }
 
-lcBehChanges  :: LiveCircuit node -> BehaviorIx a -> [(TimeDI, a)]
-lcBehChanges circuit bix = maybe [] grepChanges (lcBehs circuit bix)
+-- lcBehChanges  :: LiveCircuit node -> BehaviorIx a -> [(TimeDI, a)]
+-- lcBehChanges circuit bix = maybe [] grepChanges (lcBehs circuit bix)
 
-lcEvents      :: LiveCircuit node -> EventIx a -> [(Time, a)]
-lcEvents     circuit eix = maybe [] grepChanges (lcEvts circuit eix)
+-- lcEvents      :: LiveCircuit node -> EventIx a -> [(Time, a)]
+-- lcEvents     circuit eix = maybe [] grepChanges (lcEvts circuit eix)
 
 lcGateMaxT :: NodeC node => LiveCircuit node -> GateIx a -> Maybe TimeDI
 lcGateMaxT lc (GateIxB b) = lcBehMaxT lc b
 lcGateMaxT lc (GateIxE e) = lcEvtMaxT lc e
 
 lcBehMaxT :: NodeC node => LiveCircuit node -> BehaviorIx a -> Maybe TimeDI
-lcBehMaxT lc bix = grepMaxT <$> lcBehs lc bix
+lcBehMaxT lc bix = gateMaxT =<< lcBehs lc bix
 
 lcEvtMaxT :: NodeC node => LiveCircuit node -> EventIx a -> Maybe TimeDI
-lcEvtMaxT lc eix = grepMaxT <$> lcEvts lc eix
+lcEvtMaxT lc eix = gateMaxT =<< lcEvts lc eix
 
 lcBehVal :: NodeC node => LiveCircuit node -> TimeDI -> BehaviorIx a -> a
 lcBehVal lc t bix = let
@@ -134,9 +134,9 @@ mkLiveCircuit myNode c = (lc, initialUpdatesOwnedBeh ++ initialUpdatesDerived)
                   | circBeh c bix `isObservableTo` myNode
                   -> case circBeh c bix of
                         BIx _ _        -> error "Unexpected BIx."
-                        Const _ val    -> Just (UpdateListB bix DI_Inf [(DI_Inf, val),(DI_Exactly 0, val)] (D_Exactly 0))
+                        Const _ val    -> Just (UpdateListB bix (constBMap 0 val))
                         Delay _ _ _    -> Nothing
-                        Step _ val0 _  -> Just (UpdateListB bix (DI_Exactly 0) [(DI_Exactly 0, val0)] (D_Exactly 0))
+                        Step _ val0 _  -> Just (UpdateListB bix (instantaneousBMap 0 val0))
                         MapB _ _ _     -> Nothing
                         Ap _ _ _       -> Nothing
                         SendB _ _ _    -> Nothing
@@ -161,11 +161,10 @@ lcTransaction lc ups = lint (lc', changes)
         changes :: [UpdateList]
         changes
             = mapMaybe (\(GateIx' gix) -> let
-                go :: (GateMap gmap,  Ord t)
-                    => gix
-                    -> (LiveCircuit node -> Maybe (gmap a))
-                    -> (gix -> gmap a -> UpdateList)
-                    -> Maybe UpdateList
+                go :: gix
+                   -> (LiveCircuit node -> Maybe (gmap a))
+                   -> (gix -> gmap a -> UpdateList)
+                   -> Maybe UpdateList
                 go ix lcGate mkUpdateList = case (lcGate lc, lcGate lc') of
                     (Nothing, Nothing)
                         -> Nothing
@@ -176,9 +175,13 @@ lcTransaction lc ups = lint (lc', changes)
                                 -- the new is just the old with some chronologially newer info.
                                 -- TODO do we ever need to support the case that information "from
                                 -- the past" is gained?
-                                diffIsh = if maxT < maxT'
-                                            then Nothing
-                                            else Just (takeFrom (delayTime maxT) gmap)
+                                diffIsh = case (gateMaxT gmap, gateMaxT gmap') of -- maxT < maxT'
+                                    (Nothing, Nothing) -> Nothing
+                                    (Just _, Nothing) -> lostAllGateInfoErr
+                                    (Nothing, Just _) -> Just gmap'
+                                    (Just maxT, Just maxT')
+                                        | maxT == maxT' -> Nothing
+                                        | otherwise     -> Just (takeFrom (delayTime maxT) gmap)
                                                     -- ^ TODO the inability to
                                                     -- delay an already delayed
                                                     -- time may cause issue
@@ -188,24 +191,18 @@ lcTransaction lc ups = lint (lc', changes)
                                                     -- already detected as
                                                     -- change in a previous
                                                     -- iteration.
-                                maxT  = gateMaxT gmap
-                                maxT' = gateMaxT gmap'
+                                                    -- On second thought I think this may be alright (intuitively).
+                                maxTMay  = gateMaxT gmap
+                                maxTMay' = gateMaxT gmap'
                             in mkUpdateList ix <$> diffIsh
-                    (Just _, Nothing) -> error "Impossible! Somehow we lost all info about a gate."
+                    (Just _, Nothing) -> lostAllGateInfoErr
+                lostAllGateInfoErr = error "Impossible! Somehow we lost all info about a gate."
                 in
                     case gix of
-                        (GateIxB bix) -> go bix (flip lcBehs bix) UpdateListB toTime
-                        (GateIxE eix) -> go eix (flip lcEvts eix) UpdateListE toTime
+                        (GateIxB bix) -> go bix (flip lcBehs bix) UpdateListB
+                        (GateIxE eix) -> go eix (flip lcEvts eix) UpdateListE
                 )
             $ Map.elems (circGateIxs c)
-
-        lintBehRep :: Maybe (BMap a) -> Maybe (BMap a)
-        lintBehRep  Nothing = Nothing
-        lintBehRep (Just bmap)
-            = assert (not (
-                gateNull bmap &&
-                gateMaxT bmap >= toTime minT
-                )) (Just br)
 
         lint
             -- Not quite true: initial values of step behaviors means you get an initial update
@@ -219,22 +216,12 @@ lcTransaction lc ups = lint (lc', changes)
 
             -- All changes are after old maxT
             = assert (all (\up -> case up of
-                    UpdateListB b maxT ul _minT -> case lcBehMaxT lc b of
+                    UpdateListB b bmap -> case lcBehMaxT lc b of
                         Nothing -> True
-                        Just maxTOld -> all (maxTOld <) (maxT : (fst <$> ul))
-                    UpdateListE e maxT ul _minT -> case lcEvtMaxT lc e of
+                        Just maxTOld -> gateMinT bmap > Just maxTOld
+                    UpdateListE e emap -> case lcEvtMaxT lc e of
                         Nothing -> True
-                        Just maxTOld -> all (maxTOld <) (maxT : (toTime . fst <$> ul)))
-                changes)
-
-            -- All changes are before or equal to new maxT
-            . assert (all (\up -> case up of
-                    UpdateListB b maxTNew ul _minT -> case lcBehMaxT lc' b of
-                        Nothing -> True
-                        Just maxTOld -> all (maxTOld >=) (maxTNew : (fst <$> ul))
-                    UpdateListE e maxTNew ul _minT -> case lcEvtMaxT lc' e of
-                        Nothing -> True
-                        Just maxTOld -> all (maxTOld >=) (maxTNew : (toTime . fst <$> ul)))
+                        Just maxTOld -> gateMinT emap > Just maxTOld)
                 changes)
 
         -- TODO asset that all updates are after their corresponding Event/Behavior's MaxT time.
@@ -249,7 +236,7 @@ lcTransaction lc ups = lint (lc', changes)
 
         -- TODO/NOTE this is super inefficient
         lcBehs' :: BehaviorIx a -> Maybe (BMap a)
-        lcBehs' bix = lintBehRep $ case updateWay myNode b of
+        lcBehs' bix = case updateWay myNode b of
             NoUpdate       -> Nothing
             LocalUpdate    -> fromUpdatesList
             RemoteUpdate   -> fromUpdatesList
@@ -261,7 +248,7 @@ lcTransaction lc ups = lint (lc', changes)
                 Step _ a0 (toEix -> eix)
                     -> case lcEvts lc' eix of
                         Nothing -> Nothing
-                        Just (GateRep maxTE es minTE)
+                        Just eventEMap
                             -> Just $ GateRep
                                 maxTE
                                 (((\ (t, val) -> (DI_Exactly t, val)) <$> es) ++ [(DI_Exactly 0, a0)])
@@ -270,8 +257,8 @@ lcTransaction lc ups = lint (lc', changes)
                     -> fmap f <$> (lcBehs lc' bixParent)
                 Ap _ (toBix -> bixF) (toBix -> bixArg)
                     -> do
-                        GateRep maxTF   fUpdates   minTF   <- lcBehs lc' bixF
-                        GateRep maxTArg argUpdates minTArg <- lcBehs lc' bixArg
+                        fBMap   <- lcBehs lc' bixF
+                        argBMap <- lcBehs lc' bixArg
                         when (minTF /= minTArg)
                             (error $ "TODO support Ap of Bheaviors with unequal minT ("
                                 ++ show minTF ++ " /= " ++ show minTArg ++ ")")
@@ -283,12 +270,9 @@ lcTransaction lc ups = lint (lc', changes)
                 b = circBeh c bix
                 fromUpdatesList = findBehUpdates bix <> lcBehs lc bix
 
-                delayBehRep :: a -> GateRep TimeDI a -> GateRep TimeDI a
-                delayBehRep a0 (GateRep maxT updates minT)
-                    = GateRep
-                        (delayTime maxT)
-                        (delayBehChanges a0 updates)
-                        (delayTime minT)
+                delayBehRep :: a -> BMap a -> BMap a
+                delayBehRep a0 bmap
+                    = delayTime bmap `gateUnion` instantaneousBMap 0 a0
 
                 -- Must not have 2 JustAfter t changes in a row (with the same t).
                 delayBehChanges :: a -> [(TimeDI, a)] -> [(TimeDI, a)]
@@ -332,7 +316,7 @@ lcTransaction lc ups = lint (lc', changes)
                             then (tf0, f0 a0) : apB True  f1's True  taas
                             else                apB True  f1's False taas
 
-        lcEvts' :: forall a . EventIx a -> Maybe (GateRep Time a)
+        lcEvts' :: forall a . EventIx a -> Maybe (EMap a)
         lcEvts' eix = case updateWay myNode e of
             NoUpdate       -> Nothing
             LocalUpdate    -> fromUpdatesList
@@ -345,8 +329,8 @@ lcTransaction lc ups = lint (lc', changes)
                 MapE _ f (toEix -> eA)       -> fmap f <$> lcEvts' eA
                 Sample _ f (toBix -> bix) (toEix -> eA)
                     -> do
-                        GateRep maxTB _updatesB minTB <- lcBehs lc' bix
-                        GateRep maxTE updatesE minTE  <- lcEvts lc' eA
+                        updatesBMap <- lcBehs lc' bix
+                        updatesEMap  <- lcEvts lc' eA
                         when (minTB > minTE)
                             (error "TODO support (partially) sampling a behavior withe a minT greater than the sampling event's minT.")
                             -- ^ TODO this also requires talking max of minTE and minTB in the def for minT' bellow.
@@ -374,17 +358,17 @@ lcTransaction lc ups = lint (lc', changes)
         findEvtUpdates :: EventIx a -> Maybe (EMap a)
         findEvtUpdates eix = findGateUpdates changesMay
             where
-                changesMay (UpdateListB (BehaviorIx _v :: BehaviorIx va) _maxT _vChanges _minT) = Nothing
-                changesMay (UpdateListE (EventIx    v  :: EventIx   va) maxT vEvents minT)
-                    | v == eixVert eix  = Just (GateRep maxT (unsafeCoerce vEvents) minT)
+                changesMay (UpdateListB (BehaviorIx _v :: BehaviorIx va) _) = Nothing
+                changesMay (UpdateListE (EventIx    v  :: EventIx   va) emap)
+                    | v == eixVert eix  = Just (unsafeCoerce emap)
                     | otherwise = Nothing
 
         findBehUpdates :: BehaviorIx a -> Maybe (BMap a)
         findBehUpdates bix = findGateUpdates changesMay
             where
-                changesMay (UpdateListE (EventIx    _v  :: EventIx   va) _maxT _vEvents _minT) = Nothing
-                changesMay (UpdateListB (BehaviorIx v :: BehaviorIx va) maxT vChanges minT)
-                    | v == bixVert bix  = Just (GateRep maxT (unsafeCoerce vChanges) minT)
+                changesMay (UpdateListE (EventIx    _v  :: EventIx   va) _) = Nothing
+                changesMay (UpdateListB (BehaviorIx v :: BehaviorIx va) bmap)
+                    | v == bixVert bix  = Just (unsafeCoerce bmap)
                     | otherwise = Nothing
 
 -- Asserting on LiveCircuitls
@@ -398,5 +382,5 @@ data UpdateList
 
 instance Show UpdateList where
     show ul = "UpdateList (" ++ case ul of
-                UpdateListB b maxT us minT -> show b ++ ") Times=" ++ show (maxT, fst <$> us, minT)
-                UpdateListE e maxT us minT -> show e ++ ") Times=" ++ show (maxT, fst <$> us, minT)
+                UpdateListB b bmap -> show b ++ ") Max,Min Times=" ++ show (gateMaxT bmap, gateMinT bmap)
+                UpdateListE e emap -> show e ++ ") Max,Min Times=" ++ show (gateMaxT emap, gateMinT emap)
