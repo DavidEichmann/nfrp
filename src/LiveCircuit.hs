@@ -21,10 +21,8 @@
 module LiveCircuit where
 
 import Control.Exception.Base (assert)
-import Control.Monad (when)
 import Data.Kind
 import Data.Maybe (fromMaybe, mapMaybe)
-import Data.List (find)
 import qualified Data.Map as Map
 import Unsafe.Coerce
 
@@ -161,7 +159,8 @@ lcTransaction lc ups = lint (lc', changes)
         changes :: [UpdateList]
         changes
             = mapMaybe (\(GateIx' gix) -> let
-                go :: gix
+                go :: GateMap gmap
+                   => gix
                    -> (LiveCircuit node -> Maybe (gmap a))
                    -> (gix -> gmap a -> UpdateList)
                    -> Maybe UpdateList
@@ -192,8 +191,6 @@ lcTransaction lc ups = lint (lc', changes)
                                                     -- change in a previous
                                                     -- iteration.
                                                     -- On second thought I think this may be alright (intuitively).
-                                maxTMay  = gateMaxT gmap
-                                maxTMay' = gateMaxT gmap'
                             in mkUpdateList ix <$> diffIsh
                     (Just _, Nothing) -> lostAllGateInfoErr
                 lostAllGateInfoErr = error "Impossible! Somehow we lost all info about a gate."
@@ -249,23 +246,18 @@ lcTransaction lc ups = lint (lc', changes)
                     -> case lcEvts lc' eix of
                         Nothing -> Nothing
                         Just eventEMap
-                            -> Just $ GateRep
-                                maxTE
-                                (((\ (t, val) -> (DI_Exactly t, val)) <$> es) ++ [(DI_Exactly 0, a0)])
-                                minTE
+                            -> let
+                                -- a0 is only instantaneous, and there is always space at t=0 bcause we
+                                -- delay rawStepped
+                                bmapA0 = instantaneousEMap 0 (Just a0)
+                                in Just (delayStepEMapWithExtra eventEMap bmapA0)
                 MapB _ f (toBix -> bixParent)
                     -> fmap f <$> (lcBehs lc' bixParent)
                 Ap _ (toBix -> bixF) (toBix -> bixArg)
                     -> do
                         fBMap   <- lcBehs lc' bixF
                         argBMap <- lcBehs lc' bixArg
-                        when (minTF /= minTArg)
-                            (error $ "TODO support Ap of Bheaviors with unequal minT ("
-                                ++ show minTF ++ " /= " ++ show minTArg ++ ")")
-                        let maxT' = min maxTF maxTArg
-                            updates' = apB True (dropUntilTime maxT' fUpdates)
-                                           True (dropUntilTime maxT' argUpdates)
-                        return $ GateRep maxT' updates' minTF
+                        return (zipBMap (<*>) fBMap argBMap)
             where
                 b = circBeh c bix
                 fromUpdatesList = findBehUpdates bix <> lcBehs lc bix
@@ -273,48 +265,6 @@ lcTransaction lc ups = lint (lc', changes)
                 delayBehRep :: a -> BMap a -> BMap a
                 delayBehRep a0 bmap
                     = delayTime bmap `gateUnion` instantaneousBMap 0 a0
-
-                -- Must not have 2 JustAfter t changes in a row (with the same t).
-                delayBehChanges :: a -> [(TimeDI, a)] -> [(TimeDI, a)]
-                delayBehChanges a0 []
-                    = [(DI_Exactly 0, a0)]
-                delayBehChanges a0 (c0@(DI_Inf, _) : cs)
-                    = c0 : delayBehChanges a0 cs
-                delayBehChanges a0 ((DI_Exactly t, a) : cs)
-                    = (DI_JustAfter t, a) : delayBehChanges a0 cs
-                -- Because it's impossible to sample the JustAfter t value for a JustAfter t  befor it,
-                -- we remove it (note it can also not cause any events so we dont need it).
-                delayBehChanges a0 (c0@(DI_JustAfter t1, _) : c1@(bt2, _) : cs)
-                    | t1 == bt2MajorTime = delayBehChanges  a0 (c0 : cs)
-                    | otherwise          = c0 : delayBehChanges a0 (c1 : cs)
-                    where
-                        bt2MajorTime = case bt2 of
-                            DI_Exactly t -> t
-                            DI_JustAfter t -> t
-                            DI_Inf -> error $ "Behavior changes our of order. Found DI_Inf occuring before " ++ show (fst c0)
-                delayBehChanges a0 (c0@(DI_JustAfter _, _) : [])
-                    = c0 : delayBehChanges a0 []
-
-                -- "current time" is newer of 2 head times
-                -- Bool's are true if value is known at current time
-                apB :: Bool -> [(TimeDI, (j -> k))]
-                     -> Bool -> [(TimeDI,  j      )]
-                     ->         [(TimeDI,       k )]
-                apB _ [] _ _ = []
-                apB _ _ _ [] = []
-                apB f00May tffs@((tf0,f0):f1's) a00May taas@((ta0,a0):a1's)
-                    = case tf0 `compare` ta0 of
-                        EQ -> (ta0, f0 a0) : apB True f1's
-                                                  True a1's
-                        -- Current time is ta0
-                        LT -> if f00May
-                            then (ta0, f0 a0) : apB True  tffs True  a1's
-                            else                apB False tffs True  a1's
-
-                        -- Current time is tf0
-                        GT -> if a00May
-                            then (tf0, f0 a0) : apB True  f1's True  taas
-                            else                apB True  f1's False taas
 
         lcEvts' :: forall a . EventIx a -> Maybe (EMap a)
         lcEvts' eix = case updateWay myNode e of
@@ -331,19 +281,7 @@ lcTransaction lc ups = lint (lc', changes)
                     -> do
                         updatesBMap <- lcBehs lc' bix
                         updatesEMap  <- lcEvts lc' eA
-                        when (minTB > minTE)
-                            (error "TODO support (partially) sampling a behavior withe a minT greater than the sampling event's minT.")
-                            -- ^ TODO this also requires talking max of minTE and minTB in the def for minT' bellow.
-                        let maxT' :: TimeDI
-                            maxT' = minTime maxTE maxTB
-                            minT' :: TimeD
-                            minT' = minTE
-                            updates' :: [(Time, a)]
-                            updates' = [ (sampleT, f sampleT bVal eVal)
-                                            | (sampleT, eVal) <- dropUntilTime maxT' updatesE
-                                            , let bVal = lcBehVal lc' (DI_Exactly sampleT) bix ]
-                        return $ GateRep maxT' updates' minT'
-
+                        return (sampleEMap f updatesBMap updatesEMap)
 
             where
                 e = circEvt c eix

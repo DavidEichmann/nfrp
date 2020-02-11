@@ -43,6 +43,7 @@ import Control.Concurrent
 import Control.Concurrent.Async
 
 import Circuit
+import GateRep
 import LiveCircuit
 import Time
 import TypeLevelStuff
@@ -73,7 +74,7 @@ data Responsibility node ctx
             node    -- ^ Which node's responsibility is this.
             (BehaviorIx a)
             Bool    -- ^ Is it a local listerner? As opposed to sending a msg to another node.
-            (ctx -> TimeDI -> [(TimeDI, a)] -> TimeD -> IO ())
+            (ctx -> BMap a -> IO ())
     -- TODO Event based responsibility
 
 instance Show node => Show (Responsibility node localCtx) where
@@ -127,8 +128,10 @@ actuate ctx
 
     let (circuit, listeners, mkCircuitOut) = buildCircuit mkCircuit
 
+        enableLog = False
+
         putLog :: String -> IO ()
-        putLog str = return () -- putStrLn $ "\033[34" ++ show myNode ++ "\033[0m: " ++ str
+        putLog str = when enableLog $ putStrLn $ "\033[34" ++ show myNode ++ "\033[0m: " ++ str
 
     -- Clock synchronize with clockSyncNode if not myNode and wait for starting time. (TODO regularly synchronize clocks).
     -- Else accept clock sync with all other nodes, then braodcast a starting time (to start the circuit).
@@ -144,9 +147,9 @@ actuate ctx
                                 myNode
                                 bix
                                 True
-                                (\ctx' maxT ups _minT -> case ups of
-                                    (_updateTime, val) : _ -> handler ctx' val maxT
-                                    [] -> return () -- maxT has increased, but the value has not changed
+                                (\ctx' bmap -> case headBMap bmap of
+                                    Just (maxT, val) -> handler ctx' val maxT
+                                    Nothing -> return ()
                                     )
                 _   -> Nothing)
             $ listeners
@@ -158,7 +161,7 @@ actuate ctx
                     SendB fromNode toNodes _bix
                         | fromNode == myNode
                         -> Just $ OnPossibleChange myNode bix False
-                            (\ _ maxT bixUpdates minT -> let
+                            (\ _ bmap -> let
                                 toNodes' = filter (/= myNode) $ case toNodes of
                                     All     -> Map.keys channels
                                     Some ns -> ns
@@ -166,7 +169,7 @@ actuate ctx
                                         sendChan = fst (channels Map.! toNode)
                                         in do
                                             putLog "Sending updates"
-                                            writeChan sendChan [UpdateListB bix maxT bixUpdates minT]
+                                            writeChan sendChan [UpdateListB bix bmap]
                             )
                     _ -> Nothing
                 GateIxE eix -> case circEvt circuit eix of
@@ -237,18 +240,26 @@ actuate ctx
                                 Just DI_Inf
                                     -> error "Got an event update even though maxT is already infinity"
                                 -- No data yet. This is the first event update so minT is 0
-                                Nothing -> D_Exactly 0
+                                Nothing -> DI_Exactly 0
                                 -- We have data up to time t, so
-                                Just (DI_Exactly t) -> D_JustAfter t
+                                Just (DI_Exactly t) -> DI_JustAfter t
             updates <- case inChanData of
                 InChan_RemoteUpdate ups -> return ups
                 InChan_LocalUpdate eix valA -> do
                     time <- getTime
-                    return [UpdateListE eix (toTime time) [(toTime time, valA)] (eixMinT eix)]
+                    return [UpdateListE eix (spanEMap (Just (eixMinT eix))
+                                                      [(time, valA)]
+                                                      (Just (DI_JustAfter time))
+                                            )]
+                        -- toTime time) [(toTime time, valA)] (eixMinT eix)]
                 InChan_Heartbeat -> do
                     time <- getTime
                     return $ map
-                        (\ (EventIx' eix) -> UpdateListE eix (toTime time) [] (eixMinT eix))
+                        (\ (EventIx' eix) -> UpdateListE eix
+                                (spanEMap (Just (eixMinT eix))
+                                []
+                                (Just (DI_JustAfter time)))
+                        )
                         allSourceEvts
             putLog $ "Got inChan updates for " ++ show updates
             let (newLiveCircuit, changes) = lcTransaction oldLiveCircuit updates
@@ -265,14 +276,14 @@ actuate ctx
             \ (OnPossibleChange respNode bix isLocalListener action) ->
                 -- TODO double forM_ is inefficient... maybe index changes on BehaviorIx?
                 when (respNode == myNode) $ forM_ changes $ \ case
-                    UpdateListB bix' maxT updates minT
+                    UpdateListB bix' bmap
                         -- | Just Refl <- eqT @(BehaviorIx bixO bixA) @(BehaviorIx bixO' bixA')
                         | bixVert bix == bixVert bix'
                         -> do
                             putLog $ "Found listener for bix: " ++ show bix
                             writeChan
                                 (if isLocalListener then listenersChan else outMsgChan)
-                                (action ctx maxT (unsafeCoerce updates) minT)
+                                (action ctx (unsafeCoerce bmap))
                             putLog $ "Sent listener action for bix: " ++ show bix
 
                     -- Note we don't support Event listeners (yet).

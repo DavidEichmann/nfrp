@@ -109,7 +109,7 @@ data Event node a where
     EIx    :: Owners node -> EventIx a -> Event node a
     Source :: node -> Event node localInput
     MapE   :: Owners node -> (a -> b) -> Event node a -> Event node b
-    Sample :: Owners node -> (Time -> a -> b -> c) -> Behavior node a -> Event node b -> Event node c
+    Sample :: Owners node -> (a -> b -> c) -> Behavior node a -> Event node b -> Event node c
     SendE  :: node   -- fromNode
           -> Owners node -- toNodes
           -> Event node a
@@ -120,7 +120,7 @@ toEix (EIx _ eix) = eix
 toEix _ = error "Expected EIx constructor"
 
 sample :: Eq node =>
-            (Time -> a -> b -> c)
+            (a -> b -> c)
             -> Behavior node a -> Event node b -> Event node c
 sample f b e = Sample (owners e `intersect` owners b) f b e
 -- sendE' :: Eq node =>

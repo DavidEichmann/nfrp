@@ -162,7 +162,7 @@ circuit = do
     pDirBothB    <- beh $ (,) <$> pDir <*> pDirD
     pDirBothOnEB <- beh
                     . step Nothing
-                    $ sample (\ _time valB _valE -> Just valB) pDirBothB playerDirE
+                    $ sample (\ valB _valE -> Just valB) pDirBothB playerDirE
 
     listenB Player pDirBothB    (\ _ a _ -> putStrLn $ "@@@ Expecting same: " ++ show a)
     listenB Player pDirBothOnEB (\ _ a _ -> putStrLn $ "@@@ Expecting diff: " ++ show a)

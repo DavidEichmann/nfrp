@@ -21,6 +21,8 @@ module Time
     ( Time
     , TimeD (..)
     , TimeDI (..)
+    , isExactlyDI
+    , isJustAfterDI
 
     , ToTime (..)
     , ToTimeErr (..)
@@ -91,6 +93,13 @@ instance ToTimeErr TimeDI TimeD where
         DI_JustAfter t -> D_JustAfter t
         DI_Inf -> error $ "toTimeErr: " ++ err
 
+isExactlyDI :: TimeDI -> Bool
+isExactlyDI (DI_Exactly _) = True
+isExactlyDI _ = False
+
+isJustAfterDI :: TimeDI -> Bool
+isJustAfterDI (DI_JustAfter _) = True
+isJustAfterDI _ = False
 
 (<.) :: CompareTime a b => a -> b -> Bool
 a <. b = LT == compareTime a b
