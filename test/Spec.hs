@@ -74,25 +74,25 @@ tests = testGroup "lcTransaction"
             lookupBMap (DI_Exactly 31) abc @?= Nothing
         ]
 
-    -- TODO I need to work toward having pure tests for live circuits. This is a good start, but it's super inconvenient
-    -- to define a new test.
-    ^^^^^ TODO
+    -- -- TODO I need to work toward having pure tests for live circuits. This is a good start, but it's super inconvenient
+    -- -- to define a new test.
+    -- ^^^^^ TODO
 
-    , testGroup "Live Circuit"
-        [ testGroup "lcTransaction"
-            [ testCase "A" $ do
-                let (circuit, _listeners, SourceEvent Nodes1_A eIx) = buildCircuit $ do
-                        (se, e) <- newSourceEvent Nodes1_A
-                        b <- beh (step "a" e)
-                        return (se, b)
-                    (lc0, ups0) = mkLiveCircuit Nodes1_A circuit
-                    (lc1, ups1) = lcTransaction
-                        lc
-                        [UpdateListE eIx (spanEMap (Just 0) [(1, "b"), (3, "d"), (4, "e")] (Just 10))]
-                ups1 @?= []
-                return ()
-            ]
-        ]
+    -- , testGroup "Live Circuit"
+    --     [ testGroup "lcTransaction"
+    --         [ testCase "A" $ do
+    --             let (circuit, _listeners, SourceEvent Nodes1_A eIx) = buildCircuit $ do
+    --                     (se, e) <- newSourceEvent Nodes1_A
+    --                     b <- beh (step "a" e)
+    --                     return (se, b)
+    --                 (lc0, ups0) = mkLiveCircuit Nodes1_A circuit
+    --                 (lc1, ups1) = lcTransaction
+    --                     lc
+    --                     [UpdateListE eIx (spanEMap (Just 0) [(1, "b"), (3, "d"), (4, "e")] (Just 10))]
+    --             ups1 @?= []
+    --             return ()
+    --         ]
+    --     ]
     ]
 
 data Nodes1 = Nodes1_A
