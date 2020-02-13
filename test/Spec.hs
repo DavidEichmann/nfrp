@@ -35,8 +35,9 @@ tests = testGroup "lcTransaction"
         , testProperty "DI_JustAfter t == delayTime (DI_JustAfter t)"
                 (\ t -> DI_JustAfter t == delayTime (DI_JustAfter t))
         ]
-    , testGroup "Gate"
-        [
+    , testGroup "Behavior"
+        [ testProperty "Eq reflective" (\ (x :: Behavior Int) -> x == x)
+        , testProperty "Eq step ()" (\ (x :: Event ()) -> step () x == pure ())
         --     testProperty "instantaneousBMap maxT"
         --     (\ t (x :: Int) -> let bmap = instantaneousBMap (toTime t) x
         --         in gateMaxT bmap == Just (DI_Exactly t)

@@ -20,15 +20,18 @@
 
 module GateRep
     ( Behavior
-    -- , Event
     -- , toOccB
     , sampleB
     -- , step
     , watchB
+    , listToB
+    , Event
+    , step
+    , eventToList
     ) where
 
 import Control.Concurrent
--- import Data.Maybe (isNothing)
+import Data.Maybe (fromMaybe)
 import Data.List (nub)
 import Test.QuickCheck
 
@@ -46,9 +49,19 @@ data Behavior a
         (Behavior a)     -- ^ Values after t
     | Value a
     -- ^ Value in the current time span.
-    deriving (Functor)
+    deriving (Functor, Show)
 
--- instance Semigroup (Behavior a) where
+instance Eq a => Eq (Behavior a) where
+    a == b = alwaysB (==True) ((==) <$> a <*> b)
+
+-- | Requires full evaluation
+alwaysB :: (a -> Bool) -> Behavior a -> Bool
+alwaysB f (Value a) = f a
+alwaysB f (Split left _ _ right) = alwaysB f left && alwaysB f right
+
+-- | Basically a (delayed) step function but more convenient.
+listToB :: a -> [(Time, a)] -> Behavior a
+listToB initA events = step initA (listToE events)
 
 instance Applicative Behavior where
     pure = Value
@@ -143,13 +156,42 @@ watchB btop notifyPart = forkIO (go X_NegInf btop X_Inf)
         _ <- forkIO $ go lo left (if isLeft then X_Exactly t else X_JustBefore t)
         go (if isLeft then X_JustAfter t else X_Exactly t) right hi
 
--- -- | Event occurence
--- data Occ a = Occ a | NoOcc
+-- | Event occurence
+data Occ a = NoOcc | Occ a
+    deriving (Eq,Show)
 
--- newtype Event a = Event { toOccB :: Behavior (Occ a) }
+newtype Event a = Event { toOccB :: Behavior (Occ a) }
 
--- step :: a -> Event a -> Behavior a
--- step _ _ = _ -- use initial value with time at -Inf
+instance Show a => Show (Event a) where
+    show e = "Event " ++ show (eventToList e)
+
+listToE :: [(Time, a)] -> Event a
+listToE [] = Event (Value NoOcc)
+listToE ((t,a):es)
+    = Event $ Split (Value NoOcc) t False
+        (Split (Value (Occ a)) t True (toOccB (listToE es)))
+
+eventToList :: Event a -> [(Time, a)]
+eventToList (Event b) = go b
+    where
+    go (Value NoOcc) = []
+    go (Value _) = error "eventToList: found non instantaneous Event occ."
+    go (Split (Value (Occ a)) t True r) = (t,a) : go r
+    go (Split l _ _ r) = go l ++ go r
+
+step :: forall a . a -> Event a -> Behavior a
+step initA (Event btop) = fromMaybe (Value initA) (go True btop)
+    where
+    -- Remove NoOcc. If NoOcc return Nothing
+    go :: Bool -> Behavior (Occ a) -> Maybe (Behavior a)
+    go False      (Value NoOcc) = Nothing
+    go True       (Value NoOcc) = Just (Value initA)
+    go _          (Value (Occ a)) = Just (Value a)
+    go isLeftMost (Split left t inc right) = case (go isLeftMost left, go False right) of
+        (Nothing, Nothing) -> Nothing
+        (Just a , Nothing) -> Just a
+        (Nothing, Just a ) -> Just a
+        (Just a , Just b ) -> Just (Split a t inc b)
 
 instance Arbitrary a => Arbitrary (Behavior a) where
     arbitrary = do
@@ -171,3 +213,19 @@ instance Arbitrary a => Arbitrary (Behavior a) where
                     a <- arbitrary
                     return (Split l t False (Split (Value a) t True r))
                 ]
+
+
+instance Arbitrary a => Arbitrary (Event a) where
+    arbitrary = do
+        times <- orderedList
+        Event <$> go (nub times)
+        where
+        go :: [Time] -> Gen (Behavior (Occ a))
+        go [] = pure (Value NoOcc)
+        go ts = do
+            sizeL <- choose (0,length ts - 1)
+            l <- go (take sizeL ts)
+            let t = ts !! sizeL
+            r <- go (drop (sizeL + 1) ts)
+            a <- arbitrary
+            return (Split l t False (Split (Value (Occ a)) t True r))
