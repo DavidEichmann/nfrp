@@ -128,7 +128,7 @@ actuate ctx
 
     let (circuit, listeners, mkCircuitOut) = buildCircuit mkCircuit
 
-        enableLog = False
+        enableLog = True
 
         putLog :: String -> IO ()
         putLog str = when enableLog $ putStrLn $ "\033[34" ++ show myNode ++ "\033[0m: " ++ str
@@ -208,7 +208,7 @@ actuate ctx
     _asRcv <- forM (Map.assocs channels) $ \(_otherNode, (_, recvChan)) -> forkIO
         . readUntillStop recvChan $ \ recvVal -> do
             writeChan inChan (InChan_RemoteUpdate recvVal)
-            putLog "received input"
+            putLog ("received input: " ++ show recvVal)
 
     -- Heartbeat
     _aHrtbt <- let loop = do
