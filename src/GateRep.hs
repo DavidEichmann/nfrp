@@ -31,8 +31,11 @@ module GateRep
     ) where
 
 import Control.Concurrent
+import qualified Control.Concurrent.Chan as C
+import Data.List (nub, partition)
 import Data.Maybe (fromMaybe)
-import Data.List (nub)
+import qualified Data.Map as M
+import System.IO.Unsafe (unsafeInterleaveIO)
 import Test.QuickCheck
 
 import Time
@@ -192,6 +195,53 @@ step initA (Event btop) = fromMaybe (Value initA) (go True btop)
         (Just a , Nothing) -> Just a
         (Nothing, Just a ) -> Just a
         (Just a , Just b ) -> Just (Split a t inc b)
+
+sourceEvent :: IO ( TimeX -> Time -> a -> TimeX -> IO ()
+                  -- ^ Update the event
+                  --      (knowlage start, knowlage start is , event time, event value, knowlage stop)
+                  , Event a
+                  )
+sourceEvent = do
+    -- TODO make this more efficient!
+    updatesChan <- C.newChan
+    let updater lo t a hi = C.writeChan updatesChan (lo, t, a, hi)
+    updates <- C.getChanContents updatesChan
+    let event = Event (go X_NegInf X_Inf updates)
+        go _ _ [] = Value NoOcc -- This should never actually happen. We dont't close the chan.
+        go minLo maxHi ((lo, t, a, hi):xs)
+            | lo < minLo = error "Source Event: knowlage overlaps existing knowlage. DId you pass the wrong knowlage start time?"
+            | hi > maxHi = error "Source Event: knowlage overlaps existing knowlage. DId you pass the wrong knowlage end time?"
+            | tx < lo || tx > hi
+                         = error "Source Event: event time is outside of knowlage span"
+            | otherwise = (error "TODO") {-
+                -- [minLow <= lo <= tx <= hi <= hiMax]
+
+                -- Assuming
+                -- [minLow < lo < tx < hi < hiMax]
+                = Split
+                    _
+                    t False
+                    ( Split
+                        (Value a)
+                        t True
+                        ( case hi of
+                            X_Exactly hiT   -> Split (Value NoOcc) hiT True (go rs)
+                            X_JustAfter hiT -> Split (Value NoOcc) hiT True (go rs)
+                        )
+                    )
+                    -}
+            where
+                (ls,rs) = partition (error "TODO") xs
+
+                tx = X_Exactly t
+        -- | otherwise = error "Source Event update: expected: knowlageStart <= eventT <= knowlageEnd"
+
+
+
+    return ( updater
+           , event
+           )
+
 
 instance Arbitrary a => Arbitrary (Behavior a) where
     arbitrary = do
