@@ -35,6 +35,8 @@ module Time
     , (==.)
     ) where
 
+import Test.QuickCheck
+
 -- EQSimple time
 type Time = Integer -- TODO Int64? nanoseconds?
 
@@ -156,3 +158,30 @@ instance DelayTime TimeDI where
     -- NOTE that we apply the general assumption that 2 infinitesimals == 1 infinitesmal
     delayTime (DI_JustAfter t) = DI_JustAfter t
     delayTime DI_Inf           = DI_Inf
+
+instance Num TimeDI where
+    (DI_Exactly a) + (DI_Exactly b) = DI_Exactly (a+b)
+    (DI_Exactly a) + (DI_JustAfter b) = DI_JustAfter (a+b)
+    (DI_JustAfter a) + (DI_Exactly b) = DI_JustAfter (a+b)
+    (DI_JustAfter a) + (DI_JustAfter b) = DI_JustAfter (a+b)
+    DI_Inf + _ = DI_Inf
+    _ + DI_Inf = DI_Inf
+    (*) = error "TODO instance Num TimeDI (*)"
+    abs (DI_Exactly a) = (DI_Exactly (abs a))
+    abs (DI_JustAfter a) = (DI_JustAfter (abs a))
+    abs DI_Inf = DI_Inf
+    signum = error "TODO instance Num TimeDI signum"
+    fromInteger = DI_Exactly
+    negate = error "TODO instance Num TimeDI negate"
+
+instance Arbitrary TimeD where
+    arbitrary = oneof
+                    [ D_Exactly   <$> arbitrary
+                    , D_JustAfter <$> arbitrary
+                    ]
+instance Arbitrary TimeDI where
+    arbitrary = frequency
+                    [ (10, DI_Exactly   <$> arbitrary)
+                    , (10, DI_JustAfter <$> arbitrary)
+                    , (1, pure DI_Inf)
+                    ]

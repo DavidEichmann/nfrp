@@ -36,6 +36,8 @@ module GateRep
     ) where
 
 import Data.Maybe (isNothing)
+import Data.List (nub)
+import Test.QuickCheck
 
 import Time
 
@@ -60,7 +62,7 @@ newtype BMap a = BMap { unBMap :: [(TimeDI, Maybe a)] }
     --   * Strictly decreasing time:  t(i) > t(i+1)
     --   * No 2 consecutive Nothings
     --   * Final element (if exists) must be a Just
-    deriving (Functor)
+    deriving (Show,Functor)
 
 -- | This defines the denotation of BMap
 -- Lookup the value of a behavior at a given time.
@@ -175,7 +177,9 @@ zipBMap f (BMap allAs) (BMap allBs) = BMap (go allAs allBs)
 --   * Final element (if exists) must be a Just
 --
 cleanBMapErr :: String -> [(TimeDI, Maybe a)] -> BMap a
-cleanBMapErr errMsg allXs = BMap (clean allXs)
+cleanBMapErr errMsg allXs = BMap $ case allXs of
+    (DI_Inf,_):xs -> clean xs
+    _ -> clean allXs
     where
     clean [] = []
     -- Final element (if exists) must be a Just
@@ -354,3 +358,26 @@ sampleEMap f bmap emap = cleanEMapErr "sampleEMap" $ unBMap $ zipBMap zipper bma
 --     -> EMap b
 --     -> EMap c
 -- zipEMap f emapA emapB = EMap $ zipBMap f (emapToBMap emapA) (emapToBMap emapB)
+
+instance Arbitrary a => Arbitrary (BMap a) where
+    arbitrary = frequency
+        [ (1, pure (BMap []))
+        , (1, instantaneousBMap <$> arbitrary <*> arbitrary)
+        , (1, constBMap <$> arbitrary <*> arbitrary)
+        , (3, do
+            start <- arbitrary
+            Positive duration <- arbitrary
+            -- TODO once we fix the "headBMap: Oh shit!" todo, then allow arbitrary timeDI here.
+            spanBMap (DI_Exactly start) <$> arbitrary <*> pure (DI_JustAfter (start + duration)))
+
+        -- TODO enable on solve of oh shit! bug
+        -- , (12, do
+        --     times <- nub <$> orderedList
+        --     valuesMay <- infiniteList
+        --     valuesMay0 <- arbitrary
+        --     return
+        --         $ cleanBMapErr " Arbitrary (BMap a)"
+        --         $ reverse
+        --         $ zip times valuesMay
+        --   )
+        ]
