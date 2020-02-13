@@ -23,6 +23,8 @@ import Data.Map as Map
 import Data.IORef
 import Control.Concurrent (threadDelay, forkIO)
 
+main = putStrLn "TODO"
+{-}
 -- Lets make a simple calculator example with 3 clients and a server that we want to do that calculating.
 data Node
     = Player
@@ -189,3 +191,5 @@ dirToPos DirLeft  = (-20, 0)
 --         <- (beh $ Step []) <$> fmap (\ () -> _) inDirE
 
 --     _
+
+-}

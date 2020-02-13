@@ -21,6 +21,7 @@ module Time
     ( Time
     , TimeD (..)
     , TimeDI (..)
+    , TimeX (..)
     , isExactlyDI
     , isJustAfterDI
 
@@ -64,6 +65,15 @@ data TimeDI
     | DI_JustAfter Time
     | DI_Inf
     deriving (Show, Eq)
+
+data TimeX
+    = X_NegInf
+    | X_JustBefore Time
+    | X_Exactly Time
+    | X_JustAfter Time
+    | X_Inf
+    deriving (Show, Eq)
+
 
 type family BigTime a b where
     BigTime Time Time     = Time
@@ -144,6 +154,34 @@ instance Ord TimeDI where
         LT -> LT
         EQ -> GT
         GT -> GT
+
+instance Ord TimeX where
+    compare X_NegInf X_NegInf = EQ
+    compare X_NegInf _        = GT
+    compare _        X_NegInf = LT
+
+    compare X_Inf X_Inf = EQ
+    compare X_Inf _     = GT
+    compare _     X_Inf = LT
+
+    compare (X_JustBefore a) (X_JustBefore b) = compare a b
+    compare (X_Exactly    a) (X_Exactly    b) = compare a b
+    compare (X_JustAfter  a) (X_JustAfter  b) = compare a b
+
+    compare (X_JustBefore a) (X_Exactly    b) = compareBiased LT a b
+    compare (X_JustBefore a) (X_JustAfter  b) = compareBiased LT a b
+    compare (X_Exactly    a) (X_JustAfter  b) = compareBiased LT a b
+
+    compare (X_Exactly    a) (X_JustBefore b) = compareBiased GT a b
+    compare (X_JustAfter  a) (X_JustBefore b) = compareBiased GT a b
+    compare (X_JustAfter  a) (X_Exactly    b) = compareBiased GT a b
+
+compareBiased :: Ord a => Ordering -> a -> a -> Ordering
+compareBiased o a b = case compare a b of
+    LT -> LT
+    EQ -> o
+    GT -> GT
+
 
 class DelayTime t where
     delayTime :: t -> t

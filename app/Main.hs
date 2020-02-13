@@ -16,6 +16,9 @@
 
 module Main where
 
+main = putStrLn "TODO"
+
+{-}
 import NFRP
 import Simulate
 
@@ -127,3 +130,5 @@ main = mdo
 
     -- Stop the FRP.
     stop
+
+-}

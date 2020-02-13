@@ -19,18 +19,18 @@
 
 module NFRP
     (
-    -- Framework
-      actuate
+    -- -- Framework
+    --   actuate
 
-    -- , SomeNode (..)
-    -- , ReifySomeNode (..)
+    -- -- , SomeNode (..)
+    -- -- , ReifySomeNode (..)
 
-    , Sing (..)
-    , EventInjector
-    , injectEvent
-    , module Circuit
-    , module Time
-
+    -- , Sing (..)
+    -- , EventInjector
+    -- , injectEvent
+    -- , module Circuit
+    -- , module Time
+    module GateRep
     ) where
 
 import Control.Monad.State
@@ -65,6 +65,7 @@ then there is no way to delay events.
 
 -}
 
+{-
 heartbeatFeq :: Int
 heartbeatFeq = 1 -- per second
 
@@ -300,3 +301,4 @@ actuate ctx
     putLog "Started all threads."
 
     return (stop, mkCircuitOut, injectInput, getTime)
+-}

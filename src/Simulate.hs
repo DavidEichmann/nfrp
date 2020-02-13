@@ -14,7 +14,7 @@
 {-# LANGUAGE GADTs #-}
 
 module Simulate where
-
+{-}
 import Data.Kind
 import Data.Map (Map, fromList, (!), empty, insert)
 
@@ -94,3 +94,4 @@ simulate circuitM allNodeCtxMay clockSyncNode = do
         )
         (return(), empty, empty, empty)
         allNodeCtxMay
+        -}
