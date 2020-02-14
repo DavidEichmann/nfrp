@@ -40,8 +40,8 @@ tests = testGroup "lcTransaction"
         , testProperty "Eq step ()" (\ (x :: Event ()) -> step () x == pure ())
         , testProperty "listToE == eventToList" (\ (x :: Event Int) -> eventToList (listToE (eventToList x)) == eventToList x)
         , testCase "updatesToEvent lazyness" $ do
-                let x = take 3 $ eventToList $ updatesToEvent [(X_NegInf, -100, "-100", 1), (1,2,"a",5),(2,3,"b",4), lazinessErr]
-                x @?= [(-100, "-100"), (2,"a"), (3,"b")]
+                let x = take 2 $ eventToList $ updatesToEvent [(X_NegInf,2,"a",5),(5,6,"b",7), lazinessErr]
+                x @?= [(2,"a"), (6,"b")]
 
         , testCase "listToB" $ do
                 let b = listToB "0" [(0,"a"), (10, "b"), (20, "c")]

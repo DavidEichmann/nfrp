@@ -34,10 +34,15 @@ module GateRep
     ) where
 
 import Control.Concurrent
+import Control.Concurrent.STM
 import qualified Control.Concurrent.Chan as C
+import Control.Monad (when)
 import Data.List (group, nub, partition)
 import Data.Maybe (fromMaybe)
+import qualified Data.Map as M
 import Test.QuickCheck
+
+import Debug.Trace
 
 import Time
 
@@ -110,12 +115,12 @@ instance Applicative Behavior where
 -- TODO with our rep starting at -Inf instead of 0 we dont need to insert a new intial value!
 -- This seems fishy.
 delay :: Behavior a -> Behavior a
-delay v = go v X_Inf
+delay top = go top X_Inf
     where
-    go (Split left t right) max =
+    go (Split left t right) hi =
         let
         t' = delayTime t
-        in if t' == max
+        in if t' == hi
             then go right t'
             else Split (go left t') t' (go right t)
     go v _ = v
@@ -162,12 +167,14 @@ listToE ((t,a):es)
         (Split (Value (Occ a)) (X_Exactly t) (toOccB (listToE es)))
 
 eventToList :: Event a -> [(Time, a)]
-eventToList (Event b) = go b
+eventToList (Event b) = go X_NegInf X_Inf b
     where
-    go (Value NoOcc) = []
-    go (Value _) = error "eventToList: found non instantaneous Event occ."
-    go (Split (Value (Occ a)) (X_Exactly t) r) = (t,a) : go r
-    go (Split l _ r) = go l ++ go r
+    -- lo (exclusive)  hi (inclusive)
+    go _ _ (Value NoOcc) = []
+    go (X_JustBefore lo) (X_Exactly hi) (Value (Occ a))
+        | lo == hi = [(lo, a)]
+    go lo hi (Value (Occ _)) = error $ "eventToList: Found non-instantaneous event spanning time (exclusive, inclusive): " ++ show (lo,hi)
+    go lo hi (Split l t r) = go lo t l ++ go t hi r
 
 -- Delayed step.
 step :: a -> Event a -> Behavior a
@@ -202,7 +209,20 @@ sourceEvent :: IO ( TimeX -> Time -> a -> TimeX -> IO ()
 sourceEvent = do
     -- TODO make this more efficient! We probably need to optimize for appending to the end of the known time.
     updatesChan <- C.newChan
-    let updater lo t a hi = C.writeChan updatesChan (lo, t, a, hi)
+    knowlageCoverTVar <- newTVarIO M.empty  -- Map from known time span low (exclusive) to that times span's hi (inclusive)
+    let updater lo t a hi = do
+            -- Check for overlap with knowlage
+            hasOverlap <- atomically $ do
+                knowlageCover <- readTVar knowlageCoverTVar
+                let hi' = fromMaybe X_Inf    (snd <$> M.lookupLE lo knowlageCover)
+                    lo' = fromMaybe X_NegInf (fst <$> M.lookupGE lo knowlageCover)
+                if hi' < lo && hi <= lo'
+                    then do
+                        modifyTVar knowlageCoverTVar (M.insert lo hi) -- insert new entry
+                        return False
+                    else return True
+            when hasOverlap (fail $ "Source Event: updated overlaps existing knowlage. (lo, t, hi) = " ++ show (lo, t, hi))
+            C.writeChan updatesChan (lo, t, a, hi)
     updates <- C.getChanContents updatesChan
     let event = updatesToEvent updates
     return ( updater
@@ -253,9 +273,8 @@ updatesToEvent updates = Event (go X_NegInf X_Inf updates)
             split2 v1 t1 v2 t2 v3 = Split v1 t1 (Split v2 t2 v3)
             split3 v1 t1 v2 t2 v3 t3 v4 = Split (Split v1 t1 v2) t2 (Split v3 t3 v4)
             split4 v1 t1 v2 t2 v3 t3 v4 t4 v5  = Split (Split v1 t1 v2) t2 (Split v3 t3 (Split v4 t4 v5))
-            split5 v1 t1 v2 t2 v3 t3 v4 t4 v5 t5 v6  = Split (Split v1 t1 (Split v2 t2 v3)) t3 (Split v4 t4 (Split v5 t5 v6))
             goLeft = go minExc lo ls
-            goRight = go hi maxInc ls
+            goRight = go hi maxInc rs
             noOcc = Value NoOcc
             occ = Value (Occ a)
             tx = X_Exactly t
@@ -270,7 +289,7 @@ updatesToEvent updates = Event (go X_NegInf X_Inf updates)
             -- passing style and automatically pass to the right, then the
             -- first check for the next element should be on the right most
             -- spot (Just  my rough toughts).
-            (ls,rs) = partition (\ (lo',_,_,_) -> lo' <= X_JustBefore t) xs
+            (ls,rs) = partition (\ (lo',_,_,_) -> lo' < tx) xs
                 -- ^ NOTE the condition is pretty loose, but is sufficient
                 -- for partitioning. The go function will validate the
                 -- range.
