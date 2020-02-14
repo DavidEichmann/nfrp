@@ -157,8 +157,8 @@ instance Ord TimeDI where
 
 instance Ord TimeX where
     compare X_NegInf X_NegInf = EQ
-    compare X_NegInf _        = GT
-    compare _        X_NegInf = LT
+    compare X_NegInf _        = LT
+    compare _        X_NegInf = GT
 
     compare X_Inf X_Inf = EQ
     compare X_Inf _     = GT
@@ -197,6 +197,13 @@ instance DelayTime TimeDI where
     delayTime (DI_JustAfter t) = DI_JustAfter t
     delayTime DI_Inf           = DI_Inf
 
+instance DelayTime TimeX where
+    delayTime (X_JustBefore t) = X_JustAfter t
+    delayTime (X_Exactly t)   = X_JustAfter t
+    -- NOTE that we apply the general assumption that 2 infinitesimals == 1 infinitesmal
+    delayTime (X_JustAfter t) = X_JustAfter t
+    delayTime t           = t
+
 instance Num TimeDI where
     (DI_Exactly a) + (DI_Exactly b) = DI_Exactly (a+b)
     (DI_Exactly a) + (DI_JustAfter b) = DI_JustAfter (a+b)
@@ -212,6 +219,49 @@ instance Num TimeDI where
     fromInteger = DI_Exactly
     negate = error "TODO instance Num TimeDI negate"
 
+instance Num TimeX where
+    (X_Exactly a) + (X_Exactly b) = X_Exactly (a+b)
+    (X_JustAfter a) + (X_JustAfter b) = X_JustAfter (a+b)
+    (X_JustBefore a) + (X_JustBefore b) = X_JustBefore (a+b)
+    (X_Exactly a) + (X_JustAfter b) = X_JustAfter (a+b)
+    (X_Exactly a) + (X_JustBefore b) = X_JustBefore (a+b)
+    (X_JustAfter a) + (X_Exactly b) = X_JustAfter (a+b)
+    (X_JustBefore b) + (X_Exactly a) = X_JustBefore (a+b)
+    (X_JustBefore _) + (X_JustAfter _) = error "(X_JustBefore _) + (X_JustAfter _)"
+    (X_JustAfter _) + (X_JustBefore _) = error "(X_JustBefore _) + (X_JustAfter _)"
+    X_Inf + X_NegInf = error "X_Inf + XNegIng"
+    X_NegInf + X_Inf = error "X_Inf + XNegIng"
+    X_Inf + _ = X_Inf
+    _ + X_Inf = X_Inf
+    X_NegInf + _ = X_NegInf
+    _ + X_NegInf = X_NegInf
+
+    (*) = error "TODO instance Num TimeX (*)"
+
+    abs X_NegInf = X_Inf
+    abs t@(X_JustBefore a)
+        | a < 0     = (X_JustAfter (abs a))
+        | otherwise = t
+    abs (X_Exactly a) = (X_Exactly (abs a))
+    abs t@(X_JustAfter a)
+        | a < 0     = (X_JustBefore (abs a))
+        | otherwise = t
+    abs X_Inf = X_Inf
+
+    signum X_NegInf = -1
+    signum (X_JustBefore a) = X_Exactly (signum a)
+    signum (X_Exactly a)    = X_Exactly (signum a)
+    signum (X_JustAfter a)  = X_Exactly (signum a)
+    signum X_Inf = 1
+
+    fromInteger = X_Exactly
+
+    negate X_NegInf = X_Inf
+    negate (X_JustBefore a) = X_JustAfter (-a)
+    negate (X_Exactly a)    = X_Exactly (-a)
+    negate (X_JustAfter a)  = X_JustBefore (-a)
+    negate X_Inf = X_NegInf
+
 instance Arbitrary TimeD where
     arbitrary = oneof
                     [ D_Exactly   <$> arbitrary
@@ -222,4 +272,12 @@ instance Arbitrary TimeDI where
                     [ (10, DI_Exactly   <$> arbitrary)
                     , (10, DI_JustAfter <$> arbitrary)
                     , (1, pure DI_Inf)
+                    ]
+instance Arbitrary TimeX where
+    arbitrary = frequency
+                    [ (10, X_Exactly   <$> arbitrary)
+                    , (10, X_JustAfter <$> arbitrary)
+                    , (10, X_JustBefore <$> arbitrary)
+                    , (1, pure X_Inf)
+                    , (1, pure X_NegInf)
                     ]

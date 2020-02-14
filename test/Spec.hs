@@ -35,9 +35,24 @@ tests = testGroup "lcTransaction"
         , testProperty "DI_JustAfter t == delayTime (DI_JustAfter t)"
                 (\ t -> DI_JustAfter t == delayTime (DI_JustAfter t))
         ]
-    , testGroup "Behavior"
+    , testGroup "Gate"
         [ testProperty "Eq reflective" (\ (x :: Behavior Int) -> x == x)
         , testProperty "Eq step ()" (\ (x :: Event ()) -> step () x == pure ())
+        , testProperty "listToE == eventToList" (\ (x :: Event Int) -> eventToList (listToE (eventToList x)) == eventToList x)
+        , testCase "updatesToEvent lazyness" $ do
+                let x = take 3 $ eventToList $ updatesToEvent [(X_NegInf, -100, "-100", 1), (1,2,"a",5),(2,3,"b",4), lazinessErr]
+                x @?= [(-100, "-100"), (2,"a"), (3,"b")]
+
+        , testCase "listToB" $ do
+                let b = listToB "0" [(0,"a"), (10, "b"), (20, "c")]
+                sampleB b (-1) @=? "0"
+                sampleB b 0 @=? "0"
+                sampleB b 1 @=? "a"
+                sampleB b 10 @=? "a"
+                sampleB b 15 @=? "b"
+                sampleB b 20 @=? "b"
+                sampleB b 21 @=? "c"
+
         --     testProperty "instantaneousBMap maxT"
         --     (\ t (x :: Int) -> let bmap = instantaneousBMap (toTime t) x
         --         in gateMaxT bmap == Just (DI_Exactly t)
@@ -96,5 +111,7 @@ tests = testGroup "lcTransaction"
     --         ]
     --     ]
     ]
+
+lazinessErr = error "A value was evaluated unexpectedly"
 
 data Nodes1 = Nodes1_A
