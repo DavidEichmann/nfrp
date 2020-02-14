@@ -42,8 +42,6 @@ import Data.Maybe (fromMaybe)
 import qualified Data.Map as M
 import Test.QuickCheck
 
-import Debug.Trace
-
 import Time
 
 -- TODO get this by watching a regular behavior
@@ -212,16 +210,22 @@ sourceEvent = do
     knowlageCoverTVar <- newTVarIO M.empty  -- Map from known time span low (exclusive) to that times span's hi (inclusive)
     let updater lo t a hi = do
             -- Check for overlap with knowlage
-            hasOverlap <- atomically $ do
+            hasOverlapMay <- atomically $ do
                 knowlageCover <- readTVar knowlageCoverTVar
-                let hi' = fromMaybe X_Inf    (snd <$> M.lookupLE lo knowlageCover)
-                    lo' = fromMaybe X_NegInf (fst <$> M.lookupGE lo knowlageCover)
-                if hi' < lo && hi <= lo'
+                let minLoExcMay = snd <$> M.lookupLE lo knowlageCover
+                    maxHiIncMay = fst <$> M.lookupGE lo knowlageCover
+                if maybe True (<= lo) minLoExcMay && maybe True (hi <=) maxHiIncMay
                     then do
                         modifyTVar knowlageCoverTVar (M.insert lo hi) -- insert new entry
-                        return False
-                    else return True
-            when hasOverlap (fail $ "Source Event: updated overlaps existing knowlage. (lo, t, hi) = " ++ show (lo, t, hi))
+                        return Nothing
+                    else return (Just (minLoExcMay, maxHiIncMay))
+            case hasOverlapMay of
+                Just validRange
+                    -> fail $ "Source Event: updated overlaps existing knowlage. (lo, t, hi) = "
+                            ++ show (lo, t, hi)
+                            ++ ", (minLoExc, maxHiInc) = "
+                            ++ show validRange
+                Nothing -> return ()
             C.writeChan updatesChan (lo, t, a, hi)
     updates <- C.getChanContents updatesChan
     let event = updatesToEvent updates
