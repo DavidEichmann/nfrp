@@ -2,6 +2,18 @@
 
 Describe interactive programs using FRP constructs and let NFRP handle all the networking.
 
+
+## Awesome things (mostly TODOs :-P about this system)
+
+* Networked FRP
+    * No More data races ever!
+* Parallel computation
+* arbitrary time delays
+* Time delay to infinity!
+    * Usefull if you know a behaviour will be constant at some point and you want to ask what the final value is though it's a bit subtle: it will only work if your input behavior becomes evaluated at infinity. If it is e.g. a stepped behavior and you just filter the input event, and you know no more events will get through, The derived behavior wont really know that. If you have some constructs that just crop the behavior and set avalue till infinity, then that would work.
+* Simple implementation means GC can go to town on the internal data structures! If we only try to observe the latest values, then we'll only hole references to the tip of the internal structure. The rest can be GC'd... of course we'd have to be carefull here, any reference to the original behavior will keep it and all dependant gates' full history alive!
+
+
 ## Motivation
 
 Network programming is hard! Even when building upon reliable protocols like TCP, network latency is always an issue. As a result, the timing and ordering of events observed in a network will differ from node to node. Ideally we want to be able to reason in terms of some globally correct state, but this is hard to do when timing/ordering is inconsistent. One solution is to use a Client-Server model where the server defines the global correct state and the clients are simply informed of updates. This is simple, but also means that all network packages must pass through that server, potentially doubling latency. A more distributed model could send messages directly between nodes, avoiding the extra latency, but it seems much harder to reason about a global correct state. NFRP aims at the distributed model while letting you easily reason about a global correct state.
