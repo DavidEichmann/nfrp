@@ -20,11 +20,12 @@
 
 module GateRep
     ( Behavior
-    -- , toOccB
+    -- , unEvent
     , sampleB
     -- , step
     , watchB
     , listToB
+    , listToBI
     , Event
     , sourceEvent
     , listToE
@@ -44,10 +45,6 @@ import Test.QuickCheck
 
 import Time
 
--- TODO get this by watching a regular behavior
--- -- | like Behavior but incorporates knowlage explcitely as a Maybe.
--- newtype StrictBehavior a = StrictBehavior (Behavior (Maybe a))
-
 data Behavior a
     = Split
         (Behavior a)     -- ^ Values up to and Including t
@@ -65,7 +62,16 @@ alwaysB :: (a -> Bool) -> Behavior a -> Bool
 alwaysB f (Value a) = f a
 alwaysB f (Split left _ right) = alwaysB f left && alwaysB f right
 
--- | Basically a (delayed) step function but more convenient.
+-- | Basically a step function where you control the TimeX (inclusive) that value start.
+listToBX :: a -> [(TimeX, a)] -> Behavior a
+listToBX initA0 [] = (Value initA0)
+listToBX initA0 ((initET, initEA):events) = Split (Value a) initET (listToBX initEA events)
+
+-- | Basically a (immediate) step function but more convenient fr creating behaviors.
+listToBI :: a -> [(Time, a)] -> Behavior a
+listToBI initA events = stepI initA (listToE events)
+
+-- | Basically a (delayed) step function but more convenient fr creating behaviors.
 listToB :: a -> [(Time, a)] -> Behavior a
 listToB initA events = step initA (listToE events)
 
@@ -133,26 +139,27 @@ sampleB b t = go b
         | tx <= t'   = go left
         | otherwise  = go right
 
--- | Watch a Behavior, sening data to a callback as they are evaluated
-watchB
-    :: Behavior a
-    -> ((TimeX, a, TimeX) -> IO ())
-    -- ^ IO function to call with (start time inc., value, end time inclusive)
-    -- Will always be called on it's own thread and possibly concurrently.
-    -- Note the value is lazy but the times are strict
-    -> IO ThreadId
-watchB btop notifyPart = forkIO (go X_NegInf btop X_Inf)
-    where
-    go !lo (Value a) !hi = notifyPart (lo, a, hi)
-    go !lo (Split left t right) !hi = do
-        _ <- forkIO $ go lo left t
-        go t right hi
+-- -- | Watch a Behavior, sening data to a callback as they are evaluated
+-- watchB
+--     :: Behavior a
+--     -> (BehaviorPart a -> IO ())
+--     -- ^ IO function to call with partial behavior value.
+--     -- Will always be called on it's own thread and possibly concurrently.
+--     -- Note the value is lazy but the times are strict
+--     -> IO ThreadId
+-- watchB btop notifyPart = forkIO (go X_NegInf btop X_Inf)
+--     where
+--     -- lo is exclusive and hi is inclusive of the current time span.
+--     go !lo (Value a) !hi = notifyPart (listToBX Unknown [(delayTime lo, Known a), (hi, Unknown)])
+--     go !lo (Split left t right) !hi = do
+--         _ <- forkIO $ go lo left t
+--         go t right hi
 
 -- | Event occurence
 data Occ a = NoOcc | Occ a
     deriving (Eq,Show)
 
-newtype Event a = Event { toOccB :: Behavior (Occ a) }
+newtype Event a = Event { unEvent :: Behavior (Occ a) }
     deriving (Show)
 
 -- instance Show a => Show (Event a) where
@@ -162,7 +169,7 @@ listToE :: [(Time, a)] -> Event a
 listToE [] = Event (Value NoOcc)
 listToE ((t,a):es)
     = Event $ Split (Value NoOcc) (X_JustBefore t)
-        (Split (Value (Occ a)) (X_Exactly t) (toOccB (listToE es)))
+        (Split (Value (Occ a)) (X_Exactly t) (unEvent (listToE es)))
 
 eventToList :: Event a -> [(Time, a)]
 eventToList (Event b) = go X_NegInf X_Inf b
@@ -195,7 +202,34 @@ stepI initA0 (Event btop) = fst (go initA0 btop)
         -- whole (leftMay', prevValMay') to evaluate most of the right
         in (Split left' t right', endVal)
 
-sourceEvent :: IO ( TimeX -> Time -> a -> TimeX -> IO ()
+
+--
+-- Explicitly partial versions of Behavior/Event
+--
+
+data MaybeKnown a = Unknown | Known a
+
+type BehaviorPart a = Behavior (MaybeKnown a)
+newtype EventPart a = EventPart { unEventPart :: BehaviorPart (Occ a) }
+
+
+
+--
+-- IO stuff
+--
+
+chanToEvent :: Chan (EventPart a) -> IO (Event a)
+chanToEvent inputChan = do
+    updates <- C.getChanContents inputChan
+    return (updatesToEvent updates)
+
+eventToChan :: Event a -> IO (Chan (EventPart a))
+eventToChan e = do
+    let b = unEvent e
+    watchB b
+
+{-
+sourceEvent :: IO (EventPart a -> IO ()
                   -- ^ Update the event
                   --      ( knowlage start Exclusive!
                   --      , event time
@@ -233,7 +267,7 @@ sourceEvent = do
            , event
            )
 
-updatesToEvent :: [(TimeX, Time, a, TimeX)] -> Event a
+updatesToEvent :: [EventPart a] -> Event a
 updatesToEvent updates = Event (go X_NegInf X_Inf updates)
     where
     go _ _ [] = Value NoOcc -- This should never actually happen. We dont't close the chan.
@@ -297,6 +331,12 @@ updatesToEvent updates = Event (go X_NegInf X_Inf updates)
                 -- ^ NOTE the condition is pretty loose, but is sufficient
                 -- for partitioning. The go function will validate the
                 -- range.
+
+-}
+
+--
+-- QuickCheck Stuff
+--
 
 instance Arbitrary a => Arbitrary (Behavior a) where
     arbitrary = do

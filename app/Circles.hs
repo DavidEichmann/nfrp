@@ -24,6 +24,8 @@ import Data.IORef
 import Control.Concurrent (threadDelay, forkIO)
 
 main = putStrLn "TODO"
+
+
 {-}
 -- Lets make a simple calculator example with 3 clients and a server that we want to do that calculating.
 data Node
