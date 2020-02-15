@@ -8,7 +8,9 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE RankNTypes #-}
@@ -43,8 +45,8 @@ import Control.Concurrent
 import Control.Concurrent.STM
 import qualified Control.Concurrent.Chan as C
 import Control.Monad (when)
-import Data.List (group, nub, partition)
-import Data.Maybe (fromJust, fromMaybe)
+import Data.List (find, foldl', group, nub, partition)
+import Data.Maybe (fromJust, fromMaybe, isJust)
 import qualified Data.Map as M
 import Test.QuickCheck
 
@@ -64,7 +66,7 @@ import Time
 --
 -- The solution
 --
--- In Split, use TimeDI only, and make it the *inclusive* start time of right
+-- In Split, use TimeD only, and make it the *inclusive* start time of right
 -- and the *exclusive* start time of left. Still Use TimeX to track the
 -- inclusive-inclusive min-max range of a value.
 
@@ -72,7 +74,7 @@ import Time
 data Behavior a
     = Split
         (Behavior a)     -- ^ Values up to and Excluding t. Yes! Excluding is correct!
-        TimeDI           -- ^ Some t
+        TimeD            -- ^ Some t
         (Behavior a)     -- ^ Values after and Including t
     | Value a
     -- ^ Value in the current time tspan.
@@ -87,7 +89,7 @@ alwaysB f (Value a) = f a
 alwaysB f (Split left _ right) = alwaysB f left && alwaysB f right
 
 -- -- | Basically a step function where you control the TimeX (inclusive) that value start.
--- listToBX :: a -> [(TimeDI, a)] -> Behavior a
+-- listToBX :: a -> [(TimeD, a)] -> Behavior a
 -- listToBX initA0 [] = (Value initA0)
 -- listToBX initA0 ((initET, initEA):events) = Split (Value a) initET (listToBX initEA events)
 
@@ -125,7 +127,7 @@ instance Applicative Behavior where
                         )
 
         -- Includes t
-        takeLeft :: TimeDI -> Behavior a -> Behavior a
+        takeLeft :: TimeD -> Behavior a -> Behavior a
         takeLeft t (Split l t' r) = case compare t t' of
             EQ -> l
             LT -> takeLeft t l
@@ -133,7 +135,7 @@ instance Applicative Behavior where
         takeLeft _ v = v
 
         -- Excludes t
-        takeRight :: TimeDI -> Behavior a -> Behavior a
+        takeRight :: TimeD -> Behavior a -> Behavior a
         takeRight t (Split l t' r) = case compare t t' of
             EQ -> r
             LT -> takeRight t l
@@ -141,23 +143,24 @@ instance Applicative Behavior where
         takeRight _ v = v
 -- TODO with our rep starting at -Inf instead of 0 we dont need to insert a new intial value!
 -- This seems fishy.
-delay :: Behavior a -> Behavior a
-delay top = go top DI_Inf
+delay :: forall a . Behavior a -> Behavior a
+delay top = go top Nothing
     where
-    go (Split left t right) hi =
+    go :: Behavior a -> Maybe TimeD -> Behavior a
+    go (Split left t right) hiM =
         let
         t' = delayTime t
         -- If there is already a next value at the delayed time, then discard the right value.
-        in if t' == hi
-            then go left t'
-            else Split (go left t') t' (go right hi)
+        in if Just t' == hiM
+            then go left (Just t')
+            else Split (go left (Just t')) t' (go right hiM)
     go v _ = v
 
 -- ^ No Maybe! because in this system, it will just block if the value is unknown.
 sampleB :: Behavior a -> Time -> a
 sampleB b t = go b
     where
-    tdi = DI_Exactly t
+    tdi = D_Exactly t
     go (Value a) = a
     go (Split left t' right)
         | tdi < t'   = go left
@@ -192,20 +195,21 @@ newtype Event a = Event { unEvent :: Behavior (Occ a) }
 listToE :: [(Time, a)] -> Event a
 listToE [] = Event (Value NoOcc)
 listToE ((t,a):es)
-    = Event $ Split (Value NoOcc) (DI_Exactly t)
-        (Split (Value (Occ a)) (DI_JustAfter t) (unEvent (listToE es)))
+    = Event $ Split (Value NoOcc) (D_Exactly t)
+        (Split (Value (Occ a)) (D_JustAfter t) (unEvent (listToE es)))
 
 eventToList :: Event a -> [(Time, a)]
-eventToList (Event b) = go spanInf b
+eventToList (Event b) = go allT b
     where
-    go :: IncSpan -> Behavior (Occ a) -> [(Time, a)]
+    go :: Span -> Behavior (Occ a) -> [(Time, a)]
     go _ (Value NoOcc) = []
-    go (lo, hi) (Value (Occ a))
-        | lo == hi = case lo of
-            X_Exactly lo' -> [(lo', a)]
-            _ -> error $ "eventToList: found a non-DI_Exactly occurence at: " ++ show lo
-        | otherwise = error $ "eventToList: Found non-instantaneous event spanning time (exclusive, inclusive): " ++ show (lo,hi)
-    go tspan (Split l t r) = go (tspan |<-| t) l ++ go (t |->| tspan) r
+    go tspan (Value (Occ a)) = case instantaneous tspan of
+        Just occT -> [(occT, a)]
+        Nothing -> error $ "eventToList: Found non-instantaneous event spanning time: " ++ show tspan
+    go tspan (Split l t r) = go lspan l ++ go rspan r
+        where
+        (lspan, rspan) = splitSpanAtErr tspan t
+                            "eventToList: found a Split with out of bounds time"
 
 -- Delayed step.
 step :: a -> Event a -> Behavior a
@@ -237,33 +241,57 @@ data MaybeKnown a = Unknown | Known a
 type BehaviorPart a = Behavior (MaybeKnown a)
 newtype EventPart a = EventPart { unEventPart :: BehaviorPart (Occ a) }
 
-eventPart :: [(IncSpan, [(Time, a)])] -> EventPart a
-eventPart spans =
+-- | Assumes a finite input list.
+-- Errors is there are overlapping time spans.
+listToEPartErr :: forall a . [(Span, [(Time, a)])] -> EventPart a
+listToEPartErr spans = let
+    knownBs :: [BehaviorPart (Occ a)]
+    knownBs = [ let Event occsB = listToE occs
+                    knowlage = Known <$> occsB
+                    unknown = Value Unknown
+                 in case find (not . (tspan `contains`)) (fst <$> occs) of
+                        Just errT -> error $ "listToEPartErr: found event at time (" ++ show errT ++ ") not in span (" ++ show tspan ++ ")"
+                        Nothing -> case tspan of
+                            Span All All -> knowlage
+                            Span All (Or (LeftSpace t)) -> Split knowlage t unknown
+                            Span (Or (RightSpace t)) All -> Split unknown t knowlage
+                            Span (Or (RightSpace tlo)) (Or (LeftSpace thi)) -> Split (Split unknown tlo knowlage) thi unknown
+            | (tspan, occs) <- spans
+            ]
+    in EventPart (foldl' unionBP (pure Unknown) knownBs)
 
-knownSpansE :: EventPart a -> [(IncSpan, Event a)]
+unionBP :: BehaviorPart a -> BehaviorPart a -> BehaviorPart a
+unionBP aB bB =
+    ( \ a b -> case (a, b) of
+        (Unknown, _) -> b
+        (_, Unknown) -> a
+        (Known _, Known _) -> error "unionBP: Knowlage overlap"
+    ) <$> aB <*> bB
+
+knownSpansE :: EventPart a -> [(Span, Event a)]
 knownSpansE (EventPart b) = fmap Event <$> knownSpansB b
 
-knownSpansB :: BehaviorPart a -> [(IncSpan, Behavior a)]
-knownSpansB btop = go spanInf btop
+knownSpansB :: BehaviorPart a -> [(Span, Behavior a)]
+knownSpansB btop = go allT btop
     where
     -- This is very similar to eventToList
-    go :: IncSpan -> Behavior (MaybeKnown a) -> [(IncSpan, Behavior a)]
+    go :: Span -> Behavior (MaybeKnown a) -> [(Span, Behavior a)]
     go _     (Value Unknown) = []
     go tspan (Value (Known a)) = [(tspan, Value a)]
     go tspan (Split l t r) = let
-        spansL = go (tspan |<-| t) l
-        spansR = go (t |->| tspan) r
+        (lspan, rspan) = splitSpanAtErr tspan t "knownSpansB"
+        spansL = go lspan l
+        spansR = go rspan r
         in if null spansL
             then spansR
             else if null spansR
                 then []
                 else let
-                    ((loL,hiL),lastLB) = last spansL
-                    ((loR,hiR),headRB) = head spansR
-                    in if  hiL `neighbotTimes` loR
-                        -- stick spans together
-                        then init spansL ++ [((loL,hiR), Split lastLB (loSpanToTimeErr loR) headRB)] ++ tail spansR
-                        else spansL ++ spansR
+                    (lastLSpan,lastLB) = last spansL
+                    (headRSpan,headRB) = head spansR
+                    in case lastLSpan `endsOn` headRSpan of
+                        Just (midSpan, midT) ->  init spansL ++ [(midSpan, Split lastLB midT headRB)] ++ tail spansR
+                        Nothing -> spansL ++ spansR
 --
 -- IO stuff
 --
@@ -294,7 +322,7 @@ sourceEvent = do
     knowlageCoverTVar <- newTVarIO M.empty  -- Map from known time tspan low (exclusive) to that times tspan's hi (inclusive)
     let updater part = do
             -- Check for overlap with knowlage
-            partSpans :: [IncSpan] <- _knownSpansE part
+            partSpans :: [Span] <- _knownSpansE part
             hasOverlapMay <- atomically $ do
                 let loop [] = do
                             -- insert new entries
@@ -328,93 +356,51 @@ sourceEvent = do
 -}
 
 updatesToEvent :: [EventPart a] -> Event a
-updatesToEvent updates = Event (go spanInf updates')
+updatesToEvent = fst . updatesToEvent'
+
+updatesToEvent'
+    :: [EventPart a]
+    -> ( Event a            -- ^ The event.
+       , [(Span, Event a)]  -- ^ Event Parts that overlapped with previous event prts
+       )
+updatesToEvent' updates = (Event occsB, errCases)
     where
+    (occsB, errCases) = go allT updates'
     updates' = [ ks
                 | update <- updates
                 , ks <- knownSpansE update
                 ]
 
-    go :: IncSpan -> [(IncSpan, Event a)] -> Behavior (Occ a)
-    go _ [] = Value NoOcc -- This should never actually happen. We dont't close the chan.
-    go tspanOut@(loOut, hiOut) ((tspanIn@(loIn, hiIn), (Event b)):xs)
-        | not (tspanOut `spanContains` tspanIn)
-            = error "updatesToEvent: overlapping knowlage"
-        | otherwise = case (loOut == loIn, hiIn == hiOut) of
-            (True , True ) -> b
-            (True , False) -> Split b hiSplitTime goRight
-            (False, True ) -> Split goLeft loSplitTime b
-            (False, False) -> Split goLeft loSplitTime (Split b hiSplitTime goRight)
+    -- returns beh and remaining events to process
+    go :: Span -> [(Span, Event a)] -> (Behavior (Occ a), [(Span, Event a)])
+    go tspan [] = error $ "updatesToEvent: missing data for time span: " ++ show tspan
+    go spanOut (x@(spanIn, (Event b)):xs)
+        | not (spanOut `contains` spanIn)
+            = let (b', xs') = go spanOut xs in (b', x:xs')
+        | otherwise = case (spanOut `difference` spanIn) of
+            (Nothing, Nothing) -> (b, xs)
+            (Nothing, Just rspan) -> case rspan of
+                Span (Or (RightSpace t)) _ -> let
+                    (rightB, xs') = go rspan xs
+                    in (Split b t rightB, xs')
+                _ -> diffErr
+            (Just lspan, Nothing) -> case lspan of
+                Span _ (Or (LeftSpace t)) -> let
+                    (leftB, xs') = go lspan xs
+                    in (Split leftB t b, xs')
+                _ -> diffErr
+            (Just lspan, Just rspan) -> case (lspan, rspan) of
+                (Span _ (Or (LeftSpace tlo)), Span (Or (RightSpace thi)) _)
+                    -> let
+                    -- Let the right branch process xs first (optimize for appending to the right).
+                    (rightB, xs') = go rspan xs
+                    (leftB, xs'') = go lspan xs'
+                    in (Split leftB tlo (Split b thi rightB), xs'')
+                (_,_) -> diffErr
         where
-        -- assumes b is left child
-        hiSplitTime = hiSpanToExcTime hiIn
-        goRight = go (hiSplitTime |->| tspanOut) rs
-        -- assumes b is right child
-        loSplitTime = loSpanToTimeErr loIn
-        goLeft = go (tspanOut |<-| loSplitTime) ls
-
-        -- TODO PERFORMANCE This partition is fine for a balanced tree,
-        -- but for appending to the end, we'll usually end up running
-        -- through the whole list, only to take of a single element (I
-        -- guess this will be O(n^2) in the number of event updates :-(,
-        -- I'd like to see O(log(n)) maybe you can use continuation
-        -- passing style and automatically pass to the right, then the
-        -- first check for the next element should be on the right most
-        -- spot (Just  my rough toughts).
-        (ls,rs) = partition (\ ((lo',_),_) -> lo' < loIn) xs
-            -- ^ NOTE the condition is pretty loose, but is sufficient
-            -- for partitioning. The go function will validate the
-            -- range.
-
-    -- go _ [] = Value NoOcc -- This should never actually happen. We dont't close the chan.
-    -- -- [minExc <= lo < tx <= hi <= maxInc]
-    -- go (minExc, maxInc) ((lo, t, a, hi):xs) -- TODO fix!
-    --     | not $ minExc <= lo
-    --             || lo < hi
-    --             || hi <= maxInc
-    --         = overlapErr
-    --     | tx <= lo || tx > hi
-    --                     = error $ "Source Event: event time is outside of knowlage tspan. " ++ errInfo
-    --     | otherwise = let
-    --         doGoLeft = minExc /= lo
-    --         needLoTx = lo /= X_JustBefore t
-    --         needTxHi = tx /= hi
-    --         doGoRight = maxInc /= hi
-    --         in case (doGoLeft, needLoTx, needTxHi, doGoRight) of
-    --             (False, False, False, False) -> occ
-    --             (False, False, True , False) -> Split occ   tx noOcc
-    --             (False, True , False, False) -> Split noOcc tx occ
-    --             (False, True , True , False) -> split2 noOcc txJB occ tx noOcc
-    --             (False, False, False, True ) -> Split occ tx goRight
-    --             (False, False, True , True ) -> split2 occ tx noOcc hi goRight
-    --             (False, True , False, True ) -> split2 noOcc txJB occ tx goRight
-    --             (False, True , True , True ) -> split3 noOcc txJB occ tx noOcc hi goRight
-    --             (True , False, False, False) -> Split goLeft txJB occ
-    --             (True , False, False, True ) -> split2 goLeft txJB occ tx goRight
-    --             (True , False, True , False) -> split2 goLeft txJB occ tx noOcc
-    --             (True , False, True , True ) -> split3 goLeft txJB occ tx noOcc hi goRight
-    --             (True , True , False, False) -> split2 goLeft lo noOcc txJB occ
-    --             (True , True , True , False) -> split3 goLeft lo noOcc txJB occ tx noOcc
-    --             (True , True , False, True ) -> split3 goLeft lo noOcc txJB occ tx goRight
-    --             (True , True , True , True ) -> split4 goLeft lo noOcc txJB occ tx noOcc hi goRight
-
-    --     -- TODO we'd like to throw an error if xs has more elements and
-    --     -- we've filled the knowlage gap. But we can't check `null xs` as
-    --     -- that will block indefinetly. For now we just silently ignore such
-    --     -- errors.
-
-    --     where
-    --         split2 v1 t1 v2 t2 v3 = Split v1 t1 (Split v2 t2 v3)
-    --         split3 v1 t1 v2 t2 v3 t3 v4 = Split (Split v1 t1 v2) t2 (Split v3 t3 v4)
-    --         split4 v1 t1 v2 t2 v3 t3 v4 t4 v5  = Split (Split v1 t1 v2) t2 (Split v3 t3 (Split v4 t4 v5))
-    --         goLeft = go minExc lo ls
-    --         goRight = go hi maxInc rs
-    --         noOcc = Value NoOcc
-    --         occ = Value (Occ a)
-    --         tx = X_Exactly t
-    --         txJB = X_JustBefore t
-    --         overlapErr = error $ "Source Event: knowlage overlaps existing knowlage. " ++ errInfo
-    --         errInfo = "(minExc, maxInc)=" ++ show (minExc, maxInc) ++ "(lo, t, hi)=" ++ show (lo, t, hi)
+        diffErr = error $ "Impossibe! After a `difference` the left span must end on Or and the right"
+                    ++ "span must start on an Or, but got: difference (" ++ show spanOut ++ ") ("
+                    ++ show spanIn ++ ") == " ++ show (difference spanOut spanIn)
 
 --
 -- QuickCheck Stuff
@@ -425,7 +411,7 @@ instance Arbitrary a => Arbitrary (Behavior a) where
         times <- orderedList
         go (head <$> group times)
         where
-        go :: [TimeDI] -> Gen (Behavior a)
+        go :: [TimeD] -> Gen (Behavior a)
         go [] = Value <$> arbitrary
         go ts = do
             sizeL <- choose (0,length ts - 1)
@@ -448,91 +434,159 @@ instance Arbitrary a => Arbitrary (Event a) where
             r <- go (drop (sizeL + 1) ts)
             a <- arbitrary
             let t = ts !! sizeL
-            return (Split l (DI_Exactly t) (Split (Value (Occ a)) (DI_JustAfter t) r))
+            return (Split l (D_Exactly t) (Split (Value (Occ a)) (D_JustAfter t) r))
 
 
 --
 -- Time Span stuff
 --
 
+data AllOr a
+    = All   -- ^ All of time [-Inf, Inf]
+    | Or a  -- ^ Just that a.
+    deriving (Show) -- NOT Ord
 
-type IncSpan = (TimeX, TimeX) -- inclusive-inclusive min-max time tspan.
-type LeftBoundary = TimeDI -- The left boundary of a time tspan (Inclusive)
-type RightBoundary = TimeDI -- The Right boundary of a time tspan (Exclusive)
-
--- |  If the tspan is within the halfspace defined by a Left boundary (extending right |->)
-intersectsLeftB :: IncSpan -> LeftBoundary -> Bool
-intersectsLeftB (_, hi) t = hi >= toTime t
-
--- |  If the tspan is within the halfspace defined by a Right boundary (extending left <-|)
-intersectsRightB :: IncSpan -> RightBoundary -> Bool
-intersectsRightB (lo, _) t = lo <= justBeforeIshDI t
-
-justBeforeIshDI :: TimeDI -> TimeX
-justBeforeIshDI (DI_Exactly t) = X_JustBefore t
-justBeforeIshDI (DI_JustAfter t) = X_Exactly t
-justBeforeIshDI DI_Inf = X_Inf
-
--- Crop the left of a tspan using the left boundary (inclusive).
-(|->|) :: LeftBoundary -> IncSpan -> IncSpan
-(|->|) tl'_di (tl, tr)
-    | not (tl <= tl' && tl' <= tr)
-    = error $ "trying to crop but not in range: "
-                ++ show tl'_di
-                ++ " |->| "
-                ++ show (tl, tr)
-    | otherwise =  (tl', tr)
-    where
-    tl' = toTime tl'_di
-
--- Crop the right of a tspan using the right boundary (exclusive).
-(|<-|) :: IncSpan -> RightBoundary -> IncSpan
-(|<-|) (tl, tr) tr'_di
-    | not (tl <= tr' && tr' <= tr)
-    = error $ "trying to crop but not in range: "
-                ++ show tr'_di
-                ++ " |<-| "
-                ++ show (tl, tr)
-    | otherwise =  (tl, tr')
-    where
-    tr' = justBeforeIshDI tr'_di
-
--- Crop to the given times. Left of the tspan is just the start of the tspan value.
--- right of the tspan is just the end of the tspan value.
-crop :: IncSpan -> Behavior a -> Behavior a
-crop _ v@(Value _) = v
-crop tspan (Split left t right) = case (tspan `intersectsRightB` t, tspan `intersectsLeftB` t) of
-    (True, True) -> Split left' t right'
-    (True, False) -> left'
-    (False, True) -> right'
-    (False, False) -> error "crop: Impossible!"
-    where
-    left'  = crop (tspan |<-| t) left
-    right' = crop (t |->| tspan) right
-
-spanInf :: IncSpan
-spanInf = (X_NegInf, X_Inf)
-
-spansIntersect :: IncSpan -> IncSpan -> Bool
-spansIntersect (lo1, hi1) (lo2, hi2) = not (hi1 < lo2 || hi2 < lo1)
-
-spanContains :: IncSpan -> IncSpan -> Bool
-spanContains (lo1, hi1) (lo2, hi2) = lo1 <= lo2 && hi2 <= hi2
+-- Half spaces
+newtype LeftSpace  = LeftSpace  TimeD   -- ^ [[ LeftSpace  t' ]] = { t | t <  t' }
+    deriving (Show,Eq,Ord)
+newtype RightSpace = RightSpace TimeD   -- ^ [[ RightSpace t' ]] = { t | t >= t' }
+    deriving (Show,Eq,Ord)
 
 
+-- [[ Span l r ]] = l `intersect` r
+data Span
+    = Span
+        (AllOr RightSpace) -- ^ Time span left  bound Inclusive. All == Inclusive -Inf
+        (AllOr LeftSpace)  -- ^ Time span right bound Exclusive. All == !Inclusive! Inf
+    deriving (Show) -- NOT Ord
 
-loSpanToTimeErr :: TimeX -> TimeDI
-loSpanToTimeErr = toTimeErr err
-    where
-    err = "Lowwer bound on IncSpan is only set to TimeDI's from Splits"
-        ++ " ans considering it's on the right, and knowlage exists on the right,"
-        ++ " we know it's not the intial -Inf, so it must be Exactly or JustAfter."
-        ++ " Hence we can safely convert to TimeDI"
 
--- | only call this on a IncSpan's hi value.
--- Returns the TimeDI of the parent Split assuming this is the left child.
-hiSpanToExcTime :: TimeX -> TimeDI
-hiSpanToExcTime (X_JustBefore t) = (DI_Exactly t)
-hiSpanToExcTime (X_Exactly t) = (DI_JustAfter t)
-hiSpanToExcTime X_Inf = DI_Inf
-hiSpanToExcTime x = error $ "hiSpanToExcTime: unexpected hi IncSpan time: " ++ show x
+class Intersect a b c | a b -> c where
+    intersect :: a -> b -> c
+
+instance Intersect RightSpace LeftSpace (Maybe Span) where intersect = flip intersect
+instance Intersect LeftSpace RightSpace (Maybe Span) where
+    intersect l@(LeftSpace lo) r@(RightSpace hi)
+        | lo < hi = Just (Span (Or r) (Or l))
+        | otherwise = Nothing
+instance Intersect Span LeftSpace (Maybe Span) where intersect = flip intersect
+instance Intersect LeftSpace Span (Maybe Span) where
+    intersect ls (Span r l) = r `intersect` (l `intersect` ls)
+instance Intersect Span RightSpace (Maybe Span) where intersect = flip intersect
+instance Intersect RightSpace Span (Maybe Span) where
+    intersect rs (Span r l) = _ -- intersect l =<< (r `intersect` rs)
+instance Intersect Span Span (Maybe Span) where
+    intersect s (Span r l) = intersect l =<< (r `intersect` s)
+instance Intersect (AllOr LeftSpace ) LeftSpace  LeftSpace    where intersect = allOrIntersect
+instance Intersect (AllOr RightSpace) RightSpace RightSpace   where intersect = allOrIntersect
+instance Intersect (AllOr RightSpace) Span       (Maybe Span) where intersect = allOrIntersectMaybe
+instance Intersect (AllOr LeftSpace ) Span       (Maybe Span) where intersect = allOrIntersectMaybe
+instance Intersect RightSpace RightSpace RightSpace where
+    intersect (RightSpace a) (RightSpace b) = RightSpace (max a b)
+instance Intersect LeftSpace LeftSpace LeftSpace where
+    intersect (LeftSpace a) (LeftSpace b) = LeftSpace (min a b)
+instance Intersect (AllOr LeftSpace ) (AllOr RightSpace) (Maybe Span) where intersect = flip intersect
+instance Intersect (AllOr RightSpace) (AllOr LeftSpace)  (Maybe Span) where
+    intersect (Or rs) (Or ls) = rs `intersect` ls
+    intersect allOrRs allOrLs = Just (Span allOrRs allOrLs)
+instance Intersect (AllOr LeftSpace) RightSpace (Maybe Span) where intersect = flip intersect
+instance Intersect RightSpace (AllOr LeftSpace) (Maybe Span) where
+    intersect rs (Or ls) = rs `intersect` ls
+    intersect rs All = Just (Span (Or rs) All)
+instance Intersect LeftSpace (AllOr RightSpace) (Maybe Span) where intersect = flip intersect
+instance Intersect (AllOr RightSpace) LeftSpace (Maybe Span) where
+    intersect (Or rs) ls = rs `intersect` ls
+    intersect All ls = Just (Span All (Or ls))
+
+allOrIntersectMaybe :: Intersect a b (Maybe b) => AllOr a -> b -> Maybe b
+allOrIntersectMaybe All b = Just b
+allOrIntersectMaybe (Or a) b = a `intersect` b
+
+allOrIntersect :: Intersect a b b => AllOr a -> b -> b
+allOrIntersect All b = b
+allOrIntersect (Or a) b = a `intersect` b
+
+-- allOrIntersect :: Intersect a b (Maybe c) => AllOr a -> b -> b
+-- allOrIntersect All b = b
+-- allOrIntersect (Or a) b = a `intersect` b
+
+
+-- a `difference` b == a `intersect` (invert b)
+class Difference a b c | a b -> c where
+    difference :: a -> b -> c
+instance Difference LeftSpace LeftSpace (Maybe Span) where
+    difference lsa (LeftSpace b) = lsa `intersect` RightSpace b
+instance Difference RightSpace RightSpace (Maybe Span) where
+    difference rsa (RightSpace b) = rsa `intersect` LeftSpace b
+instance Difference Span Span (Maybe Span, Maybe Span) where
+    difference a b@(Span rs ls) = (a `difference` rs, a `difference` ls)
+instance Difference Span LeftSpace (Maybe Span) where
+    difference (Span r l) _ = _
+instance Difference Span RightSpace (Maybe Span) where
+    difference (Span r l) _ = _
+instance Difference a b (Maybe c) => Difference a (AllOr b) (Maybe c) where
+    difference _ All = Nothing
+    difference a (Or b) = a `difference` b
+
+class NeverAll a
+instance NeverAll LeftSpace
+instance NeverAll RightSpace
+
+class Contains a b where
+    contains :: a -> b -> Bool
+
+instance Contains LeftSpace Time where
+    contains (LeftSpace a) t = D_Exactly t < a
+instance Contains RightSpace Time where
+    contains (RightSpace a) t = D_Exactly t >= a
+instance Contains Span Time where
+    contains (Span rs ls) t = ls `contains` t && rs `contains` t
+instance Contains LeftSpace LeftSpace where
+    contains (LeftSpace a) (LeftSpace b) = a >= b
+instance Contains RightSpace RightSpace where
+    contains (RightSpace a) (RightSpace b) = a <= b
+instance Contains LeftSpace Span where
+    contains ls (Span _ allOrLs) = ls `contains` allOrLs
+instance Contains RightSpace Span where
+    contains rs (Span allOrRs _) = rs `contains` allOrRs
+instance Contains Span Span where
+    contains (Span r l) s = r `contains` s && l `contains` s
+instance (Contains a b, IsAllT a) => Contains a (AllOr b) where
+    contains a All    = isAllT a
+    contains a (Or b) = a `contains` b
+instance (Contains a b, IsAllT a) => Contains (AllOr a) b where
+    contains = _
+
+intersects :: Intersect a b (Maybe c) => a -> b -> Bool
+intersects a b = isJust (a `intersect` b)
+
+-- | Covering all of time
+class AllT a where allT :: a
+instance AllT Span where allT = Span All All
+instance AllT (AllOr a) where allT = All
+
+class IsAllT a where isAllT :: a -> Bool
+instance IsAllT LeftSpace where isAllT _ = False
+instance IsAllT RightSpace where isAllT _ = False
+
+
+-- | If the left arg ends exactly on the start of the right arg, return the
+-- joined span and the time at which they are joined (such that splitting on
+-- that time will give the original spans).
+endsOn :: Span -> Span -> Maybe (Span, TimeD)
+endsOn (Span allOrRs (Or (LeftSpace hi))) (Span (Or (RightSpace lo)) allOrLs)
+    | hi == lo  = Just (Span allOrRs allOrLs, lo)
+endsOn _ _ = Nothing
+
+instantaneous :: Span -> Maybe Time
+instantaneous (Span (Or (RightSpace (D_Exactly t))) (Or (LeftSpace (D_JustAfter t'))))
+    | t == t' = Just t
+instantaneous _ = Nothing
+
+splitSpanAt :: Span -> TimeD -> (Maybe Span, Maybe Span)
+splitSpanAt tspan t = (tspan `intersect` LeftSpace t, tspan `intersect` RightSpace t)
+
+splitSpanAtErr :: Span -> TimeD -> String -> (Span, Span)
+splitSpanAtErr tspan t err = case splitSpanAt tspan t of
+    (Just lspan, Just rspan) -> (lspan, rspan)
+    _ -> error $ err ++ ": Found a (Split _ (" ++ show t ++ ") _) but are in span: " ++ show tspan
