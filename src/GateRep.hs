@@ -41,13 +41,13 @@ module GateRep
     , EventPart
     ) where
 
-import Control.Concurrent
-import Control.Concurrent.STM
-import qualified Control.Concurrent.Chan as C
-import Control.Monad (when)
-import Data.List (find, foldl', group, nub, partition)
-import Data.Maybe (fromJust, fromMaybe, isJust)
-import qualified Data.Map as M
+-- import Control.Concurrent
+-- import Control.Concurrent.STM
+-- import qualified Control.Concurrent.Chan as C
+-- import Control.Monad (when)
+import Data.List (find, foldl', group, nub,)
+import Data.Maybe (isJust)
+-- import qualified Data.Map as M
 import Test.QuickCheck
 
 import Time
@@ -474,7 +474,7 @@ instance Intersect LeftSpace Span (Maybe Span) where
     intersect ls (Span r l) = r `intersect` (l `intersect` ls)
 instance Intersect Span RightSpace (Maybe Span) where intersect = flip intersect
 instance Intersect RightSpace Span (Maybe Span) where
-    intersect rs (Span r l) = _ -- intersect l =<< (r `intersect` rs)
+    intersect rs (Span r l) = l `intersect` (r `intersect` rs)
 instance Intersect Span Span (Maybe Span) where
     intersect s (Span r l) = intersect l =<< (r `intersect` s)
 instance Intersect (AllOr LeftSpace ) LeftSpace  LeftSpace    where intersect = allOrIntersect
@@ -519,11 +519,11 @@ instance Difference LeftSpace LeftSpace (Maybe Span) where
 instance Difference RightSpace RightSpace (Maybe Span) where
     difference rsa (RightSpace b) = rsa `intersect` LeftSpace b
 instance Difference Span Span (Maybe Span, Maybe Span) where
-    difference a b@(Span rs ls) = (a `difference` rs, a `difference` ls)
+    difference a (Span rs ls) = (a `difference` rs, a `difference` ls)
 instance Difference Span LeftSpace (Maybe Span) where
-    difference (Span r l) _ = _
+    difference s (LeftSpace b) = s `intersect` (RightSpace b)
 instance Difference Span RightSpace (Maybe Span) where
-    difference (Span r l) _ = _
+    difference s (RightSpace b) = s `intersect` (LeftSpace b)
 instance Difference a b (Maybe c) => Difference a (AllOr b) (Maybe c) where
     difference _ All = Nothing
     difference a (Or b) = a `difference` b
@@ -555,7 +555,8 @@ instance (Contains a b, IsAllT a) => Contains a (AllOr b) where
     contains a All    = isAllT a
     contains a (Or b) = a `contains` b
 instance (Contains a b, IsAllT a) => Contains (AllOr a) b where
-    contains = _
+    contains All _ = True
+    contains (Or a) b = a `contains` b
 
 intersects :: Intersect a b (Maybe c) => a -> b -> Bool
 intersects a b = isJust (a `intersect` b)
