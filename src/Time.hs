@@ -28,6 +28,7 @@ module Time
     , ToTime (..)
     , ToTimeErr (..)
     , CompareTime (..)
+    , NeighborTimes (..)
     , DelayTime (..)
     , minTime
 
@@ -97,13 +98,38 @@ instance ToTime Time TimeDI where
 instance ToTime TimeD TimeDI where
     toTime (D_Exactly   t) = DI_Exactly   t
     toTime (D_JustAfter t) = DI_JustAfter t
+instance ToTime TimeDI TimeX where
+    toTime (DI_Exactly   t) = X_Exactly   t
+    toTime (DI_JustAfter t) = X_JustAfter t
+    toTime DI_Inf = X_Inf
 
 class ToTimeErr a b where toTimeErr :: String -> a -> b
 instance ToTimeErr TimeDI TimeD where
     toTimeErr err dit = case dit of
         DI_Exactly t -> D_Exactly t
         DI_JustAfter t -> D_JustAfter t
-        DI_Inf -> error $ "toTimeErr: " ++ err
+        DI_Inf -> error $ "toTimeErr (TimeDI -> TimeD): " ++ err
+instance ToTimeErr TimeX TimeDI where
+    toTimeErr err dit = case dit of
+        X_Exactly t -> DI_Exactly t
+        X_JustAfter t -> DI_JustAfter t
+        X_Inf -> DI_Inf
+        _ -> error $ "toTimeErr (TimeX TimeDI): " ++ err
+
+class NeighborTimes a where
+    -- True if no time inbetween can possibly be represented.
+    neighbotTimes :: a -> a -> Bool
+instance NeighborTimes TimeX where
+    neighbotTimes X_Inf X_Inf = True
+    neighbotTimes X_NegInf X_NegInf = True
+    neighbotTimes (X_JustBefore t) (X_JustBefore t') = t == t'
+    neighbotTimes (X_JustBefore t) (X_Exactly t') = t == t'
+    neighbotTimes (X_Exactly t) (X_JustBefore t') = t == t'
+    neighbotTimes (X_Exactly t) (X_Exactly t') = t == t'
+    neighbotTimes (X_Exactly t) (X_JustAfter t') = t == t'
+    neighbotTimes (X_JustAfter t) (X_JustBefore t') = t == t'
+    neighbotTimes (X_JustAfter t) (X_Exactly t') = t == t'
+    neighbotTimes _ _ = False
 
 isExactlyDI :: TimeDI -> Bool
 isExactlyDI (DI_Exactly _) = True
