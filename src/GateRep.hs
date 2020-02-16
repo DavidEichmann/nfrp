@@ -34,6 +34,12 @@ module GateRep
     , updatesToEvent'
     , eventToList
 
+    -- * Querying
+    , sampleB
+
+    -- * Combinators
+    , step
+
     -- * Partial Behviors/Events
     , MaybeKnown (..)
     , BehaviorPart
@@ -45,32 +51,43 @@ module GateRep
     , spanIncExc
     , endsOn
 
+    -- ** Convenient Span construction.
+    , allT
+    , spanToExc             -- ^ Usually use this AND
+    , spanFromInc           -- ^ Usually use this AND
+    , spanFromIncToExc      -- ^ Usually use this
+
+    , spanToInc
+    , spanFromExc
+    , spanFromExcToInc
+
+    , spanFromIncToInc
+    , spanFromExcToExc
+
+    -- * Span operations
+    , Intersect (..)
+    , Difference (..)
+
+    -- * Interfacing with the real world
+    , sourceEvent
+    -- , watchB
+
     -- Internal (Exposed for testing)
     , LeftSpace
     , RightSpace
     , AllOr (..)
 
-    -- * Querying
-    , sampleB
-
-    -- * Cominators
-    , step
-
-    -- * Interfacing with the real world
-    -- , sourceEvent
-    -- , watchB
-
-    , Intersect (..)
-    , Difference (..)
+    -- * Quick Check
+    , OrderedFullUpdates (..)
     ) where
 
--- import Control.Concurrent
--- import Control.Concurrent.STM
--- import qualified Control.Concurrent.Chan as C
--- import Control.Monad (when)
-import Data.List (find, foldl', group, nub,)
-import Data.Maybe (isJust)
--- import qualified Data.Map as M
+import Control.Concurrent
+import Control.Concurrent.STM
+import qualified Control.Concurrent.Chan as C
+import Control.Monad (forM)
+import Data.List (find, foldl', group, nub, sort)
+import Data.Maybe (fromJust, isJust)
+import qualified Data.Map as M
 import Test.QuickCheck
 
 import Time
@@ -328,16 +345,15 @@ knownSpansB btop = go allT btop
 -- IO stuff
 --
 
-{-
 chanToEvent :: Chan (EventPart a) -> IO (Event a)
 chanToEvent inputChan = do
     updates <- C.getChanContents inputChan
     return (updatesToEvent updates)
 
-eventToChan :: Event a -> IO (Chan (EventPart a))
-eventToChan e = do
-    let b = unEvent e
-    _watchB b
+-- eventToChan :: Event a -> IO (Chan (EventPart a))
+-- eventToChan e = do
+--     let b = unEvent e
+--     watchB b
 
 sourceEvent :: IO (EventPart a -> IO ()
                   -- ^ Update the event
@@ -353,21 +369,24 @@ sourceEvent = do
     updatesChan <- C.newChan
     knowlageCoverTVar <- newTVarIO M.empty  -- Map from known time tspan low (exclusive) to that times tspan's hi (inclusive)
     let updater part = do
+            -- TODO can we use updatesToEvent' and observe the returned overlapping values instead of tracking them here?
             -- Check for overlap with knowlage
-            partSpans :: [Span] <- _knownSpansE part
+            let partSpans :: [Span]
+                partSpans = fst <$> knownSpansE part
             hasOverlapMay <- atomically $ do
                 let loop [] = do
                             -- insert new entries
-                            let partSpansMap = M.fromList partSpans
+                            let partSpansMap = M.fromList [(fst (spanToIncInc s), s) | s <- partSpans]
                             modifyTVar knowlageCoverTVar (M.union partSpansMap)
                             return Nothing
-                    loop (tspan@(lo,_):xs) = do
+                    loop (tspan:xs) = do
                         knowlageCover <- readTVar knowlageCoverTVar
-                        let prevSpanMay = M.lookupLE lo knowlageCover
-                            nextSpanMay = M.lookupGE lo knowlageCover
-                        if maybe False (spansIntersect tspan) prevSpanMay
+                        let lo = fst (spanToIncInc tspan)
+                            prevSpanMay = snd <$> M.lookupLE lo knowlageCover
+                            nextSpanMay = snd <$> M.lookupGE lo knowlageCover
+                        if maybe False (`intersects` tspan) prevSpanMay
                             then return (Just (tspan, fromJust prevSpanMay))
-                            else if maybe False (spansIntersect tspan) nextSpanMay
+                            else if maybe False (`intersects` tspan) nextSpanMay
                                 then return (Just (tspan, fromJust nextSpanMay))
                                 else loop xs
                 loop partSpans
@@ -385,7 +404,6 @@ sourceEvent = do
            , event
            )
 
--}
 
 updatesToEvent :: [EventPart a] -> Event a
 updatesToEvent = fst . updatesToEvent'
@@ -433,48 +451,6 @@ updatesToEvent' updates = (Event occsB, errCases)
         diffErr = error $ "Impossibe! After a `difference` the left span must end on Or and the right"
                     ++ "span must start on an Or, but got: difference (" ++ show spanOut ++ ") ("
                     ++ show spanIn ++ ") == " ++ show (difference spanOut spanIn)
-
---
--- QuickCheck Stuff
---
-
-instance Arbitrary a => Arbitrary (Behavior a) where
-    arbitrary = do
-        times <- orderedList
-        go (head <$> group times)
-        where
-        go :: [TimeD] -> Gen (Behavior a)
-        go [] = Value <$> arbitrary
-        go ts = do
-            sizeL <- choose (0,length ts - 1)
-            l <- go (take sizeL ts)
-            let t = ts !! sizeL
-            r <- go (drop (sizeL + 1) ts)
-            return (Split l t r)
-
-
-instance Arbitrary a => Arbitrary (Event a) where
-    arbitrary = do
-        times <- orderedList
-        Event <$> go (nub times)
-        where
-        go :: [Time] -> Gen (Behavior (Occ a))
-        go [] = pure (Value NoOcc)
-        go ts = do
-            sizeL <- choose (0,length ts - 1)
-            l <- go (take sizeL ts)
-            r <- go (drop (sizeL + 1) ts)
-            a <- arbitrary
-            let t = ts !! sizeL
-            return (Split l (D_Exactly t) (Split (Value (Occ a)) (D_JustAfter t) r))
-
-instance Arbitrary Span where
-    arbitrary = arbitrary `suchThatMap` (uncurry spanIncExcMaybe)
-
-instance Arbitrary LeftSpace where arbitrary = LeftSpace <$> arbitrary
-instance Arbitrary RightSpace where arbitrary = RightSpace <$> arbitrary
-instance Arbitrary a => Arbitrary (AllOr a) where
-    arbitrary = frequency [(1, return All), (15, Or <$> arbitrary)]
 
 --
 -- Time Span stuff
@@ -528,6 +504,24 @@ spanIncExc lo hi
 spanIncExcMaybe :: Maybe TimeD -> Maybe TimeD -> Maybe Span
 spanIncExcMaybe lo hi = (maybe All (Or . RightSpace) lo) `intersect`
                         (maybe All (Or . LeftSpace) hi)
+
+-- More convenient span creating functions
+spanToInc :: Time -> Span
+spanToInc hi= spanIncExc Nothing (Just $ delay $ toTime hi)
+spanToExc :: Time -> Span
+spanToExc hi= spanIncExc Nothing (Just $ toTime hi)
+spanFromInc :: Time -> Span
+spanFromInc lo = spanIncExc (Just $ toTime lo) Nothing
+spanFromExc :: Time -> Span
+spanFromExc lo = spanIncExc (Just $ delay $ toTime lo) Nothing
+spanFromIncToExc :: Time -> Time -> Span
+spanFromIncToExc lo hi = spanIncExc (Just $ toTime lo) (Just $ toTime hi)
+spanFromIncToInc :: Time -> Time -> Span
+spanFromIncToInc lo hi = spanIncExc (Just $ toTime lo) (Just $ delay $ toTime hi)
+spanFromExcToExc :: Time -> Time -> Span
+spanFromExcToExc lo hi = spanIncExc (Just $ delay $ toTime lo) (Just $ toTime hi)
+spanFromExcToInc :: Time -> Time -> Span
+spanFromExcToInc lo hi = spanIncExc (Just $ delay $ toTime lo) (Just $ delay $ toTime hi)
 
 class Intersect a b c | a b -> c where
     intersect :: a -> b -> c
@@ -659,3 +653,110 @@ splitSpanAtErr :: Span -> TimeD -> String -> (Span, Span)
 splitSpanAtErr tspan t err = case splitSpanAt tspan t of
     (Just lspan, Just rspan) -> (lspan, rspan)
     _ -> error $ err ++ ": splitSpanAtErr: Found a (Split _ (" ++ show t ++ ") _) but are in span: " ++ show tspan
+
+spanToIncInc :: Span -> (TimeX, TimeX)
+spanToIncInc (Span r l) = (lo, hi)
+    where
+    lo = case r of
+            All -> X_NegInf
+            (Or (RightSpace loD)) -> toTime loD
+    hi = case l of
+            All -> X_Inf
+            (Or (LeftSpace hiD)) -> case hiD of
+                D_Exactly t -> X_JustBefore t
+                D_JustAfter t -> X_Exactly t
+
+
+
+--
+-- QuickCheck Stuff
+--
+
+instance Arbitrary a => Arbitrary (Behavior a) where
+    arbitrary = do
+        times <- orderedList
+        go (head <$> group times)
+        where
+        go :: [TimeD] -> Gen (Behavior a)
+        go [] = Value <$> arbitrary
+        go ts = do
+            sizeL <- choose (0,length ts - 1)
+            l <- go (take sizeL ts)
+            let t = ts !! sizeL
+            r <- go (drop (sizeL + 1) ts)
+            return (Split l t r)
+
+
+instance Arbitrary a => Arbitrary (Event a) where
+    arbitrary = do
+        times <- orderedList
+        Event <$> go (nub times)
+        where
+        go :: [Time] -> Gen (Behavior (Occ a))
+        go [] = pure (Value NoOcc)
+        go ts = do
+            sizeL <- choose (0,length ts - 1)
+            l <- go (take sizeL ts)
+            r <- go (drop (sizeL + 1) ts)
+            a <- arbitrary
+            let t = ts !! sizeL
+            return (Split l (D_Exactly t) (Split (Value (Occ a)) (D_JustAfter t) r))
+
+instance Arbitrary Span where
+    arbitrary = arbitrary `suchThatMap` (uncurry spanIncExcMaybe)
+
+instance Arbitrary LeftSpace where arbitrary = LeftSpace <$> arbitrary
+instance Arbitrary RightSpace where arbitrary = RightSpace <$> arbitrary
+instance Arbitrary a => Arbitrary (AllOr a) where
+    arbitrary = frequency [(1, return All), (15, Or <$> arbitrary)]
+
+-- | Spans that cover all time.
+newtype OrderedFullSpans = OrderedFullSpans [Span]
+instance Arbitrary OrderedFullSpans where
+    arbitrary = do
+        spanTimeEdgesT :: [Time] <- fmap head . group <$> orderedList
+        spanTimeEdgesBools :: [Bool] <- infiniteList
+        let spanTimeEdges = zip spanTimeEdgesT spanTimeEdgesBools
+        return $ OrderedFullSpans $ case spanTimeEdges of
+                    [] -> [allT]
+                    _ -> (let (t, notHiInc) = head spanTimeEdges in spanIncExc Nothing (Just $ if not notHiInc then D_JustAfter t else D_Exactly t))
+                        : (zipWith
+                            (\ (lo, loInc) (hi, notHiInc) -> spanIncExc
+                                                                (Just $ if loInc        then D_Exactly lo else D_JustAfter lo)
+                                                                (Just $ if not notHiInc then D_JustAfter hi else D_Exactly hi)
+                            )
+                            spanTimeEdges
+                            (tail spanTimeEdges)
+                          ) ++ [let (t, loInc) = last spanTimeEdges in spanIncExc (Just (if loInc then D_Exactly t else D_JustAfter t)) Nothing]
+
+arbitraryTimeDInSpan :: Span -> Gen TimeD
+arbitraryTimeDInSpan (Span All All) = arbitrary
+arbitraryTimeDInSpan (Span (Or (RightSpace t)) All)
+    = frequency [ (1, return t)
+                , (5, sized $ \n -> choose (t, t+(fromIntegral n)))
+                ]
+arbitraryTimeDInSpan (Span All (Or (LeftSpace t)))
+    = sized $ \n -> choose (t-(fromIntegral n), t)
+arbitraryTimeDInSpan (Span (Or (RightSpace lo)) (Or (LeftSpace hi)))
+    = frequency [ (1, return lo)
+                , (5, choose (lo,hi))
+                ]
+
+arbitraryTimeInSpan :: Span -> Gen Time
+arbitraryTimeInSpan s = arbitraryTimeDInSpan s `suchThatMap` (\td -> let
+    t = closestTime td
+    in if s `contains` t then Just t else Nothing)
+
+
+increasingListOf :: Ord a => Gen a -> Gen [a]
+increasingListOf xs = fmap head . group . sort <$> listOf xs
+
+newtype OrderedFullUpdates a = OrderedFullUpdates [(Span, [(Time, a)])] deriving (Show)
+instance Arbitrary a => Arbitrary (OrderedFullUpdates a) where
+    arbitrary = do
+        OrderedFullSpans spans <- arbitrary
+        updates <- forM spans $ \ tspan -> do
+                    eventTimes <- increasingListOf (arbitraryTimeInSpan tspan)
+                    values <- infiniteList
+                    return $ (tspan, zip eventTimes values)
+        return $ OrderedFullUpdates updates

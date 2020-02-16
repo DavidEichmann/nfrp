@@ -30,6 +30,7 @@ module Time
     , CompareTime (..)
     , NeighborTimes (..)
     , Delayable (..)
+    , ClosestTime (..)
     , minTime
 
     , (>.)
@@ -38,6 +39,7 @@ module Time
     ) where
 
 import Test.QuickCheck
+import System.Random
 
 -- EQSimple time
 type Time = Integer -- TODO Int64? nanoseconds?
@@ -242,13 +244,33 @@ instance Num TimeD where
     (D_Exactly a) + (D_JustAfter b) = D_JustAfter (a+b)
     (D_JustAfter a) + (D_Exactly b) = D_JustAfter (a+b)
     (D_JustAfter a) + (D_JustAfter b) = D_JustAfter (a+b)
-    (*) = error "TODO instance Num TimeD (*)"
+
+    (D_Exactly a) - (D_Exactly b) = D_Exactly (a-b)
+    (D_Exactly _) - (D_JustAfter _) = error "Num TimeD: Can't subtract D_Exactly - D_JustAfter"
+    (D_JustAfter a) - (D_Exactly b) = D_JustAfter (a-b)
+    (D_JustAfter a) - (D_JustAfter b) = D_JustAfter (a-b)
+
+    0 * _ = 0
+    _ * 0 = 0
+    (D_Exactly a) * (D_Exactly b) = D_Exactly (a*b)
+    ad@(D_Exactly a) * bd@(D_JustAfter b)
+        | a > 0 = D_JustAfter (a*b)
+        | otherwise = error $ "Num TimeD: Can't multiply " ++ show ad ++ " * " ++ show bd
+    ad@(D_JustAfter a) * bd@(D_Exactly b)
+        | b > 0 = D_JustAfter (a*b)
+        | otherwise = error $ "Num TimeD: Can't multiply " ++ show ad ++ " * " ++ show bd
+    ad@(D_JustAfter a) * bd@(D_JustAfter b)
+        | signum a == signum b = D_JustAfter (a*b)
+        | otherwise = error $ "Num TimeD: Can't multiply " ++ show ad ++ " * " ++ show bd
+
     abs (D_Exactly a) = (D_Exactly (abs a))
     abs (D_JustAfter a) = (D_JustAfter (abs a))
     signum (D_Exactly a) = D_Exactly (signum a)
     signum (D_JustAfter a) = D_Exactly (signum a)
     fromInteger = D_Exactly
-    negate = error "TODO instance Num TimeD negate"
+
+    negate (D_Exactly a) = (D_Exactly (negate a))
+    negate justAfter = error $ "Num TimeD: Can't negate " ++ show justAfter
 
 instance Num TimeDI where
     (DI_Exactly a) + (DI_Exactly b) = DI_Exactly (a+b)
@@ -308,6 +330,11 @@ instance Num TimeX where
     negate (X_JustAfter a)  = X_JustBefore (-a)
     negate X_Inf = X_NegInf
 
+class ClosestTime a where closestTime :: a -> Time
+instance ClosestTime TimeD where
+    closestTime (D_Exactly   t) = t
+    closestTime (D_JustAfter t) = t
+
 instance Arbitrary TimeD where
     arbitrary = oneof
                     [ D_Exactly   <$> arbitrary
@@ -327,3 +354,22 @@ instance Arbitrary TimeX where
                     , (1, pure X_Inf)
                     , (1, pure X_NegInf)
                     ]
+
+instance Random TimeD where
+    random g = let
+        (del, g') = random g
+        (t, g'') = random g'
+        in (if del then D_JustAfter t else D_Exactly t, g'')
+    randomR (loD, hiD) g = let
+        lo :: Time
+        lo = case loD of
+                D_Exactly t' -> t'
+                D_JustAfter t' -> t'
+        hi :: Time
+        hi = case hiD of
+                D_Exactly t' -> t'
+                D_JustAfter t' -> t'
+        (del, g') = random g
+        (t, g'') = randomR (lo, hi) g'
+        tdIsh = if del then D_JustAfter t else D_Exactly t
+        in (max loD (min tdIsh hiD), g'')

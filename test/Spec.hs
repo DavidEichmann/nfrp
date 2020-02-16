@@ -10,12 +10,14 @@ import Test.Tasty
 import Test.Tasty.HUnit
 import Test.Tasty.QuickCheck
 
-import Data.Maybe (isJust)
+import Control.Monad (when)
+import Data.Maybe (isJust, isNothing)
 -- import Data.Serialize (Serialize)
 -- import Data.Dynamic
 -- import qualified Data.Map as M
 -- import GHC.Generics (Generic)
 -- import qualified Data.Time as Time
+import qualified System.Timeout as Sys
 
 import NFRP
 import Time
@@ -52,9 +54,6 @@ tests = testGroup "lcTransaction"
             (Just l, Just r) -> property (isJust (l `endsOn` s2) && isJust (s2 `endsOn` r))
             _ -> property Discard
         )
-    -- , testGroup "Intersect (AllOr RightSpace) (AllOr LeftSpace)"
-    --   [ testProperty "intersect" (\ a (Positive b))
-    --   ]
     ]
   , testGroup "Gate"
     [ testProperty "Eq reflective" (\ (x :: Behavior Int) -> x == x)
@@ -63,20 +62,20 @@ tests = testGroup "lcTransaction"
     , testCase "updatesToEvent lazyness" $ do
       let x = take 3 $ eventToList $ updatesToEvent
                 [ listToEPart
-                  [ ( spanIncExc (Just 2) (Just $ delay 10),
+                  [ ( spanFromIncToInc 2 10,
                       [ (2,"b")
                       , (10,"c")
                       ]
                     )
                   ]
                 , listToEPart
-                  [ ( spanIncExc (Just 1) (Just 2),
+                  [ ( spanFromIncToExc 1 2,
                       [ (1,"a")
                       ]
                     )
                   ]
                 , listToEPart
-                  [ ( spanIncExc Nothing (Just 1),
+                  [ ( spanToExc 1,
                       []
                     )
                   ]
@@ -84,38 +83,51 @@ tests = testGroup "lcTransaction"
                 ]
       x @?= [(1,"a"), (2,"b"), (10,"c")]
 
-    -- , testCase "listToB" $ do
-    --   let b = listToB "0" [(0,"a"), (10, "b"), (20, "c")]
-    --   sampleB b (-1) @=? "0"
-    --   sampleB b 0 @=? "0"
-    --   sampleB b 1 @=? "a"
-    --   sampleB b 10 @=? "a"
-    --   sampleB b 15 @=? "b"
-    --   sampleB b 20 @=? "b"
-    --   sampleB b 21 @=? "c"
+    , testCase "listToB" $ do
+        let b = listToB "0" [(0,"a"), (10, "b"), (20, "c")]
+        sampleB b (-1) @=? "0"
+        sampleB b 0 @=? "0"
+        sampleB b 1 @=? "a"
+        sampleB b 10 @=? "a"
+        sampleB b 15 @=? "b"
+        sampleB b 20 @=? "b"
+        sampleB b 21 @=? "c"
     ]
-      -- , testGroup "Source Event"
-      --     [ testCase "fire" $ do
-      --   (fire, e) <- sourceEvent
-      --   fire 2  3 "b" 4
-      --   fire 4  5 "c" 6
-      --   fire 0  1 "c" 2
-      --   fire 100  101 "c" 102
-      --   fire 20  21 "c" 22
-      --     , testCase "full event history" $ do
-      --   (fire, e) <- sourceEvent
-      --   fire X_NegInf 1 "a" 2
-      --   fire 2  3 "b" 4
-      --   fire 4  5 "c" 5
-      --   fire 5  6 "d" X_Inf
-      --   eventToList e @?= [ (1, "a")
-      --         , (3, "b")
-      --         , (5, "c")
-      --         , (6, "d")
-      --         ]
-      --     ]
+    , testGroup "Source Event"
+        [ testCase "Full history case" $ timeout $ do
+            (fire, e) <- sourceEvent
+            fire (listToEPart [(spanToExc            4 , [(0,"a"), (3,"b")])])
+            fire (listToEPart [(spanFromIncToExc 4   6 , [])])
+            fire (listToEPart [(spanFromIncToInc 6   10, [(6,"c"), (7,"d")])])
+            fire (listToEPart [(spanFromExcToExc 10  22, [(11,"e")])])
+            fire (listToEPart [(spanFromIncToExc 22  90, [(25,"f")])])
+            fire (listToEPart [(spanFromInc      90    , [(1000,"g")])])
+            eventToList e @?=
+                  [ (0, "a")
+                  , (3, "b")
+                  , (6, "c")
+                  , (7, "d")
+                  , (11, "e")
+                  , (25, "f")
+                  , (1000, "g")
+                  ]
+        -- This isn't terminating :-(
+        -- , testProperty "Full history ordered but random." $ \ (OrderedFullUpdates (ups :: [(Span, [(Time, Int)])])) -> ioProperty . timeout $ do
+        --     (fire, e) <- sourceEvent
+        --     mapM_ fire [listToEPart [up] | up <- ups]
+        --     eventToList e @?= concatMap snd ups
+        ]
     ]
 
+lazinessErr :: a
 lazinessErr = error "A value was evaluated unexpectedly"
 
-data Nodes1 = Nodes1_A
+-- Evaluate with a standard small timeout
+timeout :: Assertion -> Assertion
+timeout go = do
+  evalMay <- Sys.timeout (100000) go
+  when (isNothing evalMay) (assertFailure "Timeout!")
+  return ()
+
+-- sToNs :: Int -> Int
+-- sToNs s = s * (1000000)

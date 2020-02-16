@@ -36,9 +36,10 @@ library
         gtk3 -any,
         mtl,
         network -any,
+        QuickCheck -any,
+        random -any,
         safe -any,
         stm -any,
-        QuickCheck -any,
         time -any,
         transformers -any,
         vector -any
