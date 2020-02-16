@@ -43,6 +43,12 @@ module GateRep
     -- * Time Spans (TODO move to Time module)
     , Span
     , spanIncExc
+    , endsOn
+
+    -- Internal (Exposed for testing)
+    , LeftSpace
+    , RightSpace
+    , AllOr (..)
 
     -- * Querying
     , sampleB
@@ -55,6 +61,7 @@ module GateRep
     -- , watchB
 
     , Intersect (..)
+    , Difference (..)
     ) where
 
 -- import Control.Concurrent
@@ -157,8 +164,7 @@ instance Applicative Behavior where
             LT -> takeRight t l
             GT -> takeRight t r
         takeRight _ v = v
--- TODO with our rep starting at -Inf instead of 0 we dont need to insert a new intial value!
--- This seems fishy.
+
 instance Delayable (Behavior a) where
     delay top = go top Nothing
         where
@@ -172,7 +178,16 @@ instance Delayable (Behavior a) where
                 else Split (go left (Just t')) t' (go right hiM)
         go v _ = v
 
--- ^ No Maybe! because in this system, it will just block if the value is unknown.
+-- | Crop values, leaving the value at the edges of the Span to expand to infinity.
+cropOpen :: Span -> Behavior a -> Behavior a
+cropOpen _ v@(Value _) = v
+cropOpen tspan (Split left t right) = case splitSpanAt tspan t of
+    (Nothing, Nothing) -> error "Impossible!"
+    (Just lspan, Nothing) -> cropOpen lspan left
+    (Nothing, Just rspan) -> cropOpen rspan right
+    (Just lspan, Just rspan) -> Split (cropOpen lspan left) t (cropOpen rspan right)
+
+-- | No Maybe! because in this system, it will just block if the value is unknown.
 sampleB :: Behavior a -> TimeX -> a
 sampleB b t = go b
     where
@@ -253,8 +268,10 @@ stepI initA0 (Event btop) = fst (go initA0 btop)
 --
 
 data MaybeKnown a = Unknown | Known a
+    deriving (Show)
 type BehaviorPart a = Behavior (MaybeKnown a)
 newtype EventPart a = EventPart { unEventPart :: BehaviorPart (Occ a) }
+    deriving (Show)
 
 -- | Assumes a finite input list.
 -- Errors if there are overlapping time spans, or any event occurences appear outside of the span.
@@ -262,7 +279,7 @@ listToEPart :: forall a . [(Span, [(Time, a)])] -> EventPart a
 listToEPart spans = let
     knownBs :: [BehaviorPart (Occ a)]
     knownBs = [ let Event occsB = listToE occs
-                    knowlage = Known <$> occsB
+                    knowlage = cropOpen tspan (Known <$> occsB) -- cropOpen is needed to get rid of a possible final NoOcc at the end of tspan
                     unknown = Value Unknown
                  in case find (not . (tspan `contains`)) (fst <$> occs) of
                         Just errT -> error $ "listToEPart: found event at time (" ++ show errT ++ ") not in span (" ++ show tspan ++ ")"
@@ -300,7 +317,7 @@ knownSpansB btop = go allT btop
         in if null spansL
             then spansR
             else if null spansR
-                then []
+                then spansL
                 else let
                     (lastLSpan,lastLB) = last spansL
                     (headRSpan,headRB) = head spansR
@@ -451,6 +468,14 @@ instance Arbitrary a => Arbitrary (Event a) where
             let t = ts !! sizeL
             return (Split l (D_Exactly t) (Split (Value (Occ a)) (D_JustAfter t) r))
 
+instance Arbitrary Span where
+    arbitrary = arbitrary `suchThatMap` (uncurry spanIncExcMaybe)
+
+instance Arbitrary LeftSpace where arbitrary = LeftSpace <$> arbitrary
+instance Arbitrary RightSpace where arbitrary = RightSpace <$> arbitrary
+instance Arbitrary a => Arbitrary (AllOr a) where
+    arbitrary = frequency [(1, return All), (15, Or <$> arbitrary)]
+
 --
 -- Time Span stuff
 --
@@ -482,7 +507,7 @@ data Span
     deriving (Eq) -- NOT Ord
 
 instance Show Span where
-    show (Span allOrR allOrL) = "Span [" ++ rt ++ lt ++ "]"
+    show (Span allOrR allOrL) = "Span [" ++ rt  ++ " " ++ lt ++ "]"
         where
         rt = case allOrR of
             All -> "←"
@@ -494,10 +519,15 @@ instance Show Span where
 -- Inclusive start Exclusive end span.
 spanIncExc :: Maybe TimeD -> Maybe TimeD -> Span
 spanIncExc lo hi
-    = case (maybe All (Or . RightSpace) lo)
-            `intersect` (maybe All (Or . LeftSpace) hi) of
+    = case spanIncExcMaybe lo hi of
         Nothing -> error "spanIncExc: lo >= hi"
         Just x -> x
+
+-- Inclusive start Exclusive end span.
+-- Nothing if the input times are not strictly increasing.
+spanIncExcMaybe :: Maybe TimeD -> Maybe TimeD -> Maybe Span
+spanIncExcMaybe lo hi = (maybe All (Or . RightSpace) lo) `intersect`
+                        (maybe All (Or . LeftSpace) hi)
 
 class Intersect a b c | a b -> c where
     intersect :: a -> b -> c
@@ -628,4 +658,4 @@ splitSpanAt tspan t = (tspan `intersect` LeftSpace t, tspan `intersect` RightSpa
 splitSpanAtErr :: Span -> TimeD -> String -> (Span, Span)
 splitSpanAtErr tspan t err = case splitSpanAt tspan t of
     (Just lspan, Just rspan) -> (lspan, rspan)
-    _ -> error $ err ++ ": Found a (Split _ (" ++ show t ++ ") _) but are in span: " ++ show tspan
+    _ -> error $ err ++ ": splitSpanAtErr: Found a (Split _ (" ++ show t ++ ") _) but are in span: " ++ show tspan

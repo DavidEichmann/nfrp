@@ -41,6 +41,17 @@ tests = testGroup "lcTransaction"
               (Just lo, Just hi) -> lo < hi ==> s == s
               _ -> property (s == s)
         )
+    , testProperty "LeftSpace intersect with allT LeftSpace is self"
+        (\ (l :: LeftSpace) -> (All :: AllOr LeftSpace) `intersect` l == l)
+    , testProperty "RightSpace intersect with allT RightSpace is self"
+        (\ (l :: RightSpace) -> (All :: AllOr RightSpace) `intersect` l == l)
+    , testProperty "span intersect self is self"
+        (\ (s :: Span) -> s `intersect` s == Just s)
+    , testProperty "span diff span -> all endsOn eachother"
+        (\ (s1 :: Span) (s2 :: Span) -> case s1 `difference` s2 of
+            (Just l, Just r) -> property (isJust (l `endsOn` s2) && isJust (s2 `endsOn` r))
+            _ -> property Discard
+        )
     -- , testGroup "Intersect (AllOr RightSpace) (AllOr LeftSpace)"
     --   [ testProperty "intersect" (\ a (Positive b))
     --   ]
@@ -52,16 +63,26 @@ tests = testGroup "lcTransaction"
     , testCase "updatesToEvent lazyness" $ do
       let x = take 3 $ eventToList $ updatesToEvent
                 [ listToEPart
-                  [ ( spanIncExc Nothing (Just $ delay 10),
-                      [ (1,"a")
-                      , (2,"b")
+                  [ ( spanIncExc (Just 2) (Just $ delay 10),
+                      [ (2,"b")
                       , (10,"c")
                       ]
                     )
                   ]
-                , lazinessErr
+                , listToEPart
+                  [ ( spanIncExc (Just 1) (Just 2),
+                      [ (1,"a")
+                      ]
+                    )
+                  ]
+                , listToEPart
+                  [ ( spanIncExc Nothing (Just 1),
+                      []
+                    )
+                  ]
+                , lazinessErr -- Simulate blocking IO that me must not evaluate.
                 ]
-      x @?= [(2,"a"), (6,"b")]
+      x @?= [(1,"a"), (2,"b"), (10,"c")]
 
     -- , testCase "listToB" $ do
     --   let b = listToB "0" [(0,"a"), (10, "b"), (20, "c")]
