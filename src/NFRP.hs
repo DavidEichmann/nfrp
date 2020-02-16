@@ -50,6 +50,17 @@ import GateRep
 
 -- import Debug.Trace
 
+
+
+
+
+
+
+
+
+
+
+
 {-
 
 # Delays

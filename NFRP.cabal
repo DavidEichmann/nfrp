@@ -40,7 +40,7 @@ library
         random -any,
         safe -any,
         stm -any,
-        time -any,
+        time == 1.8.0.2,
         transformers -any,
         vector -any
 
@@ -58,7 +58,7 @@ executable Main
         NFRP -any,
         safe -any,
         gtk3 -any,
-        time -any
+        time == 1.8.0.2
 
 executable Circles
     main-is: Circles.hs
@@ -73,7 +73,7 @@ executable Circles
         NFRP -any,
         safe -any,
         gtk3 -any,
-        time -any,
+        time == 1.8.0.2,
         ncurses -any,
         gloss -any
 
@@ -88,7 +88,7 @@ test-suite NFRP-test
         containers >=0.5.9,
         NFRP -any,
         cereal -any,
-        time -any,
+        time == 1.8.0.2,
         tasty -any,
         tasty-hunit -any,
         tasty-quickcheck -any

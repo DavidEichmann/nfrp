@@ -85,13 +85,13 @@ tests = testGroup "lcTransaction"
 
     , testCase "listToB" $ do
         let b = listToB "0" [(0,"a"), (10, "b"), (20, "c")]
-        sampleB b (-1) @=? "0"
-        sampleB b 0 @=? "0"
-        sampleB b 1 @=? "a"
-        sampleB b 10 @=? "a"
-        sampleB b 15 @=? "b"
-        sampleB b 20 @=? "b"
-        sampleB b 21 @=? "c"
+        lookupB (-1) b @=? "0"
+        lookupB 0 b @=? "0"
+        lookupB 1 b @=? "a"
+        lookupB 10 b @=? "a"
+        lookupB 15 b @=? "b"
+        lookupB 20 b @=? "b"
+        lookupB 21 b @=? "c"
     ]
     , testGroup "Source Event"
         [ testCase "Full history case" $ timeout $ do

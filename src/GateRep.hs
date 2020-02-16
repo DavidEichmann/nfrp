@@ -33,12 +33,15 @@ module GateRep
     , updatesToEvent
     , updatesToEvent'
     , eventToList
+    , never
+    , once
 
     -- * Querying
-    , sampleB
+    , lookupB
 
     -- * Combinators
     , step
+    , leftmost
 
     -- * Partial Behviors/Events
     , MaybeKnown (..)
@@ -71,6 +74,8 @@ module GateRep
     -- * Interfacing with the real world
     , sourceEvent
     , watchB
+    , watchLatestB
+    , watchLatestBIORef
 
     -- Internal (Exposed for testing)
     , LeftSpace
@@ -86,10 +91,11 @@ import Control.Concurrent
 import Control.Concurrent.STM
 import qualified Control.Concurrent.Chan as C
 import Control.Monad (forever, forM)
+import Data.IORef
 import Data.List (find, foldl', group, nub, sort)
 import Data.Maybe (fromJust, isJust)
 import qualified Data.Map as M
-import Test.QuickCheck
+import Test.QuickCheck hiding (once)
 
 import Time
 
@@ -206,8 +212,8 @@ cropOpen tspan (Split left t right) = case splitSpanAt tspan t of
     (Just lspan, Just rspan) -> Split (cropOpen lspan left) t (cropOpen rspan right)
 
 -- | No Maybe! because in this system, it will just block if the value is unknown.
-sampleB :: Behavior a -> TimeX -> a
-sampleB b t = go b
+lookupB :: TimeX -> Behavior a -> a
+lookupB t b = go b
     where
     go (Value a) = a
     go (Split left t' right)
@@ -216,13 +222,19 @@ sampleB b t = go b
 
 -- | Event occurence
 data Occ a = NoOcc | Occ a
-    deriving (Eq,Show)
+    deriving (Eq, Show, Functor)
 
 newtype Event a = Event { unEvent :: Behavior (Occ a) }
-    deriving (Show)
+    deriving (Show, Functor)
 
 -- instance Show a => Show (Event a) where
 --     show e = "Event " ++ show (eventToList e)
+
+never :: Event a
+never = Event (Value NoOcc)
+
+once :: Time -> a -> Event a
+once t a = listToE [(t, a)]
 
 listToE :: [(Time, a)] -> Event a
 listToE [] = Event (Value NoOcc)
@@ -263,6 +275,10 @@ stepI initA0 (Event btop) = fst (go initA0 btop)
         -- can return values more lazily. We dont necessarily need to know the
         -- whole (leftMay', prevValMay') to evaluate most of the right
         in (Split left' t right', endVal)
+
+-- | take the left most of simultaneous events
+leftmost :: [Event a] -> Event a
+leftmost es = foldl' const never es
 
 
 --
@@ -481,6 +497,14 @@ watchLatestB b callback = forkIO $ do
                                     loop t'
                 _ -> loop t
     loop X_NegInf
+
+-- TODO move to NFRP higher level api (because we assume X_NegInf is full)
+-- | Note the initial value is the value at X_NegInf. Ensure this exists!
+watchLatestBIORef :: Behavior a -> IO (ThreadId, IORef (TimeX, a))
+watchLatestBIORef b = do
+    ref <- newIORef (X_NegInf, lookupB X_NegInf b)
+    tid <- watchLatestB b (writeIORef ref)
+    return (tid, ref)
 
 
 behaviorToChan

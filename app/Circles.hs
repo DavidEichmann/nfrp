@@ -16,15 +16,107 @@
 module Main where
 
 import NFRP
-import Simulate
+-- import Simulate
 import Graphics.Gloss.Interface.IO.Game
 
-import Data.Map as Map
+-- import Data.Map as Map
+import Data.Time.Clock
 import Data.IORef
-import Control.Concurrent (threadDelay, forkIO)
+-- import Control.Monad (forM_)
+-- import Control.Concurrent (threadDelay, forkIO)
 
-main = putStrLn "TODO"
+data Game = Game
+    { playerPos :: Pos
+    }
 
+data InputDir = DirUp | DirRight | DirDown | DirLeft
+    deriving (Eq, Ord, Show, Read)
+
+main :: IO ()
+main = do
+    --
+    -- FRP
+    --
+
+    -- Inputs
+    (fireInput, inputE) <- sourceEvent
+
+    -- Game Logic
+    let playerPosB :: Behavior Pos
+        playerPosB = step (0, 0) ((\dir -> case dir of
+                    DirLeft  -> (-delta,  0)
+                    DirRight -> ( delta,  0)
+                    DirUp    -> ( 0,  delta)
+                    DirDown  -> ( 0, -delta)
+                    ) <$> inputE)
+        delta = 100
+
+    --
+    -- FRP -> IORef
+    --
+
+    (_, playerPosIORef) <- watchLatestBIORef playerPosB
+    let getGame = do
+            (_, playerPos') <- readIORef playerPosIORef
+            return (Game playerPos')
+
+    --
+    -- Game Loop
+    --
+
+    gameStartTime <- getCurrentTime
+    let getGameTime = do
+            t <- getCurrentTime
+            let dt = t `diffUTCTime` gameStartTime
+                dtns = floor (1000000 * dt)
+            return dtns
+
+    -- Initialize with no events up to time 0 (TODO this should be part of a higher lever API)
+    fireInput (listToEPart [(spanToInc 0, [])])
+    lastUpdateTimeIORef <- newIORef 0
+    playIO
+        (InWindow "NFRP Demo" (500, 500) (100, 100))
+        black
+        60
+        ()
+        -- Draw The Game
+        (\ () -> do
+            game <- getGame
+            return $ Pictures
+                [ drawCharacter red (playerPos game)
+                ]
+        )
+        -- Fire Input Events
+        (\ event () -> do
+            t <- getGameTime
+            lastUpdateTime <- readIORef lastUpdateTimeIORef
+
+            -- Get inputs.
+            let inputsMay = case event of
+                    EventKey (SpecialKey sk) Down _modifiers _mousePos
+                        -> case sk of
+                            KeyUp    -> Just DirUp
+                            KeyRight -> Just DirRight
+                            KeyDown  -> Just DirDown
+                            KeyLeft  -> Just DirLeft
+                            _        -> Nothing
+                    _   -> Nothing
+
+            fireInput (listToEPart [( spanFromExcToInc lastUpdateTime t
+                                     , [(t, inputs) | Just inputs <- [inputsMay]])
+                                   ]
+                      )
+            writeIORef lastUpdateTimeIORef t
+        )
+        (\ _dt () ->
+            -- TODO step world... do we need to do this?
+            return ()
+            )
+
+drawCharacter :: Color -> Pos -> Picture
+drawCharacter c (x, y) = Color c (translate x y (Circle 10))
+
+type Pos = (Float, Float)
 
 {-}
 -- Lets make a simple calculator example with 3 clients and a server that we want to do that calculating.
@@ -38,7 +130,6 @@ instance Sing Player where
 instance Sing Bot where
     sing _ = Bot
 
-type Pos = (Float, Float)
 
 data Ctx = Ctx (IORef Pos) (IORef Pos)
 
@@ -101,9 +192,6 @@ data CircOut = CircOut
     , botInputDirSrcEvt    :: SourceEvent Node InputDir -- Bot
     }
 
-data InputDir = DirUp | DirRight | DirDown | DirLeft
-    deriving (Eq, Ord, Show, Read)
-
 playerGUI :: (Eq node, Show node)
           => (Int, Int)
           -> Ctx
@@ -140,9 +228,6 @@ playerGUI windowPos (Ctx pPosIORef bPosIORef) inputDirSourceE injector _getTime 
         -- TODO step world... do we need to do this?
         return ()
         )
-
-drawCharacter :: Color -> Pos -> Picture
-drawCharacter c (x, y) = Color c (translate x y (Circle 10))
 
 circuit :: Mom CircOut
 circuit = do
