@@ -15,6 +15,7 @@
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeInType #-}
 {-# LANGUAGE TypeOperators #-}
@@ -23,22 +24,37 @@
 
 module GateRep
     ( Behavior
-    -- , unEvent
-    , sampleB
-    -- , step
-    -- , watchB
     , listToB
     , listToBI
-    , Event
-    -- , sourceEvent
-    , listToE
-    , eventToList
-    , step
-    , updatesToEvent
 
+    , Event
+    , Occ (..)
+    , listToE
+    , updatesToEvent
+    , updatesToEvent'
+    , eventToList
+
+    -- * Partial Behviors/Events
     , MaybeKnown (..)
     , BehaviorPart
     , EventPart
+    , listToEPart
+
+    -- * Time Spans (TODO move to Time module)
+    , Span
+    , spanIncExc
+
+    -- * Querying
+    , sampleB
+
+    -- * Cominators
+    , step
+
+    -- * Interfacing with the real world
+    -- , sourceEvent
+    -- , watchB
+
+    , Intersect (..)
     ) where
 
 -- import Control.Concurrent
@@ -143,28 +159,27 @@ instance Applicative Behavior where
         takeRight _ v = v
 -- TODO with our rep starting at -Inf instead of 0 we dont need to insert a new intial value!
 -- This seems fishy.
-delay :: forall a . Behavior a -> Behavior a
-delay top = go top Nothing
-    where
-    go :: Behavior a -> Maybe TimeD -> Behavior a
-    go (Split left t right) hiM =
-        let
-        t' = delayTime t
-        -- If there is already a next value at the delayed time, then discard the right value.
-        in if Just t' == hiM
-            then go left (Just t')
-            else Split (go left (Just t')) t' (go right hiM)
-    go v _ = v
+instance Delayable (Behavior a) where
+    delay top = go top Nothing
+        where
+        go :: Behavior a -> Maybe TimeD -> Behavior a
+        go (Split left t right) hiM =
+            let
+            t' = delay t
+            -- If there is already a next value at the delayed time, then discard the right value.
+            in if Just t' == hiM
+                then go left (Just t')
+                else Split (go left (Just t')) t' (go right hiM)
+        go v _ = v
 
 -- ^ No Maybe! because in this system, it will just block if the value is unknown.
-sampleB :: Behavior a -> Time -> a
+sampleB :: Behavior a -> TimeX -> a
 sampleB b t = go b
     where
-    tdi = D_Exactly t
     go (Value a) = a
     go (Split left t' right)
-        | tdi < t'   = go left
-        | otherwise  = go right
+        | t < toTime t'  = go left
+        | otherwise      = go right
 
 -- -- | Watch a Behavior, sening data to a callback as they are evaluated
 -- watchB
@@ -177,7 +192,7 @@ sampleB b t = go b
 -- watchB btop notifyPart = forkIO (go X_NegInf btop X_Inf)
 --     where
 --     -- lo is exclusive and hi is inclusive of the current time tspan.
---     go !lo (Value a) !hi = notifyPart (listToBX Unknown [(delayTime lo, Known a), (hi, Unknown)])
+--     go !lo (Value a) !hi = notifyPart (listToBX Unknown [(delay lo, Known a), (hi, Unknown)])
 --     go !lo (Split left t right) !hi = do
 --         _ <- forkIO $ go lo left t
 --         go t right hi
@@ -242,15 +257,15 @@ type BehaviorPart a = Behavior (MaybeKnown a)
 newtype EventPart a = EventPart { unEventPart :: BehaviorPart (Occ a) }
 
 -- | Assumes a finite input list.
--- Errors is there are overlapping time spans.
-listToEPartErr :: forall a . [(Span, [(Time, a)])] -> EventPart a
-listToEPartErr spans = let
+-- Errors if there are overlapping time spans, or any event occurences appear outside of the span.
+listToEPart :: forall a . [(Span, [(Time, a)])] -> EventPart a
+listToEPart spans = let
     knownBs :: [BehaviorPart (Occ a)]
     knownBs = [ let Event occsB = listToE occs
                     knowlage = Known <$> occsB
                     unknown = Value Unknown
                  in case find (not . (tspan `contains`)) (fst <$> occs) of
-                        Just errT -> error $ "listToEPartErr: found event at time (" ++ show errT ++ ") not in span (" ++ show tspan ++ ")"
+                        Just errT -> error $ "listToEPart: found event at time (" ++ show errT ++ ") not in span (" ++ show tspan ++ ")"
                         Nothing -> case tspan of
                             Span All All -> knowlage
                             Span All (Or (LeftSpace t)) -> Split knowlage t unknown
@@ -436,7 +451,6 @@ instance Arbitrary a => Arbitrary (Event a) where
             let t = ts !! sizeL
             return (Split l (D_Exactly t) (Split (Value (Occ a)) (D_JustAfter t) r))
 
-
 --
 -- Time Span stuff
 --
@@ -448,25 +462,49 @@ data AllOr a
 
 -- Half spaces
 newtype LeftSpace  = LeftSpace  TimeD   -- ^ [[ LeftSpace  t' ]] = { t | t <  t' }
-    deriving (Show,Eq,Ord)
+    deriving (Eq,Ord)
 newtype RightSpace = RightSpace TimeD   -- ^ [[ RightSpace t' ]] = { t | t >= t' }
-    deriving (Show,Eq,Ord)
+    deriving (Eq,Ord)
 
+instance Show LeftSpace where
+    show (LeftSpace t) = "←" ++ show t ++ "○"
+instance Show RightSpace where
+    show (RightSpace t) = "●" ++ show t ++ "→"
+
+deriving instance Eq (AllOr LeftSpace)
+deriving instance Eq (AllOr RightSpace)
 
 -- [[ Span l r ]] = l `intersect` r
 data Span
     = Span
         (AllOr RightSpace) -- ^ Time span left  bound Inclusive. All == Inclusive -Inf
         (AllOr LeftSpace)  -- ^ Time span right bound Exclusive. All == !Inclusive! Inf
-    deriving (Show) -- NOT Ord
+    deriving (Eq) -- NOT Ord
 
+instance Show Span where
+    show (Span allOrR allOrL) = "Span [" ++ rt ++ lt ++ "]"
+        where
+        rt = case allOrR of
+            All -> "←"
+            Or r -> show r
+        lt = case allOrL of
+            All -> "→"
+            Or l -> show l
+
+-- Inclusive start Exclusive end span.
+spanIncExc :: Maybe TimeD -> Maybe TimeD -> Span
+spanIncExc lo hi
+    = case (maybe All (Or . RightSpace) lo)
+            `intersect` (maybe All (Or . LeftSpace) hi) of
+        Nothing -> error "spanIncExc: lo >= hi"
+        Just x -> x
 
 class Intersect a b c | a b -> c where
     intersect :: a -> b -> c
 
-instance Intersect RightSpace LeftSpace (Maybe Span) where intersect = flip intersect
-instance Intersect LeftSpace RightSpace (Maybe Span) where
-    intersect l@(LeftSpace lo) r@(RightSpace hi)
+instance Intersect LeftSpace RightSpace (Maybe Span) where intersect = flip intersect
+instance Intersect RightSpace LeftSpace (Maybe Span) where
+    intersect r@(RightSpace lo) l@(LeftSpace hi)
         | lo < hi = Just (Span (Or r) (Or l))
         | otherwise = Nothing
 instance Intersect Span LeftSpace (Maybe Span) where intersect = flip intersect

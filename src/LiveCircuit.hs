@@ -180,7 +180,7 @@ module LiveCircuit where
 --                                     (Nothing, Just _) -> Just gmap'
 --                                     (Just maxT, Just maxT')
 --                                         | maxT == maxT' -> Nothing
---                                         | otherwise     -> Just (takeFrom (delayTime maxT) gmap)
+--                                         | otherwise     -> Just (takeFrom (delay maxT) gmap)
 --                                                     -- ^ TODO the inability to
 --                                                     -- delay an already delayed
 --                                                     -- time may cause issue
@@ -264,7 +264,7 @@ module LiveCircuit where
 
 --                 delayBehRep :: a -> BMap a -> BMap a
 --                 delayBehRep a0 bmap
---                     = delayTime bmap `gateUnion` instantaneousBMap 0 a0
+--                     = delay bmap `gateUnion` instantaneousBMap 0 a0
 
 --         lcEvts' :: forall a . EventIx a -> Maybe (EMap a)
 --         lcEvts' eix = case updateWay myNode e of

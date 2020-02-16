@@ -33,22 +33,22 @@ module NFRP
     module GateRep
     ) where
 
-import Control.Monad.State
-import Unsafe.Coerce
-import Data.IORef
-import Data.Maybe (mapMaybe)
-import qualified Data.Map as Map
+-- import Control.Monad.State
+-- import Unsafe.Coerce
+-- import Data.IORef
+-- import Data.Maybe (mapMaybe)
+-- import qualified Data.Map as Map
 
-import Control.Concurrent
-import Control.Concurrent.Async
+-- import Control.Concurrent
+-- import Control.Concurrent.Async
 
-import Circuit
+-- import Circuit
 import GateRep
-import LiveCircuit
-import Time
-import TypeLevelStuff
+-- import LiveCircuit
+-- import Time
+-- import TypeLevelStuff
 
-import Debug.Trace
+-- import Debug.Trace
 
 {-
 

@@ -29,7 +29,7 @@ module Time
     , ToTimeErr (..)
     , CompareTime (..)
     , NeighborTimes (..)
-    , DelayTime (..)
+    , Delayable (..)
     , minTime
 
     , (>.)
@@ -46,7 +46,11 @@ type Time = Integer -- TODO Int64? nanoseconds?
 data TimeD
     = D_Exactly Time
     | D_JustAfter Time
-    deriving (Show, Eq)
+    deriving (Eq)
+
+instance Show TimeD where
+    show (D_Exactly t) = show t
+    show (D_JustAfter t) = show t ++ "⁺"
 
 instance Ord TimeD where
     compare (D_Exactly a) (D_Exactly b) = compare a b
@@ -98,6 +102,9 @@ instance ToTime Time TimeDI where
 instance ToTime TimeD TimeDI where
     toTime (D_Exactly   t) = DI_Exactly   t
     toTime (D_JustAfter t) = DI_JustAfter t
+instance ToTime TimeD TimeX where
+    toTime (D_Exactly   t) = X_Exactly   t
+    toTime (D_JustAfter t) = X_JustAfter t
 instance ToTime TimeDI TimeX where
     toTime (DI_Exactly   t) = X_Exactly   t
     toTime (DI_JustAfter t) = X_JustAfter t
@@ -209,26 +216,39 @@ compareBiased o a b = case compare a b of
     GT -> GT
 
 
-class DelayTime t where
-    delayTime :: t -> t
+class Delayable t where
+    delay :: t -> t
 
-instance DelayTime TimeD where
-    delayTime (D_Exactly t)   = D_JustAfter t
+instance Delayable TimeD where
+    delay (D_Exactly t)   = D_JustAfter t
     -- NOTE that we apply the general assumption that 2 infinitesimals == 1 infinitesmal
-    delayTime (D_JustAfter t) = D_JustAfter t
+    delay (D_JustAfter t) = D_JustAfter t
 
-instance DelayTime TimeDI where
-    delayTime (DI_Exactly t)   = DI_JustAfter t
+instance Delayable TimeDI where
+    delay (DI_Exactly t)   = DI_JustAfter t
     -- NOTE that we apply the general assumption that 2 infinitesimals == 1 infinitesmal
-    delayTime (DI_JustAfter t) = DI_JustAfter t
-    delayTime DI_Inf           = DI_Inf
+    delay (DI_JustAfter t) = DI_JustAfter t
+    delay DI_Inf           = DI_Inf
 
-instance DelayTime TimeX where
-    delayTime (X_JustBefore t) = X_JustAfter t
-    delayTime (X_Exactly t)   = X_JustAfter t
+instance Delayable TimeX where
+    delay (X_JustBefore t) = X_JustAfter t
+    delay (X_Exactly t)   = X_JustAfter t
     -- NOTE that we apply the general assumption that 2 infinitesimals == 1 infinitesmal
-    delayTime (X_JustAfter t) = X_JustAfter t
-    delayTime t           = t
+    delay (X_JustAfter t) = X_JustAfter t
+    delay t           = t
+
+instance Num TimeD where
+    (D_Exactly a) + (D_Exactly b) = D_Exactly (a+b)
+    (D_Exactly a) + (D_JustAfter b) = D_JustAfter (a+b)
+    (D_JustAfter a) + (D_Exactly b) = D_JustAfter (a+b)
+    (D_JustAfter a) + (D_JustAfter b) = D_JustAfter (a+b)
+    (*) = error "TODO instance Num TimeD (*)"
+    abs (D_Exactly a) = (D_Exactly (abs a))
+    abs (D_JustAfter a) = (D_JustAfter (abs a))
+    signum (D_Exactly a) = D_Exactly (signum a)
+    signum (D_JustAfter a) = D_Exactly (signum a)
+    fromInteger = D_Exactly
+    negate = error "TODO instance Num TimeD negate"
 
 instance Num TimeDI where
     (DI_Exactly a) + (DI_Exactly b) = DI_Exactly (a+b)
