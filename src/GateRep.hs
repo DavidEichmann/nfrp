@@ -70,7 +70,7 @@ module GateRep
 
     -- * Interfacing with the real world
     , sourceEvent
-    -- , watchB
+    , watchB
 
     -- Internal (Exposed for testing)
     , LeftSpace
@@ -81,10 +81,11 @@ module GateRep
     , OrderedFullUpdates (..)
     ) where
 
+import Control.Applicative
 import Control.Concurrent
 import Control.Concurrent.STM
 import qualified Control.Concurrent.Chan as C
-import Control.Monad (forM)
+import Control.Monad (forever, forM)
 import Data.List (find, foldl', group, nub, sort)
 import Data.Maybe (fromJust, isJust)
 import qualified Data.Map as M
@@ -213,22 +214,6 @@ sampleB b t = go b
         | t < toTime t'  = go left
         | otherwise      = go right
 
--- -- | Watch a Behavior, sening data to a callback as they are evaluated
--- watchB
---     :: Behavior a
---     -> (BehaviorPart a -> IO ())
---     -- ^ IO function to call with partial behavior value.
---     -- Will always be called on it's own thread and possibly concurrently.
---     -- Note the value is lazy but the times are strict
---     -> IO ThreadId
--- watchB btop notifyPart = forkIO (go X_NegInf btop X_Inf)
---     where
---     -- lo is exclusive and hi is inclusive of the current time tspan.
---     go !lo (Value a) !hi = notifyPart (listToBX Unknown [(delay lo, Known a), (hi, Unknown)])
---     go !lo (Split left t right) !hi = do
---         _ <- forkIO $ go lo left t
---         go t right hi
-
 -- | Event occurence
 data Occ a = NoOcc | Occ a
     deriving (Eq,Show)
@@ -290,6 +275,12 @@ type BehaviorPart a = Behavior (MaybeKnown a)
 newtype EventPart a = EventPart { unEventPart :: BehaviorPart (Occ a) }
     deriving (Show)
 
+behaviorPart :: Span -> a -> BehaviorPart a
+behaviorPart (Span All All) a = Value (Known a)
+behaviorPart (Span (Or (RightSpace lo)) (Or (LeftSpace hi))) a = Split (Value Unknown) lo (Split (Value $ Known a) hi (Value Unknown))
+behaviorPart (Span All (Or (LeftSpace hi))) a = Split (Value $ Known a) hi (Value Unknown)
+behaviorPart (Span (Or (RightSpace lo)) All) a = Split (Value Unknown) lo (Value $ Known a)
+
 -- | Assumes a finite input list.
 -- Errors if there are overlapping time spans, or any event occurences appear outside of the span.
 listToEPart :: forall a . [(Span, [(Time, a)])] -> EventPart a
@@ -308,6 +299,15 @@ listToEPart spans = let
             | (tspan, occs) <- spans
             ]
     in EventPart (foldl' unionBP (pure Unknown) knownBs)
+
+lookupMaxBPart :: forall a . BehaviorPart a -> Maybe (TimeX, a)
+lookupMaxBPart btop = go allT btop
+    where
+    go :: Span -> BehaviorPart a -> Maybe (TimeX, a)
+    go tspan (Value (Known a)) = Just (snd (spanToIncInc tspan), a)
+    go _     (Value Unknown  ) = Nothing
+    go tspan (Split l t r) = let (lspan, rspan) = splitSpanAtErr tspan t "lookupMaxBPart"
+                              in go rspan r <|> go lspan l
 
 unionBP :: BehaviorPart a -> BehaviorPart a -> BehaviorPart a
 unionBP aB bB =
@@ -451,6 +451,59 @@ updatesToEvent' updates = (Event occsB, errCases)
         diffErr = error $ "Impossibe! After a `difference` the left span must end on Or and the right"
                     ++ "span must start on an Or, but got: difference (" ++ show spanOut ++ ") ("
                     ++ show spanIn ++ ") == " ++ show (difference spanOut spanIn)
+
+-- | Watch a Behavior, sening data to a callback as they are evaluated.
+-- A dedicated thread is created that will run the callback.
+watchB
+    :: forall a
+    .  Behavior a
+    -> (BehaviorPart a -> IO ())
+    -- ^ IO function to call with partial behavior value.
+    -- Will always be called on it's own thread and possibly concurrently.
+    -- Note the value is lazy but the times are strict
+    -> IO ThreadId
+watchB btop notifyPart = forkIO $ do
+    (_, chan) <- behaviorToChan btop
+    -- do forever
+    forever $ notifyPart =<< readChan chan
+
+-- | Calls the call back a with the latest (time wise) available value.
+-- A dedicated thread is created that will run the callback.
+watchLatestB :: Behavior a -> ((TimeX, a) -> IO ()) -> IO ThreadId
+watchLatestB b callback = forkIO $ do
+    (_, chan) <- behaviorToChan b
+    -- do forever
+    let loop t = do
+            maxMay <- lookupMaxBPart <$> readChan chan
+            case maxMay of
+                Just (t', a) | t' > t -> do
+                                    callback (t', a)
+                                    loop t'
+                _ -> loop t
+    loop X_NegInf
+
+
+behaviorToChan
+    :: forall a
+    .  Behavior a
+    -- ^ IO function to call with partial behavior value.
+    -- Will always be called on it's own thread and possibly concurrently.
+    -- Note the value is lazy but the times are strict
+    -> IO (ThreadId, Chan (BehaviorPart a))
+behaviorToChan btop = do
+    updatesChan <- newChan
+    tid <- forkIO $ do
+        let go :: Span -> Behavior a -> IO ()
+            go tspan (Value a) = writeChan updatesChan (behaviorPart tspan a)
+            go tspan (Split left t right) = case splitSpanAt tspan t of
+                (Nothing, Nothing) -> error $ "Impossible! splitSpanAt " ++ show tspan ++ " = (Nothing, Nothing)"
+                (Just lspan, Nothing) -> go lspan left
+                (Nothing, Just rspan) -> go rspan right
+                (Just lspan, Just rspan) -> do
+                    _ <- forkIO $ go lspan left
+                    go rspan right
+        go allT btop
+    return (tid, updatesChan)
 
 --
 -- Time Span stuff
