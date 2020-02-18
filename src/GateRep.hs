@@ -41,6 +41,7 @@ module GateRep
 
     -- * Combinators
     , step
+    , stepI
     , leftmost
 
     -- * Partial Behviors/Events
@@ -190,16 +191,17 @@ instance Applicative Behavior where
         takeRight _ v = v
 
 instance Delayable (Behavior a) where
-    delay top = go top Nothing
+    delay top = go top All
         where
-        go :: Behavior a -> Maybe TimeD -> Behavior a
-        go (Split left t right) hiM =
+        go :: Behavior a -> AllOr LeftSpace -> Behavior a
+        go (Split left t right) rightBoundScope =
             let
             t' = delay t
+            leftScope = Or (LeftSpace t')
             -- If there is already a next value at the delayed time, then discard the right value.
-            in if Just t' == hiM
-                then go left (Just t')
-                else Split (go left (Just t')) t' (go right hiM)
+            in if rightBoundScope `contains` t'
+                then Split (go left leftScope) t' (go right rightBoundScope)
+                else go left leftScope
         go v _ = v
 
 -- | Crop values, leaving the value at the edges of the Span to expand to infinity.
@@ -674,10 +676,14 @@ instance NeverAll RightSpace
 class Contains a b where
     contains :: a -> b -> Bool
 
+instance Contains LeftSpace TimeD where
+    contains (LeftSpace a) t = t < a
+instance Contains RightSpace TimeD where
+    contains (RightSpace a) t = t >= a
 instance Contains LeftSpace Time where
-    contains (LeftSpace a) t = D_Exactly t < a
+    contains ls t = ls `contains` D_Exactly t
 instance Contains RightSpace Time where
-    contains (RightSpace a) t = D_Exactly t >= a
+    contains rs t = rs `contains` D_Exactly t
 instance Contains Span Time where
     contains (Span rs ls) t = ls `contains` t && rs `contains` t
 instance Contains LeftSpace LeftSpace where

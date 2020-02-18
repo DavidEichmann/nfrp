@@ -55,6 +55,7 @@ main = do
     -- FRP -> IORef
     --
 
+    _ <- watchB playerPosB print
     (_, playerPosIORef) <- watchLatestBIORef playerPosB
     let getGame = do
             (_, playerPos') <- readIORef playerPosIORef

@@ -111,6 +111,23 @@ tests = testGroup "lcTransaction"
                   , (25, "f")
                   , (1000, "g")
                   ]
+        , testCase "step gives delayed knowlage lazy" $ timeout $ do
+            (fire, e) <- sourceEvent
+            let b = step "0" e
+            fire (listToEPart [(spanToExc            4 , [(0,"a"), (3,"b")])])
+            lookupB 0 b @?= "0"
+            lookupB (X_JustAfter 0) b @?= "a"
+            lookupB 3 b @?= "a"
+            lookupB (X_JustAfter 3) b @?= "b"
+            lookupB 4 b @?= "b"
+            fire (listToEPart [(spanFromIncToInc   4 5 , [(5,"c")])])   Yikes! I think the probelm is that the span is up to 5 so we dont include the "event stops exactly after 5" info
+                                                                        We can safelly delay the right bound time when firing events becase we know that a delayed event cannot happen, so
+                                                                        we effectlively know that extra moment of info.
+            lookupB (X_JustAfter 4) b @?= "b"
+            lookupB 5 b @?= "b"
+            lookupB (X_JustAfter 5) b @?= "c"
+
+
         -- This isn't terminating :-(
         -- , testProperty "Full history ordered but random." $ \ (OrderedFullUpdates (ups :: [(Span, [(Time, Int)])])) -> ioProperty . timeout $ do
         --     (fire, e) <- sourceEvent
