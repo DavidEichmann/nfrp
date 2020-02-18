@@ -120,9 +120,7 @@ tests = testGroup "lcTransaction"
             lookupB 3 b @?= "a"
             lookupB (X_JustAfter 3) b @?= "b"
             lookupB 4 b @?= "b"
-            fire (listToEPart [(spanFromIncToInc   4 5 , [(5,"c")])])   Yikes! I think the probelm is that the span is up to 5 so we dont include the "event stops exactly after 5" info
-                                                                        We can safelly delay the right bound time when firing events becase we know that a delayed event cannot happen, so
-                                                                        we effectlively know that extra moment of info.
+            fire (listToEPart [(spanFromIncToInc   4 5 , [(5,"c")])])
             lookupB (X_JustAfter 4) b @?= "b"
             lookupB 5 b @?= "b"
             lookupB (X_JustAfter 5) b @?= "c"
@@ -142,9 +140,8 @@ lazinessErr = error "A value was evaluated unexpectedly"
 -- Evaluate with a standard small timeout
 timeout :: Assertion -> Assertion
 timeout go = do
-  evalMay <- Sys.timeout (100000) go
-  when (isNothing evalMay) (assertFailure "Timeout!")
-  return ()
+  evalMay <- Sys.timeout 100000 go
+  when (isNothing evalMay) (assertFailure "Timeout! This could mean a value could not me evaluated. Does it still fail with a larger timeout?")
 
 -- sToNs :: Int -> Int
 -- sToNs s = s * (1000000)
