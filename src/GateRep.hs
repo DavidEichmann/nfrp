@@ -10,82 +10,84 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeInType #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
 
-module GateRep
-    ( Behavior
-    , listToB
-    , listToBI
+module GateRep where
+    -- ( Behavior
+    -- , listToB
+    -- , listToBI
 
-    , Event
-    , Occ (..)
-    , listToE
-    , updatesToEvent
-    , updatesToEvent'
-    , eventToList
-    , never
-    , once
+    -- , Event
+    -- , Occ (..)
+    -- , listToE
+    -- , updatesToEvent
+    -- , updatesToEvent'
+    -- , eventToList
+    -- , never
+    -- , once
 
-    -- * Querying
-    , lookupB
+    -- -- * Querying
+    -- , lookupB
 
-    -- * Combinators
-    , step
-    , stepI
-    , leftmost
+    -- -- * Combinators
+    -- , step
+    -- , stepI
+    -- , leftmost
 
-    -- * Partial Behviors/Events
-    , MaybeKnown (..)
-    , BehaviorPart
-    , EventPart
-    , listToEPart
+    -- -- * Partial Behviors/Events
+    -- , MaybeKnown (..)
+    -- , BehaviorPart
+    -- , EventPart
+    -- , listToEPart
 
-    -- * Time Spans (TODO move to Time module)
-    , Span
-    , spanIncExc
-    , endsOn
+    -- -- * Time Spans (TODO move to Time module)
+    -- , Span
+    -- , spanIncExc
+    -- , endsOn
 
-    -- ** Convenient Span construction.
-    , allT
-    , spanToExc             -- ^ Usually use this AND
-    , spanFromInc           -- ^ Usually use this AND
-    , spanFromIncToExc      -- ^ Usually use this
+    -- -- ** Convenient Span construction.
+    -- , allT
+    -- , spanToExc             -- ^ Usually use this AND
+    -- , spanFromInc           -- ^ Usually use this AND
+    -- , spanFromIncToExc      -- ^ Usually use this
 
-    , spanToInc
-    , spanFromExc
-    , spanFromExcToInc
+    -- , spanToInc
+    -- , spanFromExc
+    -- , spanFromExcToInc
 
-    , spanFromIncToInc
-    , spanFromExcToExc
+    -- , spanFromIncToInc
+    -- , spanFromExcToExc
 
-    -- * Span operations
-    , Intersect (..)
-    , Difference (..)
+    -- -- * Span operations
+    -- , Intersect (..)
+    -- , Difference (..)
 
-    -- * Interfacing with the real world
-    , sourceEvent
-    , watchB
-    , watchLatestB
-    , watchLatestBIORef
+    -- -- * Interfacing with the real world
+    -- , sourceEvent
+    -- , watchB
+    -- , watchLatestB
+    -- , watchLatestBIORef
 
-    -- Internal (Exposed for testing)
-    , LeftSpace
-    , RightSpace
-    , AllOr (..)
+    -- -- Internal (Exposed for testing)
+    -- , LeftSpace
+    -- , RightSpace
+    -- , AllOr (..)
 
-    -- * Quick Check
-    , OrderedFullUpdates (..)
-    ) where
+    -- -- * Quick Check
+    -- , OrderedFullUpdates (..)
+    -- ) where
 
 import Control.Applicative
 import Control.Concurrent
@@ -94,11 +96,12 @@ import qualified Control.Concurrent.Chan as C
 import Control.Monad (forever, forM)
 import Data.IORef
 import Data.List (find, foldl', group, nub, sort)
-import Data.Maybe (fromJust, isJust)
+import Data.Maybe (catMaybes, fromJust, fromMaybe, isJust)
 import qualified Data.Map as M
 import Test.QuickCheck hiding (once)
 
 import Time
+import TimeSpan
 
 
 -- REFACTOR The problem is that you can represent things just after a ajust
@@ -118,14 +121,19 @@ import Time
 -- and the *exclusive* start time of left. Still Use TimeX to track the
 -- inclusive-inclusive min-max range of a value.
 
-
-data Behavior a
-    = Split
-        (Behavior a)     -- ^ Values up to and Excluding t. Yes! Excluding is correct!
-        TimeD            -- ^ Some t
-        (Behavior a)     -- ^ Values after and Including t
-    | Value a
-    -- ^ Value in the current time tspan.
+-- | Represents values at all times from -Inf to Inf
+-- A tree structure, but semanticaly is a list of `Time`s with possible changes happening at and just after that time.
+-- Note on lazyness: the depth corresponds to order of knowlage, so parent nodes can always be evaluated before the child nodes.
+data Behavior a = Behavior a (Changes a) -- ^ initial value and value changes
+    deriving (Functor, Show)
+data Changes a
+    = NoChanges
+    | Changes
+        (Changes a)     -- ^ Values strictly before t.
+        Time             -- ^ Some t
+        (Maybe a)        -- ^ Possible change of value at (inluding) t.
+        (Maybe a)        -- ^ Possible change of value just after t.
+        (Changes a)     -- ^ Value changes strictly after t.
     deriving (Functor, Show)
 
 instance Eq a => Eq (Behavior a) where
@@ -133,14 +141,182 @@ instance Eq a => Eq (Behavior a) where
 
 -- | Requires full evaluation
 alwaysB :: (a -> Bool) -> Behavior a -> Bool
-alwaysB f (Value a) = f a
-alwaysB f (Split left _ right) = alwaysB f left && alwaysB f right
+alwaysB f b = all f allVals
+    where
+    (aInit, tas) = bToList b
+    allVals = aInit : (snd <$> tas)
+
+bToList :: Behavior a -> (a, [(TimeD, a)])
+bToList (Behavior a cs) = (a, go cs)
+    where
+    go NoChanges = []
+    go (Changes left t at atx right) = go left ++ catMaybes [(D_Exactly t,) <$> at, (D_JustAfter t,) <$> atx] ++ go right
 
 -- -- | Basically a step function where you control the TimeX (inclusive) that value start.
 -- listToBX :: a -> [(TimeD, a)] -> Behavior a
 -- listToBX initA0 [] = (Value initA0)
 -- listToBX initA0 ((initET, initEA):events) = Split (Value a) initET (listToBX initEA events)
 
+changesFinalValue :: Changes a -> Maybe a
+changesFinalValue NoChanges = Nothing
+changesFinalValue (Changes l _ a b r) = changesFinalValue r <|> b <|> a <|> changesFinalValue l
+
+instance Applicative Behavior where
+    pure a = Behavior a NoChanges
+    (<*>) ::forall a b . Behavior (a -> b) -> Behavior a -> Behavior b
+    (Behavior fInitTop ftop) <*> (Behavior aInitTop atop)
+        = let (bInit, bcs, _, _, _) = go allT allT fInitTop ftop allT aInitTop atop
+           in Behavior bInit bcs
+        where
+        go :: SpanExc               -- ^ Span of the output we want to produce
+           -> SpanExc               -- ^ Span of the `f` changes. Contains the output span.
+           -> (a -> b)              -- ^ `f` at the start of this span
+           -> Changes (a -> b)      -- ^ Superset of `f` changes within the span.
+           -> SpanExc               -- ^ Span of the `a` changes. Contains the output span.
+           -> a                     -- ^ `a` at the start of this span
+           -> Changes a             -- ^ Superset of `a` changes within the span.
+           -> (b, Changes b, (a->b), a, b)
+                                    -- ^ ( `b` at the start of this span
+                                    --   , all b changes exactly in this span.
+                                    --   , `f`,`x`,`b` at the end of this span )
+        go _ _ f NoChanges _ x NoChanges = let fx = f x in (fx, NoChanges, f, x, fx)
+        go tspan _ f fcs _ x NoChanges = let
+            fx = f x
+            (_, cropf, fEnd) = crop tspan f fcs
+            bcs = ($x) <$> cropf
+            in (fx, bcs, fromMaybe f (changesFinalValue fcs), x, fromMaybe fx (changesFinalValue bcs))
+        go tspan _ f NoChanges _ x xcs = _ -- crop tspan (f x) (f <$> xcs)
+        go tspan
+            fspan f fcs@(Changes fl fSplitTime ft ftx fr)
+            xspan x xcs@(Changes xl xSplitTime xt xtx xr)
+            = case (splitSpanExcAt tspan fSplitTime, splitSpanExcAt tspan xSplitTime) of
+                -- Recurse untill fSplitTime and xSplitTime are within tspan.
+                (FullyLeftOfT  _, _) -> go tspan _fspan' f fl _xspan x xcs
+                (FullyRightOfT _, _) -> go tspan _fspan' fInitR fr _xspan x xcs
+                (_, FullyLeftOfT  _) -> go tspan _fspan f fcs _xspan' x xl
+                (_, FullyRightOfT _) -> go tspan _fspan f fcs _xspan' xInitR xr
+                --fSplitTime and xSplitTime are within tspan.
+                (SplitByT flspan frspan, SplitByT xlspan xrspan) -> if fSplitTime == xSplitTime
+                    then let
+                        bSplitTime = fSplitTime -- == xSplitTime
+                        lspan = flspan -- == xlspan
+                        rspan = frspan -- == xrspan
+                        (_, bl, flEnd, xlEnd, blEnd) = go lspan _fspan'l f fl _xspan'l x xl
+                        (bt, btx, _) = btBtx flEnd ft ftx xlEnd xt xtx
+                        (ft, ftx, f) = btBtx flEnd ft ftx xlEnd xt xtx
+                        (bt, btx, _) = btBtx flEnd ft ftx xlEnd xt xtx
+                        (_, br, frEnd, xrEnd, brEnd) = go rspan _fspan'r fInitR fr _xspan'r xInitR xr
+                        in (f x, Changes bl bSplitTime bt btx br, frEnd, xrEnd, brEnd)
+                    else let
+                        midSpan = if fSplitTime < xSplitTime
+                                    then spanExc (Just fSplitTime) (Just xSplitTime)
+                                    else spanExc (Just xSplitTime) (Just fSplitTime)
+                        _ = go lspan _fspan' f fl _xspan' x xl
+                        in case tspan `difference` midSpan of
+                            (Nothing, Nothing) -> error $ "instance Applicative Behavior: Impossible! " ++ show tspan ++ " `difference` " ++ show midSpan ++ " == (Nothing, Nothing)"
+                            -- Mid span is all the way to the right of tspan
+                            (Just (lspan, midT), Nothing) -> let
+                                midSplitTime = min fSplitTime xSplitTime
+                                (bInit, bl, fMidInit, xMidInit, bMidInit) = go lspan _fspan' f fl _xspan' x xl
+                                (bInitMid, br, fEnd, xEnd, bEnd) = go midSpan _fspan' f fl _xspan' x xl
+                                (bMid, bMidx) = _
+                                in (bInit, Changes bl midSplitTime bMid bMidx br, fEnd, xEnd, bEnd)
+                            -- Mid span is all the way to the left of tspan
+                            (Nothing, Just (midT, rspan)) -> _
+                            -- There is space on both sides of mid span within tspan.
+                            (Just (lspan, midTLo), Just (midTHi, rspan)) -> _
+
+                where
+                fInitR = fromMaybe f $ ftx <|> ft <|> changesFinalValue fl
+                xInitR = fromMaybe x $ xtx <|> xt <|> changesFinalValue xl
+
+        -- find the change and just after change (3rd and 4th arguments to Changes) and value after for b, f, and x
+        -- value just before -> maybe change at t -> maybe change at just after t
+        btBtx :: (a->b) -> Maybe (a->b) -> Maybe (a->b)
+              -> a      -> Maybe a      -> Maybe a
+              -> (Maybe b, Maybe b, b, (a->b), a)
+        btBtx fInit ft ftx xInit xt xtx = (bt, btx, btxx)
+            where
+            bt = (ft <*> xt) <|> (($xInit) <$> ft) <|> (fInit <$> xt)
+            btx = (ftx <*> xtx) <|> (($(fromMaybe xInit xt)) <$> ftx) <|> ((fromMaybe fInit ft) <$> xtx)
+            btxx = fromMaybe fInit (btx <|> bt)
+            ftxx = fromMaybe f $ ftx <|> ft <|> changesFinalValue fl
+            xInitR = fromMaybe x $ xtx <|> xt <|> changesFinalValue xl
+
+                -- if fSplitTime == xSplitTime
+                -- then  let
+                --         t = fSplitTime
+
+                --         (_, l', bMid) = go tspan fspan fcs xspan x xcs
+                --         (_, r', bEnd) = go rspan (fromMaybe bMid $ btx <|> bt) r
+                --         in (bInit, Changes l' t bt btx r', bEnd)
+                -- else _
+
+                -- LT -> _
+                -- EQ -> let
+                --         t = fSplitTime
+                --         lspan = Span
+                --         (_, l', bMid) = go (tspan `intersect` LeftSpace t) bInit l
+                --         (_, r', bEnd) = crop rspan (fromMaybe bMid $ btx <|> bt) r
+                --         in (bInit, Changes l' t bt btx r', bEnd)
+                -- GT -> _
+
+
+
+
+        crop :: SpanExc     -- ^ span to crop to
+             -> d           -- ^ start value of this span
+             -> Changes d   -- ^ changes spanning the span and possibly more.
+             -> (d, Changes d, d)
+                            -- ^ ( `d` at the start of this span (== second arg)
+                            --   , all d changes exactly in this span.
+                            --   , `d` at the end of this span )
+        crop _ bInit NoChanges = (bInit, NoChanges, bInit)
+        crop tspan bInit (Changes l t bt btx r) = case splitSpanExcAt tspan t of
+            FullyLeftOfT  tspan' -> crop tspan' bInit l
+            FullyRightOfT tspan' -> crop tspan' (fromMaybe bInit $ btx <|> bt <|> changesFinalValue l) r
+            SplitByT lspan rspan -> let
+                (_, l', bMid) = crop lspan bInit l
+                (_, r', bEnd) = crop rspan (fromMaybe bMid $ btx <|> bt) r
+                in (bInit, Changes l' t bt btx r', bEnd)
+
+        -- go (Value f) (Value x) = Value (f x)
+        -- go fs (Value x)
+        --     = ($x) <$> fs
+        -- go (Value f) xs
+        --     = f <$> xs
+        -- go (Split fL fT fR) (Split xL xT xR) = case compare fT xT of
+        --     EQ -> Split (fL <*> xL) fT (fR <*> xR)
+        --     LT -> Split (fL <*> takeLeft fT xL)
+        --                 fT
+        --                 (Split (takeLeft xT fR <*> takeRight xT xL)
+        --                        xT
+        --                        (takeRight xT fR <*> xR)
+        --                 )
+        --     GT -> Split (takeLeft fT fL <*> xL)
+        --                 xT
+        --                 (Split (takeRight xT fR <*> takeLeft xT xL)
+        --                        fT
+        --                        (fR <*> takeRight xT xR)
+        --                 )
+
+        -- -- Includes t
+        -- takeLeft :: TimeD -> Behavior a -> Behavior a
+        -- takeLeft t (Split l t' r) = case compare t t' of
+        --     EQ -> l
+        --     LT -> takeLeft t l
+        --     GT -> takeLeft t r
+        -- takeLeft _ v = v
+
+        -- -- Excludes t
+        -- takeRight :: TimeD -> Behavior a -> Behavior a
+        -- takeRight t (Split l t' r) = case compare t t' of
+        --     EQ -> r
+        --     LT -> takeRight t l
+        --     GT -> takeRight t r
+        -- takeRight _ v = v
+
+{-
 -- | Basically a (immediate) step function but more convenient fr creating behaviors.
 listToBI :: a -> [(Time, a)] -> Behavior a
 listToBI initA events = stepI initA (listToE events)
@@ -148,47 +324,6 @@ listToBI initA events = stepI initA (listToE events)
 -- | Basically a (delayed) step function but more convenient fr creating behaviors.
 listToB :: a -> [(Time, a)] -> Behavior a
 listToB initA events = step initA (listToE events)
-
-instance Applicative Behavior where
-    pure = Value
-    ftop <*> xtop = go ftop xtop
-        where
-        go :: Behavior (x -> y) -> Behavior x -> Behavior y
-        go (Value f) (Value x) = Value (f x)
-        go fs (Value x)
-            = ($x) <$> fs
-        go (Value f) xs
-            = f <$> xs
-        go (Split fL fT fR) (Split xL xT xR) = case compare fT xT of
-            EQ -> Split (fL <*> xL) fT (fR <*> xR)
-            LT -> Split (fL <*> takeLeft fT xL)
-                        fT
-                        (Split (takeLeft xT fR <*> takeRight xT xL)
-                               xT
-                               (takeRight xT fR <*> xR)
-                        )
-            GT -> Split (takeLeft fT fL <*> xL)
-                        xT
-                        (Split (takeRight xT fR <*> takeLeft xT xL)
-                               fT
-                               (fR <*> takeRight xT xR)
-                        )
-
-        -- Includes t
-        takeLeft :: TimeD -> Behavior a -> Behavior a
-        takeLeft t (Split l t' r) = case compare t t' of
-            EQ -> l
-            LT -> takeLeft t l
-            GT -> takeLeft t r
-        takeLeft _ v = v
-
-        -- Excludes t
-        takeRight :: TimeD -> Behavior a -> Behavior a
-        takeRight t (Split l t' r) = case compare t t' of
-            EQ -> r
-            LT -> takeRight t l
-            GT -> takeRight t r
-        takeRight _ v = v
 
 instance Delayable (Behavior a) where
     delay top = go top All
@@ -530,227 +665,9 @@ behaviorToChan btop = do
                     go rspan right
         go allT btop
     return (tid, updatesChan)
+-}
 
---
--- Time Span stuff
---
-
-data AllOr a
-    = All   -- ^ All of time [-Inf, Inf]
-    | Or a  -- ^ Just that a.
-    deriving (Show) -- NOT Ord
-
--- Half spaces
-newtype LeftSpace  = LeftSpace  TimeD   -- ^ [[ LeftSpace  t' ]] = { t | t <  t' }
-    deriving (Eq,Ord)
-newtype RightSpace = RightSpace TimeD   -- ^ [[ RightSpace t' ]] = { t | t >= t' }
-    deriving (Eq,Ord)
-
-instance Show LeftSpace where
-    show (LeftSpace t) = "←" ++ show t ++ "○"
-instance Show RightSpace where
-    show (RightSpace t) = "●" ++ show t ++ "→"
-
-deriving instance Eq (AllOr LeftSpace)
-deriving instance Eq (AllOr RightSpace)
-
--- [[ Span l r ]] = l `intersect` r
-data Span
-    = Span
-        (AllOr RightSpace) -- ^ Time span left  bound Inclusive. All == Inclusive -Inf
-        (AllOr LeftSpace)  -- ^ Time span right bound Exclusive. All == !Inclusive! Inf
-    deriving (Eq) -- NOT Ord
-
-instance Show Span where
-    show (Span allOrR allOrL) = "Span [" ++ rt  ++ " " ++ lt ++ "]"
-        where
-        rt = case allOrR of
-            All -> "←"
-            Or r -> show r
-        lt = case allOrL of
-            All -> "→"
-            Or l -> show l
-
--- Inclusive start Exclusive end span.
-spanIncExc :: Maybe TimeD -> Maybe TimeD -> Span
-spanIncExc lo hi
-    = case spanIncExcMaybe lo hi of
-        Nothing -> error "spanIncExc: lo >= hi"
-        Just x -> x
-
--- Inclusive start Exclusive end span.
--- Nothing if the input times are not strictly increasing.
-spanIncExcMaybe :: Maybe TimeD -> Maybe TimeD -> Maybe Span
-spanIncExcMaybe lo hi = (maybe All (Or . RightSpace) lo) `intersect`
-                        (maybe All (Or . LeftSpace) hi)
-
--- More convenient span creating functions
-spanToInc :: Time -> Span
-spanToInc hi= spanIncExc Nothing (Just $ delay $ toTime hi)
-spanToExc :: Time -> Span
-spanToExc hi= spanIncExc Nothing (Just $ toTime hi)
-spanFromInc :: Time -> Span
-spanFromInc lo = spanIncExc (Just $ toTime lo) Nothing
-spanFromExc :: Time -> Span
-spanFromExc lo = spanIncExc (Just $ delay $ toTime lo) Nothing
-spanFromIncToExc :: Time -> Time -> Span
-spanFromIncToExc lo hi = spanIncExc (Just $ toTime lo) (Just $ toTime hi)
-spanFromIncToInc :: Time -> Time -> Span
-spanFromIncToInc lo hi = spanIncExc (Just $ toTime lo) (Just $ delay $ toTime hi)
-spanFromExcToExc :: Time -> Time -> Span
-spanFromExcToExc lo hi = spanIncExc (Just $ delay $ toTime lo) (Just $ toTime hi)
-spanFromExcToInc :: Time -> Time -> Span
-spanFromExcToInc lo hi = spanIncExc (Just $ delay $ toTime lo) (Just $ delay $ toTime hi)
-
-class Intersect a b c | a b -> c where
-    intersect :: a -> b -> c
-
-instance Intersect LeftSpace RightSpace (Maybe Span) where intersect = flip intersect
-instance Intersect RightSpace LeftSpace (Maybe Span) where
-    intersect r@(RightSpace lo) l@(LeftSpace hi)
-        | lo < hi = Just (Span (Or r) (Or l))
-        | otherwise = Nothing
-instance Intersect Span LeftSpace (Maybe Span) where intersect = flip intersect
-instance Intersect LeftSpace Span (Maybe Span) where
-    intersect ls (Span r l) = r `intersect` (l `intersect` ls)
-instance Intersect Span RightSpace (Maybe Span) where intersect = flip intersect
-instance Intersect RightSpace Span (Maybe Span) where
-    intersect rs (Span r l) = l `intersect` (r `intersect` rs)
-instance Intersect Span Span (Maybe Span) where
-    intersect s (Span r l) = intersect l =<< (r `intersect` s)
-instance Intersect (AllOr LeftSpace ) LeftSpace  LeftSpace    where intersect = allOrIntersect
-instance Intersect (AllOr RightSpace) RightSpace RightSpace   where intersect = allOrIntersect
-instance Intersect (AllOr RightSpace) Span       (Maybe Span) where intersect = allOrIntersectMaybe
-instance Intersect (AllOr LeftSpace ) Span       (Maybe Span) where intersect = allOrIntersectMaybe
-instance Intersect RightSpace RightSpace RightSpace where
-    intersect (RightSpace a) (RightSpace b) = RightSpace (max a b)
-instance Intersect LeftSpace LeftSpace LeftSpace where
-    intersect (LeftSpace a) (LeftSpace b) = LeftSpace (min a b)
-instance Intersect (AllOr LeftSpace ) (AllOr RightSpace) (Maybe Span) where intersect = flip intersect
-instance Intersect (AllOr RightSpace) (AllOr LeftSpace)  (Maybe Span) where
-    intersect (Or rs) (Or ls) = rs `intersect` ls
-    intersect allOrRs allOrLs = Just (Span allOrRs allOrLs)
-instance Intersect (AllOr LeftSpace) RightSpace (Maybe Span) where intersect = flip intersect
-instance Intersect RightSpace (AllOr LeftSpace) (Maybe Span) where
-    intersect rs (Or ls) = rs `intersect` ls
-    intersect rs All = Just (Span (Or rs) All)
-instance Intersect LeftSpace (AllOr RightSpace) (Maybe Span) where intersect = flip intersect
-instance Intersect (AllOr RightSpace) LeftSpace (Maybe Span) where
-    intersect (Or rs) ls = rs `intersect` ls
-    intersect All ls = Just (Span All (Or ls))
-
-allOrIntersectMaybe :: Intersect a b (Maybe b) => AllOr a -> b -> Maybe b
-allOrIntersectMaybe All b = Just b
-allOrIntersectMaybe (Or a) b = a `intersect` b
-
-allOrIntersect :: Intersect a b b => AllOr a -> b -> b
-allOrIntersect All b = b
-allOrIntersect (Or a) b = a `intersect` b
-
--- allOrIntersect :: Intersect a b (Maybe c) => AllOr a -> b -> b
--- allOrIntersect All b = b
--- allOrIntersect (Or a) b = a `intersect` b
-
-
--- a `difference` b == a `intersect` (invert b)
-class Difference a b c | a b -> c where
-    difference :: a -> b -> c
-instance Difference LeftSpace LeftSpace (Maybe Span) where
-    difference lsa (LeftSpace b) = lsa `intersect` RightSpace b
-instance Difference RightSpace RightSpace (Maybe Span) where
-    difference rsa (RightSpace b) = rsa `intersect` LeftSpace b
-instance Difference Span Span (Maybe Span, Maybe Span) where
-    difference a (Span rs ls) = (a `difference` rs, a `difference` ls)
-instance Difference Span LeftSpace (Maybe Span) where
-    difference s (LeftSpace b) = s `intersect` (RightSpace b)
-instance Difference Span RightSpace (Maybe Span) where
-    difference s (RightSpace b) = s `intersect` (LeftSpace b)
-instance Difference a b (Maybe c) => Difference a (AllOr b) (Maybe c) where
-    difference _ All = Nothing
-    difference a (Or b) = a `difference` b
-
-class NeverAll a
-instance NeverAll LeftSpace
-instance NeverAll RightSpace
-
-class Contains a b where
-    contains :: a -> b -> Bool
-
-instance Contains LeftSpace TimeD where
-    contains (LeftSpace a) t = t < a
-instance Contains RightSpace TimeD where
-    contains (RightSpace a) t = t >= a
-instance Contains LeftSpace Time where
-    contains ls t = ls `contains` D_Exactly t
-instance Contains RightSpace Time where
-    contains rs t = rs `contains` D_Exactly t
-instance Contains Span Time where
-    contains (Span rs ls) t = ls `contains` t && rs `contains` t
-instance Contains LeftSpace LeftSpace where
-    contains (LeftSpace a) (LeftSpace b) = a >= b
-instance Contains RightSpace RightSpace where
-    contains (RightSpace a) (RightSpace b) = a <= b
-instance Contains LeftSpace Span where
-    contains ls (Span _ allOrLs) = ls `contains` allOrLs
-instance Contains RightSpace Span where
-    contains rs (Span allOrRs _) = rs `contains` allOrRs
-instance Contains Span Span where
-    contains (Span r l) s = r `contains` s && l `contains` s
-instance (Contains a b, IsAllT a) => Contains a (AllOr b) where
-    contains a All    = isAllT a
-    contains a (Or b) = a `contains` b
-instance (Contains a b, IsAllT a) => Contains (AllOr a) b where
-    contains All _ = True
-    contains (Or a) b = a `contains` b
-
-intersects :: Intersect a b (Maybe c) => a -> b -> Bool
-intersects a b = isJust (a `intersect` b)
-
--- | Covering all of time
-class AllT a where allT :: a
-instance AllT Span where allT = Span All All
-instance AllT (AllOr a) where allT = All
-
-class IsAllT a where isAllT :: a -> Bool
-instance IsAllT LeftSpace where isAllT _ = False
-instance IsAllT RightSpace where isAllT _ = False
-
-
--- | If the left arg ends exactly on the start of the right arg, return the
--- joined span and the time at which they are joined (such that splitting on
--- that time will give the original spans).
-endsOn :: Span -> Span -> Maybe (Span, TimeD)
-endsOn (Span allOrRs (Or (LeftSpace hi))) (Span (Or (RightSpace lo)) allOrLs)
-    | hi == lo  = Just (Span allOrRs allOrLs, lo)
-endsOn _ _ = Nothing
-
-instantaneous :: Span -> Maybe Time
-instantaneous (Span (Or (RightSpace (D_Exactly t))) (Or (LeftSpace (D_JustAfter t'))))
-    | t == t' = Just t
-instantaneous _ = Nothing
-
-splitSpanAt :: Span -> TimeD -> (Maybe Span, Maybe Span)
-splitSpanAt tspan t = (tspan `intersect` LeftSpace t, tspan `intersect` RightSpace t)
-
-splitSpanAtErr :: Span -> TimeD -> String -> (Span, Span)
-splitSpanAtErr tspan t err = case splitSpanAt tspan t of
-    (Just lspan, Just rspan) -> (lspan, rspan)
-    _ -> error $ err ++ ": splitSpanAtErr: Found a (Split _ (" ++ show t ++ ") _) but are in span: " ++ show tspan
-
-spanToIncInc :: Span -> (TimeX, TimeX)
-spanToIncInc (Span r l) = (lo, hi)
-    where
-    lo = case r of
-            All -> X_NegInf
-            (Or (RightSpace loD)) -> toTime loD
-    hi = case l of
-            All -> X_Inf
-            (Or (LeftSpace hiD)) -> case hiD of
-                D_Exactly t -> X_JustBefore t
-                D_JustAfter t -> X_Exactly t
-
-
-
+{-
 --
 -- QuickCheck Stuff
 --
@@ -785,61 +702,4 @@ instance Arbitrary a => Arbitrary (Event a) where
             let t = ts !! sizeL
             return (Split l (D_Exactly t) (Split (Value (Occ a)) (D_JustAfter t) r))
 
-instance Arbitrary Span where
-    arbitrary = arbitrary `suchThatMap` (uncurry spanIncExcMaybe)
-
-instance Arbitrary LeftSpace where arbitrary = LeftSpace <$> arbitrary
-instance Arbitrary RightSpace where arbitrary = RightSpace <$> arbitrary
-instance Arbitrary a => Arbitrary (AllOr a) where
-    arbitrary = frequency [(1, return All), (15, Or <$> arbitrary)]
-
--- | Spans that cover all time.
-newtype OrderedFullSpans = OrderedFullSpans [Span]
-instance Arbitrary OrderedFullSpans where
-    arbitrary = do
-        spanTimeEdgesT :: [Time] <- fmap head . group <$> orderedList
-        spanTimeEdgesBools :: [Bool] <- infiniteList
-        let spanTimeEdges = zip spanTimeEdgesT spanTimeEdgesBools
-        return $ OrderedFullSpans $ case spanTimeEdges of
-                    [] -> [allT]
-                    _ -> (let (t, notHiInc) = head spanTimeEdges in spanIncExc Nothing (Just $ if not notHiInc then D_JustAfter t else D_Exactly t))
-                        : (zipWith
-                            (\ (lo, loInc) (hi, notHiInc) -> spanIncExc
-                                                                (Just $ if loInc        then D_Exactly lo else D_JustAfter lo)
-                                                                (Just $ if not notHiInc then D_JustAfter hi else D_Exactly hi)
-                            )
-                            spanTimeEdges
-                            (tail spanTimeEdges)
-                          ) ++ [let (t, loInc) = last spanTimeEdges in spanIncExc (Just (if loInc then D_Exactly t else D_JustAfter t)) Nothing]
-
-arbitraryTimeDInSpan :: Span -> Gen TimeD
-arbitraryTimeDInSpan (Span All All) = arbitrary
-arbitraryTimeDInSpan (Span (Or (RightSpace t)) All)
-    = frequency [ (1, return t)
-                , (5, sized $ \n -> choose (t, t+(fromIntegral n)))
-                ]
-arbitraryTimeDInSpan (Span All (Or (LeftSpace t)))
-    = sized $ \n -> choose (t-(fromIntegral n), t)
-arbitraryTimeDInSpan (Span (Or (RightSpace lo)) (Or (LeftSpace hi)))
-    = frequency [ (1, return lo)
-                , (5, choose (lo,hi))
-                ]
-
-arbitraryTimeInSpan :: Span -> Gen Time
-arbitraryTimeInSpan s = arbitraryTimeDInSpan s `suchThatMap` (\td -> let
-    t = closestTime td
-    in if s `contains` t then Just t else Nothing)
-
-
-increasingListOf :: Ord a => Gen a -> Gen [a]
-increasingListOf xs = fmap head . group . sort <$> listOf xs
-
-newtype OrderedFullUpdates a = OrderedFullUpdates [(Span, [(Time, a)])] deriving (Show)
-instance Arbitrary a => Arbitrary (OrderedFullUpdates a) where
-    arbitrary = do
-        OrderedFullSpans spans <- arbitrary
-        updates <- forM spans $ \ tspan -> do
-                    eventTimes <- increasingListOf (arbitraryTimeInSpan tspan)
-                    values <- infiniteList
-                    return $ (tspan, zip eventTimes values)
-        return $ OrderedFullUpdates updates
+        -}

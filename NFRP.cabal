@@ -21,6 +21,7 @@ library
         , NFRP
         , Simulate
         , Time
+        , TimeSpan
     other-modules:
         TypeLevelStuff
     hs-source-dirs: src
