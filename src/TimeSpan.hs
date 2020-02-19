@@ -202,6 +202,12 @@ splitSpanExcAt tspan t = case (tspan `intersect` LeftSpaceExc t, tspan `intersec
     (Nothing, Just r) -> FullyRightOfT r
     (Just l, Just r) -> SplitByT l r
 
+splitSpanExcAtErr :: SpanExc -> Time -> (SpanExc, SpanExc)
+splitSpanExcAtErr s t = case splitSpanExcAt s t of
+    SplitByT l r -> (l, r)
+    _ -> error "splitSpanExcAtErr"
+
+
 {-
 -- | If the left arg ends exactly on the start of the right arg, return the
 -- joined span and the time at which they are joined (such that splitting on

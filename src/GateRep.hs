@@ -165,156 +165,67 @@ instance Applicative Behavior where
     pure a = Behavior a NoChanges
     (<*>) ::forall a b . Behavior (a -> b) -> Behavior a -> Behavior b
     (Behavior fInitTop ftop) <*> (Behavior aInitTop atop)
-        = let (bInit, bcs, _, _, _) = go allT allT fInitTop ftop allT aInitTop atop
+        = let (bInit, bcs, _, _, _) = go allT fInitTop ftop aInitTop atop
            in Behavior bInit bcs
         where
-        go :: SpanExc               -- ^ Span of the output we want to produce
-           -> SpanExc               -- ^ Span of the `f` changes. Contains the output span.
+        go :: SpanExc               -- ^ Span of f
            -> (a -> b)              -- ^ `f` at the start of this span
-           -> Changes (a -> b)      -- ^ Superset of `f` changes within the span.
-           -> SpanExc               -- ^ Span of the `a` changes. Contains the output span.
-           -> a                     -- ^ `a` at the start of this span
-           -> Changes a             -- ^ Superset of `a` changes within the span.
+           -> Changes (a -> b)      -- ^ `f` changes within the span of f.
+        --    -> SpanExc               -- ^ Span of the `a` changes. Contains the span of f
+           -> a                     -- ^ `a` at the start of the `a` span
+           -> Changes a             -- ^ `a` changes within the span of a.
            -> (b, Changes b, (a->b), a, b)
                                     -- ^ ( `b` at the start of this span
                                     --   , all b changes exactly in this span.
                                     --   , `f`,`x`,`b` at the end of this span )
-        go _ _ f NoChanges _ x NoChanges = let fx = f x in (fx, NoChanges, f, x, fx)
-        go tspan _ f fcs _ x NoChanges = let
+        go _ f NoChanges x NoChanges = let fx = f x in (fx, NoChanges, f, x, fx)
+        go _ f fcs x NoChanges = let
             fx = f x
-            (_, cropf, fEnd) = crop tspan f fcs
-            bcs = ($x) <$> cropf
+            bcs = ($x) <$> fcs
             in (fx, bcs, fromMaybe f (changesFinalValue fcs), x, fromMaybe fx (changesFinalValue bcs))
-        go tspan _ f NoChanges _ x xcs = _ -- crop tspan (f x) (f <$> xcs)
-        go tspan
-            fspan f fcs@(Changes fl fSplitTime ft ftx fr)
-            xspan x xcs@(Changes xl xSplitTime xt xtx xr)
-            = case (splitSpanExcAt tspan fSplitTime, splitSpanExcAt tspan xSplitTime) of
-                -- Recurse untill fSplitTime and xSplitTime are within tspan.
-                (FullyLeftOfT  _, _) -> go tspan _fspan' f fl _xspan x xcs
-                (FullyRightOfT _, _) -> go tspan _fspan' fInitR fr _xspan x xcs
-                (_, FullyLeftOfT  _) -> go tspan _fspan f fcs _xspan' x xl
-                (_, FullyRightOfT _) -> go tspan _fspan f fcs _xspan' xInitR xr
-                --fSplitTime and xSplitTime are within tspan.
-                (SplitByT flspan frspan, SplitByT xlspan xrspan) -> if fSplitTime == xSplitTime
-                    then let
-                        bSplitTime = fSplitTime -- == xSplitTime
-                        lspan = flspan -- == xlspan
-                        rspan = frspan -- == xrspan
-                        (_, bl, flEnd, xlEnd, blEnd) = go lspan _fspan'l f fl _xspan'l x xl
-                        (bt, btx, _) = btBtx flEnd ft ftx xlEnd xt xtx
-                        (ft, ftx, f) = btBtx flEnd ft ftx xlEnd xt xtx
-                        (bt, btx, _) = btBtx flEnd ft ftx xlEnd xt xtx
-                        (_, br, frEnd, xrEnd, brEnd) = go rspan _fspan'r fInitR fr _xspan'r xInitR xr
-                        in (f x, Changes bl bSplitTime bt btx br, frEnd, xrEnd, brEnd)
-                    else let
-                        midSpan = if fSplitTime < xSplitTime
-                                    then spanExc (Just fSplitTime) (Just xSplitTime)
-                                    else spanExc (Just xSplitTime) (Just fSplitTime)
-                        _ = go lspan _fspan' f fl _xspan' x xl
-                        in case tspan `difference` midSpan of
-                            (Nothing, Nothing) -> error $ "instance Applicative Behavior: Impossible! " ++ show tspan ++ " `difference` " ++ show midSpan ++ " == (Nothing, Nothing)"
-                            -- Mid span is all the way to the right of tspan
-                            (Just (lspan, midT), Nothing) -> let
-                                midSplitTime = min fSplitTime xSplitTime
-                                (bInit, bl, fMidInit, xMidInit, bMidInit) = go lspan _fspan' f fl _xspan' x xl
-                                (bInitMid, br, fEnd, xEnd, bEnd) = go midSpan _fspan' f fl _xspan' x xl
-                                (bMid, bMidx) = _
-                                in (bInit, Changes bl midSplitTime bMid bMidx br, fEnd, xEnd, bEnd)
-                            -- Mid span is all the way to the left of tspan
-                            (Nothing, Just (midT, rspan)) -> _
-                            -- There is space on both sides of mid span within tspan.
-                            (Just (lspan, midTLo), Just (midTHi, rspan)) -> _
-
-                where
-                fInitR = fromMaybe f $ ftx <|> ft <|> changesFinalValue fl
-                xInitR = fromMaybe x $ xtx <|> xt <|> changesFinalValue xl
-
-        -- find the change and just after change (3rd and 4th arguments to Changes) and value after for b, f, and x
-        -- value just before -> maybe change at t -> maybe change at just after t
-        btBtx :: (a->b) -> Maybe (a->b) -> Maybe (a->b)
-              -> a      -> Maybe a      -> Maybe a
-              -> (Maybe b, Maybe b, b, (a->b), a)
-        btBtx fInit ft ftx xInit xt xtx = (bt, btx, btxx)
+        go fspan f NoChanges x xcs = let
+            (xcs', xEnd) = crop fspan x xcs
+            fx = f x
+            bcs = f <$> xcs'
+            in (fx, bcs, f, xEnd, fromMaybe fx (changesFinalValue bcs))
+        -- TODO reduce xcs if possible here (i.e. if fspan is entirely to the left or right of the xcs split, then traverse xcs)
+        go fspan
+            f     (Changes fl fSplitTime ft ftx fr)
+            x xcs@(Changes xl xSplitTime xt xtx xr)
+            | fSplitTime == xSplitTime = let
+                -- bt = fromMaybe (flEnd xlEnd) (($xlEnd) <$> ftx)
+                -- btx = ($x) <$> ftx
+                bt = (ft <*> xt) <|> (($x) <$> ft) <|> (f <$> xt)
+                btx = (ftx <*> xtx) <|> (($(fromMaybe x xt)) <$> ftx) <|> ((fromMaybe f ft) <$> xtx)
+                (b, bl, flEnd, xlEnd, _) = go lspan f fl x xl
+                ftxx = fromMaybe flEnd $ ftx <|> ft
+                xtxx = fromMaybe xlEnd $ xtx <|> xt
+                (_, br, fEnd, xEnd, bEnd) = go rspan ftxx fr xtxx xr
+                in (b, Changes bl fSplitTime bt btx br, fEnd, xEnd, bEnd)
+            | otherwise = let
+                bt = fromMaybe (flEnd xlEnd) (($xlEnd) <$> ftx)
+                btx = ($x) <$> ftx
+                (b, bl, flEnd, xlEnd, _) = go lspan f fl x xcs
+                ftxx = fromMaybe flEnd $ ftx <|> ft
+                (_, br, fEnd, xEnd, bEnd) = go rspan ftxx fr x xcs
+                in (b, Changes bl fSplitTime bt btx br, fEnd, xEnd, bEnd)
             where
-            bt = (ft <*> xt) <|> (($xInit) <$> ft) <|> (fInit <$> xt)
-            btx = (ftx <*> xtx) <|> (($(fromMaybe xInit xt)) <$> ftx) <|> ((fromMaybe fInit ft) <$> xtx)
-            btxx = fromMaybe fInit (btx <|> bt)
-            ftxx = fromMaybe f $ ftx <|> ft <|> changesFinalValue fl
-            xInitR = fromMaybe x $ xtx <|> xt <|> changesFinalValue xl
-
-                -- if fSplitTime == xSplitTime
-                -- then  let
-                --         t = fSplitTime
-
-                --         (_, l', bMid) = go tspan fspan fcs xspan x xcs
-                --         (_, r', bEnd) = go rspan (fromMaybe bMid $ btx <|> bt) r
-                --         in (bInit, Changes l' t bt btx r', bEnd)
-                -- else _
-
-                -- LT -> _
-                -- EQ -> let
-                --         t = fSplitTime
-                --         lspan = Span
-                --         (_, l', bMid) = go (tspan `intersect` LeftSpace t) bInit l
-                --         (_, r', bEnd) = crop rspan (fromMaybe bMid $ btx <|> bt) r
-                --         in (bInit, Changes l' t bt btx r', bEnd)
-                -- GT -> _
-
-
-
+                (lspan, rspan) = splitSpanExcAtErr fspan fSplitTime
 
         crop :: SpanExc     -- ^ span to crop to
              -> d           -- ^ start value of this span
              -> Changes d   -- ^ changes spanning the span and possibly more.
-             -> (d, Changes d, d)
-                            -- ^ ( `d` at the start of this span (== second arg)
-                            --   , all d changes exactly in this span.
+             -> (Changes d, d)
+                            -- ^ ( all d changes exactly in this span.
                             --   , `d` at the end of this span )
-        crop _ bInit NoChanges = (bInit, NoChanges, bInit)
+        crop _ bInit NoChanges = (NoChanges, bInit)
         crop tspan bInit (Changes l t bt btx r) = case splitSpanExcAt tspan t of
             FullyLeftOfT  tspan' -> crop tspan' bInit l
             FullyRightOfT tspan' -> crop tspan' (fromMaybe bInit $ btx <|> bt <|> changesFinalValue l) r
             SplitByT lspan rspan -> let
-                (_, l', bMid) = crop lspan bInit l
-                (_, r', bEnd) = crop rspan (fromMaybe bMid $ btx <|> bt) r
-                in (bInit, Changes l' t bt btx r', bEnd)
-
-        -- go (Value f) (Value x) = Value (f x)
-        -- go fs (Value x)
-        --     = ($x) <$> fs
-        -- go (Value f) xs
-        --     = f <$> xs
-        -- go (Split fL fT fR) (Split xL xT xR) = case compare fT xT of
-        --     EQ -> Split (fL <*> xL) fT (fR <*> xR)
-        --     LT -> Split (fL <*> takeLeft fT xL)
-        --                 fT
-        --                 (Split (takeLeft xT fR <*> takeRight xT xL)
-        --                        xT
-        --                        (takeRight xT fR <*> xR)
-        --                 )
-        --     GT -> Split (takeLeft fT fL <*> xL)
-        --                 xT
-        --                 (Split (takeRight xT fR <*> takeLeft xT xL)
-        --                        fT
-        --                        (fR <*> takeRight xT xR)
-        --                 )
-
-        -- -- Includes t
-        -- takeLeft :: TimeD -> Behavior a -> Behavior a
-        -- takeLeft t (Split l t' r) = case compare t t' of
-        --     EQ -> l
-        --     LT -> takeLeft t l
-        --     GT -> takeLeft t r
-        -- takeLeft _ v = v
-
-        -- -- Excludes t
-        -- takeRight :: TimeD -> Behavior a -> Behavior a
-        -- takeRight t (Split l t' r) = case compare t t' of
-        --     EQ -> r
-        --     LT -> takeRight t l
-        --     GT -> takeRight t r
-        -- takeRight _ v = v
+                (l', bMid) = crop lspan bInit l
+                (r', bEnd) = crop rspan (fromMaybe bMid $ btx <|> bt) r
+                in (Changes l' t bt btx r', bEnd)
 
 {-
 -- | Basically a (immediate) step function but more convenient fr creating behaviors.
