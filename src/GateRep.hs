@@ -93,12 +93,13 @@ import Control.Applicative
 import Control.Concurrent
 import Control.Concurrent.STM
 import qualified Control.Concurrent.Chan as C
-import Control.Monad (forever, forM)
+import Control.Monad (forever, forM, forM_)
 import Data.Either (partitionEithers)
 import Data.IORef
 import Data.List (find, foldl', group, nub, partition, sort)
-import Data.Maybe (catMaybes, fromJust, fromMaybe, isJust, isNothing)
+import Data.Maybe (catMaybes, fromJust, fromMaybe, isJust, isNothing, mapMaybe)
 import qualified Data.Map as M
+import qualified Data.Set as S
 import Test.QuickCheck hiding (once)
 
 import Time
@@ -415,56 +416,63 @@ chanToEvent inputChan = do
 --     let b = unEvent e
 --     watchB b
 
-sourceEvent :: IO (EventPart a -> IO ()
-                  -- ^ Update the event
-                  --      ( knowlage start Exclusive!
-                  --      , event time
-                  --      , event value
-                  --      , knowlage stop Inclusive!
-                  --      )
-                  , Event a
-                  )
+-}
+sourceEvent
+    :: forall a
+    .  IO ([EventPart a] -> IO ()
+          -- ^ Update the event
+          , Event a
+          )
 sourceEvent = do
     -- TODO make this more efficient! We probably need to optimize for appending to the end of the known time.
     updatesChan <- C.newChan
-    knowlageCoverTVar <- newTVarIO M.empty  -- Map from known time tspan low (exclusive) to that times tspan's hi (inclusive)
-    let updater part = do
+    knowlageCoverTVar <- newTVarIO ( M.empty  -- Map from known time tspan low (exclusive) to TimeSpanExc
+                                   , S.empty  -- Set of know instants
+                                   )
+    let updater :: [EventPart a] -> IO ()
+        updater parts = do
             -- TODO can we use updatesToEvent' and observe the returned overlapping values instead of tracking them here?
             -- Check for overlap with knowlage
-            let partSpans :: [Span]
-                partSpans = fst <$> knownSpansE part
             hasOverlapMay <- atomically $ do
-                let loop [] = do
-                            -- insert new entries
-                            let partSpansMap = M.fromList [(fst (spanToIncInc s), s) | s <- partSpans]
-                            modifyTVar knowlageCoverTVar (M.union partSpansMap)
-                            return Nothing
-                    loop (tspan:xs) = do
-                        knowlageCover <- readTVar knowlageCoverTVar
-                        let lo = fst (spanToIncInc tspan)
-                            prevSpanMay = snd <$> M.lookupLE lo knowlageCover
-                            nextSpanMay = snd <$> M.lookupGE lo knowlageCover
-                        if maybe False (`intersects` tspan) prevSpanMay
-                            then return (Just (tspan, fromJust prevSpanMay))
+                (knownSpans, knownTimes) <- readTVar knowlageCoverTVar
+                let findOverlap (ChangesPart_NoChange tspan) =
+                        let lo = fst (spanExcBoundaries tspan)
+                            prevSpanMay = snd <$> M.lookupLE lo knownSpans
+                            nextSpanMay = snd <$> M.lookupGE lo knownSpans
+                            overlapStr s = "(existing, new) = " ++ show s
+                        in if maybe False (`intersects` tspan) prevSpanMay
+                            then Just (overlapStr (fromJust prevSpanMay))
                             else if maybe False (`intersects` tspan) nextSpanMay
-                                then return (Just (tspan, fromJust nextSpanMay))
-                                else loop xs
-                loop partSpans
+                                then Just (overlapStr (fromJust nextSpanMay))
+                                else Nothing
+                    findOverlap (ChangesPart_Change t _ _) = if S.member t knownTimes
+                            then Just (show $ "existing = new = " ++ show t) else Nothing
+                case mapMaybe findOverlap parts of
+                    [] -> do
+                        forM_ parts $ \ part -> case part of
+                            -- insert new entries
+                            ChangesPart_NoChange tspan -> do
+                                let (t,_) = spanExcBoundaries tspan
+                                modifyTVar knowlageCoverTVar (\(m, s) -> (M.insert t tspan m, s))
+                            ChangesPart_Change t _ _ ->
+                                modifyTVar knowlageCoverTVar (\(m, s) -> (m, S.insert t s))
+                        return Nothing
+                    xs -> return . Just $ "Source Event: update overlaps existing knowlage: " ++ unwords xs
+
             case hasOverlapMay of
-                Just (existing, new)
-                    -> fail $ "Source Event: updated overlaps existing knowlage. existing = "
-                            ++ show existing
-                            ++ ", new = "
-                            ++ show new
+                Just err -> fail err
                 Nothing -> return ()
-            C.writeChan updatesChan part
+            mapM_ (C.writeChan updatesChan) parts
     updates <- C.getChanContents updatesChan
     let event = updatesToEvent updates
     return ( updater
            , event
            )
 
--}
+    where
+    showPartTime (ChangesPart_NoChange s) = "ChangesPart_NoChange " ++ show s
+    showPartTime (ChangesPart_Change t _ _) = "ChangesPart_Change " ++ show t ++ " _ _"
+
 updatesToEvent :: [EventPart a] -> Event a
 updatesToEvent = fst . updatesToEvent'
 

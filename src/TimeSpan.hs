@@ -229,19 +229,17 @@ splitSpanAtErr tspan t err = case splitSpanAt tspan t of
     (Just lspan, Just rspan) -> (lspan, rspan)
     _ -> error $ err ++ ": splitSpanAtErr: Found a (Split _ (" ++ show t ++ ") _) but are in span: " ++ show tspan
 
-spanToIncInc :: SpanExc -> (TimeX, TimeX)
-spanToIncInc (SpanExc r l) = (lo, hi)
+-}
+spanExcBoundaries :: SpanExc -> (TimeX, TimeX)
+spanExcBoundaries (SpanExc r l) = (lo, hi)
     where
     lo = case r of
             All -> X_NegInf
-            (Or (RightSpaceExc loD)) -> toTime loD
+            (Or (RightSpaceExc loT)) -> X_Exactly loT
     hi = case l of
             All -> X_Inf
-            (Or (LeftSpaceExc hiD)) -> case hiD of
-                D_Exactly t -> X_JustBefore t
-                D_JustAfter t -> X_Exactly t
+            (Or (LeftSpaceExc hiT)) -> X_Exactly hiT
 
--}
 
 --
 -- Time Span stuff
