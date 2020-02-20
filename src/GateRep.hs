@@ -96,7 +96,7 @@ import qualified Control.Concurrent.Chan as C
 import Control.Monad (forever, forM)
 import Data.IORef
 import Data.List (find, foldl', group, nub, sort)
-import Data.Maybe (catMaybes, fromJust, fromMaybe, isJust)
+import Data.Maybe (catMaybes, fromJust, fromMaybe, isJust, isNothing)
 import qualified Data.Map as M
 import Test.QuickCheck hiding (once)
 
@@ -203,8 +203,8 @@ instance Applicative Behavior where
                 (_, br, fEnd, xEnd, bEnd) = go rspan ftxx fr xtxx xr
                 in (b, Changes bl fSplitTime bt btx br, fEnd, xEnd, bEnd)
             | otherwise = let
-                bt = fromMaybe (flEnd xlEnd) (($xlEnd) <$> ftx)
-                btx = ($x) <$> ftx
+                bt  = ($xlEnd) <$> ft
+                btx = ($xlEnd) <$> ftx
                 (b, bl, flEnd, xlEnd, _) = go lspan f fl x xcs
                 ftxx = fromMaybe flEnd $ ftx <|> ft
                 (_, br, fEnd, xEnd, bEnd) = go rspan ftxx fr x xcs
@@ -227,28 +227,21 @@ instance Applicative Behavior where
                 (r', bEnd) = crop rspan (fromMaybe bMid $ btx <|> bt) r
                 in (Changes l' t bt btx r', bEnd)
 
-{-
--- | Basically a (immediate) step function but more convenient fr creating behaviors.
-listToBI :: a -> [(Time, a)] -> Behavior a
-listToBI initA events = stepI initA (listToE events)
+-- -- | Basically a (immediate) step function but more convenient fr creating behaviors.
+-- listToBI :: a -> [(Time, a)] -> Behavior a
+-- listToBI initA events = stepI initA (listToE events)
 
--- | Basically a (delayed) step function but more convenient fr creating behaviors.
-listToB :: a -> [(Time, a)] -> Behavior a
-listToB initA events = step initA (listToE events)
+-- -- | Basically a (delayed) step function but more convenient fr creating behaviors.
+-- listToB :: a -> [(Time, a)] -> Behavior a
+-- listToB initA events = step initA (listToE events)
 
 instance Delayable (Behavior a) where
-    delay top = go top All
-        where
-        go :: Behavior a -> AllOr LeftSpace -> Behavior a
-        go (Split left t right) rightBoundScope =
-            let
-            t' = delay t
-            leftScope = Or (LeftSpace t')
-            -- If there is already a next value at the delayed time, then discard the right value.
-            in if rightBoundScope `contains` t'
-                then Split (go left leftScope) t' (go right rightBoundScope)
-                else go left leftScope
-        go v _ = v
+    delay (Behavior a cs) = Behavior a (delay cs)
+instance Delayable (Changes a) where
+    delay NoChanges = NoChanges
+    delay (Changes l t at atx r) = Changes (delay l) t Nothing (atx <|> at) (delay r)
+
+{-
 
 -- | Crop values, leaving the value at the edges of the Span to expand to infinity.
 cropOpen :: Span -> Behavior a -> Behavior a
@@ -268,66 +261,66 @@ lookupB t b = go b
         | t < toTime t'  = go left
         | otherwise      = go right
 
+-}
 -- | Event occurence
 data Occ a = NoOcc | Occ a
     deriving (Eq, Show, Functor)
 
-newtype Event a = Event { unEvent :: Behavior (Occ a) }
+newtype Event a = Event { unEvent :: Changes (Occ a) }
     deriving (Show, Functor)
 
 -- instance Show a => Show (Event a) where
 --     show e = "Event " ++ show (eventToList e)
 
 never :: Event a
-never = Event (Value NoOcc)
+never = Event NoChanges
 
 once :: Time -> a -> Event a
 once t a = listToE [(t, a)]
 
 listToE :: [(Time, a)] -> Event a
-listToE [] = Event (Value NoOcc)
-listToE ((t,a):es)
-    = Event $ Split (Value NoOcc) (D_Exactly t)
-        (Split (Value (Occ a)) (D_JustAfter t) (unEvent (listToE es)))
+listToE cs = Event (go cs)
+    where
+    go [] = NoChanges
+    go ((t, a):tas) = Changes NoChanges t (Just (Occ a)) (Just NoOcc) (go tas)
 
 eventToList :: Event a -> [(Time, a)]
-eventToList (Event b) = go allT b
+eventToList (Event cs) = go cs
     where
-    go :: Span -> Behavior (Occ a) -> [(Time, a)]
-    go _ (Value NoOcc) = []
-    go tspan (Value (Occ a)) = case instantaneous tspan of
-        Just occT -> [(occT, a)]
-        Nothing -> error $ "eventToList: Found non-instantaneous event spanning time: " ++ show tspan
-    go tspan (Split l t r) = go lspan l ++ go rspan r
-        where
-        (lspan, rspan) = splitSpanAtErr tspan t
-                            "eventToList: found a Split with out of bounds time"
+    go :: Changes (Occ a) -> [(Time, a)]
+    go NoChanges = []
+    go (Changes l t at atx r) = case (at, atx) of
+        (Nothing, Nothing) -> go l ++ go r
+        (Just (Occ a), Just NoOcc) -> go l ++ [(t,a)] ++ go r
+        (_, Just (Occ _)) -> error "eventToList: Found delayed event occurence"
+        _ -> error "eventToList: Expected: Changes _ _ (Just (Occ a)) (Just NoOcc) _"
 
 -- Delayed step.
 step :: a -> Event a -> Behavior a
-step aInit = delay . stepI aInit
+step aInit (Event cs) = Behavior aInit (go cs)
+    where
+    go NoChanges = NoChanges
+    go (Changes l t at atx r) = case (at, atx) of
+        (Nothing, Nothing) -> Changes (go l) t Nothing Nothing (go r)
+        (Just (Occ a), Just NoOcc) -> Changes (go l) t Nothing (Just a) (go r)
+        (_, Just (Occ _)) -> error "eventToList: Found delayed event occurence"
+        _ -> error "eventToList: Expected: Changes _ _ (Just (Occ a)) (Just NoOcc) _"
 
 -- Immediate variant of step.
 stepI :: forall a . a -> Event a -> Behavior a
-stepI initA0 (Event btop) = fst (go initA0 btop)
+stepI aInit (Event cs) = Behavior aInit (go cs)
     where
-    -- Remove NoOcc. If NoOcc return Nothing
-    -- also return the value at the end of the tspan (if one exists)
-    go :: a -> Behavior (Occ a) -> (Behavior a, a)
-    go initA (Value NoOcc)   = (Value initA, initA)
-    go _     (Value (Occ a)) = (Value a, a)
-    go initA (Split left t right) = let
-        (left', initA') = go initA left
-        (right', endVal) = go initA' right
-        -- Even though we could simplify the structure, we keep it so that we
-        -- can return values more lazily. We dont necessarily need to know the
-        -- whole (leftMay', prevValMay') to evaluate most of the right
-        in (Split left' t right', endVal)
+    go NoChanges = NoChanges
+    go (Changes l t at atx r) = case (at, atx) of
+        (Nothing, Nothing) -> Changes (go l) t Nothing Nothing (go r)
+        (Just (Occ a), Just NoOcc) -> Changes (go l) t (Just a) Nothing (go r)
+        (_, Just (Occ _)) -> error "eventToList: Found delayed event occurence"
+        _ -> error "eventToList: Expected: Changes _ _ (Just (Occ a)) (Just NoOcc) _"
 
+{-
 -- | take the left most of simultaneous events
 leftmost :: [Event a] -> Event a
 leftmost es = foldl' const never es
-
 
 --
 -- Explicitly partial versions of Behavior/Event
@@ -405,6 +398,8 @@ knownSpansB btop = go allT btop
                     in case lastLSpan `endsOn` headRSpan of
                         Just (midSpan, midT) ->  init spansL ++ [(midSpan, Split lastLB midT headRB)] ++ tail spansR
                         Nothing -> spansL ++ spansR
+
+
 --
 -- IO stuff
 --
@@ -515,7 +510,7 @@ updatesToEvent' updates = (Event occsB, errCases)
         diffErr = error $ "Impossibe! After a `difference` the left span must end on Or and the right"
                     ++ "span must start on an Or, but got: difference (" ++ show spanOut ++ ") ("
                     ++ show spanIn ++ ") == " ++ show (difference spanOut spanIn)
-
+-}
 -- | Watch a Behavior, sening data to a callback as they are evaluated.
 -- A dedicated thread is created that will run the callback.
 watchB
@@ -533,27 +528,47 @@ watchB btop notifyPart = forkIO $ do
 
 -- | Calls the call back a with the latest (time wise) available value.
 -- A dedicated thread is created that will run the callback.
+-- TODO because we don't have a value attached to BehaviorPart_NoChange we can't
+-- send updates for the same a but with a more up to date time. So you only get
+-- latest *change* time at the moment.
 watchLatestB :: Behavior a -> ((TimeX, a) -> IO ()) -> IO ThreadId
 watchLatestB b callback = forkIO $ do
     (_, chan) <- behaviorToChan b
     -- do forever
-    let loop t = do
-            maxMay <- lookupMaxBPart <$> readChan chan
-            case maxMay of
-                Just (t', a) | t' > t -> do
-                                    callback (t', a)
-                                    loop t'
-                _ -> loop t
+    let loop :: TimeX -> IO ()
+        loop t = do
+            part <- readChan chan
+            t' <- case part of
+                BehaviorPart_Init a
+                    | t == X_NegInf -> t <$ callback (X_NegInf, a)
+                BehaviorPart_Change t' atMay atxMay -> case (atMay, atxMay) of
+                    (_, (Just atx))
+                        | let t'' = X_JustAfter t'
+                        , t'' > t -> t'' <$ callback (t'', atx)
+                    ((Just at), _)
+                        | let t'' = X_Exactly   t'
+                        , t'' > t -> t'' <$ callback (t'', at)
+                    _  -> pure t
+                -- TODO
+                -- BehaviorPart_NoChange s
+                --     | let t' = spanExcMaxT s
+                --     , t' > t -> callback (t', _a)
+                _ -> return t
+            loop t'
     loop X_NegInf
 
 -- TODO move to NFRP higher level api (because we assume X_NegInf is full)
 -- | Note the initial value is the value at X_NegInf. Ensure this exists!
 watchLatestBIORef :: Behavior a -> IO (ThreadId, IORef (TimeX, a))
-watchLatestBIORef b = do
-    ref <- newIORef (X_NegInf, lookupB X_NegInf b)
+watchLatestBIORef b@(Behavior aInit _) = do
+    ref <- newIORef (X_NegInf, aInit)
     tid <- watchLatestB b (writeIORef ref)
     return (tid, ref)
 
+data BehaviorPart a
+    = BehaviorPart_Init a
+    | BehaviorPart_Change Time (Maybe a) (Maybe a)
+    | BehaviorPart_NoChange SpanExc
 
 behaviorToChan
     :: forall a
@@ -565,20 +580,21 @@ behaviorToChan
 behaviorToChan btop = do
     updatesChan <- newChan
     tid <- forkIO $ do
-        let go :: Span -> Behavior a -> IO ()
-            go tspan (Value a) = writeChan updatesChan (behaviorPart tspan a)
-            go tspan (Split left t right) = case splitSpanAt tspan t of
-                (Nothing, Nothing) -> error $ "Impossible! splitSpanAt " ++ show tspan ++ " = (Nothing, Nothing)"
-                (Just lspan, Nothing) -> go lspan left
-                (Nothing, Just rspan) -> go rspan right
-                (Just lspan, Just rspan) -> do
+        _ <- forkIO $ case btop of
+                Behavior a _ -> writeChan updatesChan (BehaviorPart_Init a)
+        _ <- forkIO $ do
+            let go :: SpanExc -> Changes a -> IO ()
+                go tspan NoChanges = writeChan updatesChan (BehaviorPart_NoChange tspan)
+                go tspan (Changes left t at atx right) = do
+                    writeChan updatesChan (BehaviorPart_Change t at atx)
+                    let (lspan, rspan) = splitSpanExcAtErr tspan t
                     _ <- forkIO $ go lspan left
                     go rspan right
-        go allT btop
+            let Behavior _ cs = btop
+            go allT cs
+        return ()
     return (tid, updatesChan)
--}
-
-{-
+{-}
 --
 -- QuickCheck Stuff
 --
