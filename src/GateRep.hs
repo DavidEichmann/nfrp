@@ -1,6 +1,7 @@
 {-# OPTIONS_GHC -Wno-unticked-promoted-constructors #-}
 {-# OPTIONS_GHC -Wno-partial-type-signatures #-}
 {-# OPTIONS_GHC -Wno-unused-top-binds #-}
+{-# OPTIONS_GHC -Wincomplete-uni-patterns #-}
 
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DeriveFunctor #-}
@@ -254,16 +255,22 @@ cropOpen tspan (Split left t right) = case splitSpanAt tspan t of
     (Nothing, Just rspan) -> cropOpen rspan right
     (Just lspan, Just rspan) -> Split (cropOpen lspan left) t (cropOpen rspan right)
 
+-}
 -- | No Maybe! because in this system, it will just block if the value is unknown.
 lookupB :: TimeX -> Behavior a -> a
-lookupB t b = go b
+lookupB t (Behavior aInitTop cs) = go aInitTop cs
     where
-    go (Value a) = a
-    go (Split left t' right)
-        | t < toTime t'  = go left
-        | otherwise      = go right
+    go aInit NoChanges = aInit
+    go aInit (Changes left t' atM atxM right)
+        | t < toTime t'         = go aInit left
+        | toTime      t' == t   = at
+        | X_JustAfter t' == t   = atx
+        | otherwise             = go aInit right
+        where
+        aL = go aInit left
+        at = fromMaybe aL atM
+        atx = fromMaybe at atxM
 
--}
 -- | Event occurence
 data Occ a = NoOcc | Occ a
     deriving (Eq, Show, Functor)
@@ -292,32 +299,39 @@ eventToList (Event cs) = go cs
     go :: Changes (Occ a) -> [(Time, a)]
     go NoChanges = []
     go (Changes l t at atx r) = case (at, atx) of
-        (Nothing, Nothing) -> go l ++ go r
-        (Just (Occ a), Just NoOcc) -> go l ++ [(t,a)] ++ go r
         (_, Just (Occ _)) -> error "eventToList: Found delayed event occurence"
-        _ -> error "eventToList: Expected: Changes _ _ (Just (Occ a)) (Just NoOcc) _"
+        (Just _, Nothing) -> error "eventToList: unexpected (Changes _ _ (Just _) NoOcc _). We should always know the just after value for events."
+        (Nothing, Nothing)    -> go l ++ go r
+        (Nothing, Just NoOcc) -> go l ++ go r
+        (Just occMay, Just NoOcc) -> go l ++ [(t,a) | Occ a <- [occMay]] ++ go r
 
 -- Delayed step.
 step :: a -> Event a -> Behavior a
 step aInit (Event cs) = Behavior aInit (go cs)
     where
     go NoChanges = NoChanges
-    go (Changes l t at atx r) = case (at, atx) of
-        (Nothing, Nothing) -> Changes (go l) t Nothing Nothing (go r)
-        (Just (Occ a), Just NoOcc) -> Changes (go l) t Nothing (Just a) (go r)
-        (_, Just (Occ _)) -> error "eventToList: Found delayed event occurence"
-        _ -> error "eventToList: Expected: Changes _ _ (Just (Occ a)) (Just NoOcc) _"
+    go (Changes l t at atx r) = let nullRes = Changes (go l) t Nothing Nothing (go r)
+        in case (at, atx) of
+            (_, Just (Occ _)) -> error "eventToList: Found delayed event occurence"
+            (Just _, Nothing) -> error "eventToList: unexpected (Changes _ _ (Just _) NoOcc _). We should always know the just after value for events."
+            (Nothing, Nothing) -> nullRes
+            (Nothing, Just NoOcc) -> nullRes
+            (Just (Occ a), Just NoOcc) -> Changes (go l) t Nothing (Just a) (go r)
+            (Just NoOcc  , Just NoOcc) -> Changes (go l) t Nothing Nothing (go r)
 
 -- Immediate variant of step.
 stepI :: forall a . a -> Event a -> Behavior a
 stepI aInit (Event cs) = Behavior aInit (go cs)
     where
     go NoChanges = NoChanges
-    go (Changes l t at atx r) = case (at, atx) of
-        (Nothing, Nothing) -> Changes (go l) t Nothing Nothing (go r)
-        (Just (Occ a), Just NoOcc) -> Changes (go l) t (Just a) Nothing (go r)
-        (_, Just (Occ _)) -> error "eventToList: Found delayed event occurence"
-        _ -> error "eventToList: Expected: Changes _ _ (Just (Occ a)) (Just NoOcc) _"
+    go (Changes l t at atx r) = let nullRes = Changes (go l) t Nothing Nothing (go r)
+        in case (at, atx) of
+            (_, Just (Occ _)) -> error "eventToList: Found delayed event occurence"
+            (Just _, Nothing) -> error "eventToList: unexpected (Changes _ _ (Just _) NoOcc _). We should always know the just after value for events."
+            (Nothing, Nothing) -> nullRes
+            (Nothing, Just NoOcc) -> nullRes
+            (Just (Occ a), Just NoOcc) -> Changes (go l) t (Just a) Nothing (go r)
+            (Just NoOcc  , Just NoOcc) -> Changes (go l) t Nothing Nothing (go r)
 
 {-
 -- | take the left most of simultaneous events
@@ -339,26 +353,37 @@ behaviorPart (Span All All) a = Value (Known a)
 behaviorPart (Span (Or (RightSpace lo)) (Or (LeftSpace hi))) a = Split (Value Unknown) lo (Split (Value $ Known a) hi (Value Unknown))
 behaviorPart (Span All (Or (LeftSpace hi))) a = Split (Value $ Known a) hi (Value Unknown)
 behaviorPart (Span (Or (RightSpace lo)) All) a = Split (Value Unknown) lo (Value $ Known a)
+-}
+-- | Assumes a finite input list.
+-- Errors if there are overlapping time spans, or any event occurences appear outside of the span.
+listToEPartsExcInc :: forall a . Time -> Time -> [(Time, a)] -> [EventPart a]
+listToEPartsExcInc lo hi xs
+    | let ts = lo : ((fst <$> xs) ++ [hi])
+    , all (uncurry (<)) (zip ts (tail ts))
+        =  error $ "listToEPartsExcInc: time not strictly increasing: " ++ show ts
+    | otherwise = go lo xs
+    where
+    go t []
+        | t == hi   = []
+        | otherwise = [ChangesPart_NoChange (spanExc (Just t) (Just hi))]
+    go t ((t', a):xs')
+        = ChangesPart_NoChange (spanExc (Just t) (Just t'))
+        -- ^^^ note it's safe to use spanExc because we checked tha t is strictly increasing.
+        : ChangesPart_Change t' (Just (Occ a)) (Just NoOcc)
+        : go t' xs'
 
 -- | Assumes a finite input list.
 -- Errors if there are overlapping time spans, or any event occurences appear outside of the span.
-listToEPart :: forall a . [(Span, [(Time, a)])] -> EventPart a
-listToEPart spans = let
-    knownBs :: [BehaviorPart (Occ a)]
-    knownBs = [ let Event occsB = listToE occs
-                    knowlage = cropOpen tspan (Known <$> occsB) -- cropOpen is needed to get rid of a possible final NoOcc at the end of tspan
-                    unknown = Value Unknown
-                 in case find (not . (tspan `contains`)) (fst <$> occs) of
-                        Just errT -> error $ "listToEPart: found event at time (" ++ show errT ++ ") not in span (" ++ show tspan ++ ")"
-                        Nothing -> case tspan of
-                            Span All All -> knowlage
-                            Span All (Or (LeftSpace t)) -> Split knowlage t unknown
-                            Span (Or (RightSpace t)) All -> Split unknown t knowlage
-                            Span (Or (RightSpace tlo)) (Or (LeftSpace thi)) -> Split (Split unknown tlo knowlage) thi unknown
-            | (tspan, occs) <- spans
-            ]
-    in EventPart (foldl' unionBP (pure Unknown) knownBs)
+listToEPartsNegInfToInc :: forall a . Time -> [(Time, a)] -> [EventPart a]
+listToEPartsNegInfToInc hi [] = [ ChangesPart_NoChange (spanExc Nothing (Just hi))
+                                , ChangesPart_Change hi Nothing Nothing
+                                ]
+listToEPartsNegInfToInc hi ((lo, a):xs)
+    = ChangesPart_NoChange (spanExc Nothing (Just lo))
+    : ChangesPart_Change lo (Just (Occ a)) (Just NoOcc)
+    : listToEPartsExcInc lo hi xs
 
+{-
 lookupMaxBPart :: forall a . BehaviorPart a -> Maybe (TimeX, a)
 lookupMaxBPart btop = go allT btop
     where
@@ -469,10 +494,6 @@ sourceEvent = do
            , event
            )
 
-    where
-    showPartTime (ChangesPart_NoChange s) = "ChangesPart_NoChange " ++ show s
-    showPartTime (ChangesPart_Change t _ _) = "ChangesPart_Change " ++ show t ++ " _ _"
-
 updatesToEvent :: [EventPart a] -> Event a
 updatesToEvent = fst . updatesToEvent'
 
@@ -487,69 +508,78 @@ updatesToEvent' updates = (Event occs, errCases)
     (occs, _, errCases) = go allT (updates)
 
     go :: SpanExc
+       -- ^ span of the resulting changes.
        -> [EventPart a]
+       -- ^ Must all be in the span
        -> (Changes (Occ a), [EventPart a], [(SpanExc, EventPart a)])
        -- ^ Final Changes for the span, unused (non-overlapping) parts, unused overlapping parts
        -- TODO Use diff lists
-    go tspan allPs = case p of
-        ChangesPart_Change t at atx -> let
-            (lspan, rspan) = splitSpanExcAtErr tspan t
-            (r, ps' , overlaps) = go rspan ps
-            (l, ps'', overlaps') = go lspan (ps')
-            in (Changes l t at atx r, otherPs, overlaps ++ overlaps' ++ ((tspan,) <$> ps''))
-        ChangesPart_NoChange noChangeSpan -> case tspan `difference` noChangeSpan of
-            -- (Maybe (SpanExc, Time), Maybe (Time, SpanExc))
-            (Nothing, Nothing) -> (NoChanges, otherPs, (tspan,) <$> ps)
-            (Just (lspan, tl), Nothing) -> let
-                (ps', overlapsR) = partition (isInSpan noChangeSpan) ps
-                (atl, atlx, ps'', overlapsTL) = siphonChange tl ps'
-                (l, ps''', overlapsL) = go lspan ps''
-                in ( Changes l tl atl atlx NoChanges
-                   , otherPs
-                   , ((noChangeSpan,) <$> overlapsR)
-                        ++ overlapsTL
-                        ++ overlapsL
-                        ++ ((error "Impossible! we filtered for parts in tsapan, but still ended up with non-overlapping unused parts") <$ ps''')
-                   )
-            (Nothing, Just (tr, rspan)) -> let
-                (r, ps', overlapsR) = go rspan ps
-                (atr, atrx, ps'', overlapsTR) = siphonChange tr ps'
-                (ps''', overlapsL) = partition (isInSpan noChangeSpan) ps''
-                in ( Changes NoChanges tr atr atrx r
-                   , otherPs
-                   , overlapsR
-                        ++ overlapsTR
-                        ++ ((noChangeSpan,) <$> overlapsL)
-                        ++ ((error "Impossible! we filtered for parts in tsapan, but still ended up with non-overlapping unused parts") <$ ps''')
-                   )
-            (Just (lspan, tl), Just (tr, rspan)) -> let
-                -- Right
-                (r, ps'1, overlapsR) = go rspan ps
-                (atr, atrx, ps'2, overlapsTR) = siphonChange tr ps'1
-                (ps'3, overlapsMid) = partition (isInSpan noChangeSpan) ps'2
-                -- Left
-                (atl, atlx, ps'4, overlapsTL) = siphonChange tl ps'3
-                (l, ps'5, overlapsL) = go lspan ps'4
-                in ( Changes (Changes l tl atl atlx NoChanges) tr atr atrx r
-                   , otherPs
-                   , overlapsR
-                        ++ overlapsTR
-                        ++ ((noChangeSpan,) <$> overlapsMid)
-                        ++ overlapsTL
-                        ++ overlapsL
-                        ++ ((error "Impossible! we filtered for parts in tsapan, but still ended up with non-overlapping unused parts") <$ ps'5)
-                   )
-        where
-        (p:ps, otherPs) = partition (isInSpan tspan) allPs
+    go tspan allPs = case allPs of
+        [] -> (NoChanges, [], [])
+        (p:ps) -> if not (isInSpan tspan p)
+            then let (cs, others, overlapping) = go tspan ps
+                  in (cs, p:others, overlapping)
+            else case p of
+                ChangesPart_Change t at atx -> let
+                    (lspan, rspan) = splitSpanExcAtErr tspan t
+                    (r, ps' , overlaps) = go rspan ps
+                    (l, ps'', overlaps') = go lspan (ps')
+                    in (Changes l t at atx r, ps'', overlaps ++ overlaps')
+                ChangesPart_NoChange noChangeSpan -> case tspan `difference` noChangeSpan of
+                    -- (Maybe (SpanExc, Time), Maybe (Time, SpanExc))
+                    (Nothing, Nothing) -> let
+                        (ps', overlap) = partition (not . isInSpan noChangeSpan) ps
+                        in (NoChanges, ps', (tspan,) <$> overlap)
+                    (Just (lspan, tl), Nothing) -> let
+                        (ps', overlapsR) = partition (not . isInSpan noChangeSpan) ps
+                        (atl, atlx, ps'', overlapsTL) = siphonChange tl ps'
+                        (l, ps'2, overlapsL) = go lspan ps''
+                        in ( Changes l tl atl atlx NoChanges
+                           , ps'2
+                           , ((noChangeSpan,) <$> overlapsR)
+                                   ++ overlapsTL
+                                   ++ overlapsL
+                           )
+                    (Nothing, Just (tr, rspan)) -> let
+                        (r, ps', overlapsR) = go rspan ps
+                        (atr, atrx, ps'', overlapsTR) = siphonChange tr ps'
+                        (ps'2, overlapsL) = partition (not . isInSpan noChangeSpan) ps''
+                        in ( Changes NoChanges tr atr atrx r
+                           , ps'2
+                           , overlapsR
+                                   ++ overlapsTR
+                                   ++ ((noChangeSpan,) <$> overlapsL)
+                           )
+                    (Just (lspan, tl), Just (tr, rspan)) -> let
+                        -- Right
+                        (r, ps'1, overlapsR) = go rspan ps
+                        (atr, atrx, ps'2, overlapsTR) = siphonChange tr ps'1
+                        (ps'3, overlapsMid) = partition (not . isInSpan noChangeSpan) ps'2
+                        -- Left
+                        (atl, atlx, ps'4, overlapsTL) = siphonChange tl ps'3
+                        (l, ps'5, overlapsL) = go lspan ps'4
+                        in ( Changes (Changes l tl atl atlx NoChanges) tr atr atrx r
+                        , ps'5
+                        , overlapsR
+                                ++ overlapsTR
+                                ++ ((noChangeSpan,) <$> overlapsMid)
+                                ++ overlapsTL
+                                ++ overlapsL
+                        )
+      where
 
-        isInSpan :: SpanExc -> EventPart a -> Bool
-        isInSpan s (ChangesPart_Change t _ _) = s `contains` t
-        isInSpan s (ChangesPart_NoChange s')   = s `contains` s'
+      isInSpan :: SpanExc -> EventPart a -> Bool
+      isInSpan s (ChangesPart_Change t _ _) = s `contains` t
+      isInSpan s (ChangesPart_NoChange s')   = s `contains` s'
 
-        siphonChange :: Time -> [EventPart a] -> (Maybe (Occ a), Maybe (Occ a), [EventPart a], [(SpanExc, EventPart a)])
-        siphonChange t ps' = (at, atx, ps'', (\(p',_,_) -> (tspan, p')) <$> overlaps)
+      siphonChange :: Time -> [EventPart a] -> (Maybe (Occ a), Maybe (Occ a), [EventPart a], [(SpanExc, EventPart a)])
+      siphonChange t ps' = (at, atx, ps'', (\(p',_,_) -> (tspan, p')) <$> overlaps)
             where
-            ((_,at,atx):overlaps, ps'') = partitionEithers
+            (at, atx, overlaps) = case siphoned of
+                                    [] -> let err = error $ "updatesToEvent: Missing change value at time " ++ show t
+                                          in (err, err, [])
+                                    (_, at', atx'):overlaps'  -> (at', atx', overlaps')
+            (siphoned, ps'') = partitionEithers
                             [case nextP of
                                 ChangesPart_Change t' at' atx' | t' == t -> Left (nextP, at', atx')
                                 _ -> Right nextP
@@ -652,10 +682,12 @@ type EventPart a = ChangesPart (Occ a)
 data ChangesPart a
     = ChangesPart_Change Time (Maybe a) (Maybe a)
     | ChangesPart_NoChange SpanExc
+    deriving (Show)
 
 data BehaviorPart a
     = BehaviorPart_Init a
     | BehaviorPart_ChangesPart (ChangesPart a)
+    deriving (Show)
 
 behaviorToChan
     :: forall a
@@ -681,39 +713,43 @@ behaviorToChan btop = do
             go allT cs
         return ()
     return (tid, updatesChan)
-{-}
 --
 -- QuickCheck Stuff
 --
 
-instance Arbitrary a => Arbitrary (Behavior a) where
+instance Arbitrary a => Arbitrary (Changes a) where
     arbitrary = do
         times <- orderedList
         go (head <$> group times)
         where
-        go :: [TimeD] -> Gen (Behavior a)
-        go [] = Value <$> arbitrary
+        go :: [Time] -> Gen (Changes a)
+        go [] = return NoChanges
         go ts = do
             sizeL <- choose (0,length ts - 1)
             l <- go (take sizeL ts)
             let t = ts !! sizeL
             r <- go (drop (sizeL + 1) ts)
-            return (Split l t r)
+            at <- arbitrary
+            atx <- arbitrary
+            return (Changes l t at atx r)
 
+instance Arbitrary a => Arbitrary (Behavior a) where
+    arbitrary = Behavior <$> arbitrary <*> arbitrary
+
+instance Arbitrary a => Arbitrary (Occ a) where
+    arbitrary = oneof [Occ <$> arbitrary, pure NoOcc]
 
 instance Arbitrary a => Arbitrary (Event a) where
     arbitrary = do
         times <- orderedList
-        Event <$> go (nub times)
+        Event <$> go (head <$> group times)
         where
-        go :: [Time] -> Gen (Behavior (Occ a))
-        go [] = pure (Value NoOcc)
+        go :: [Time] -> Gen (Changes (Occ a))
+        go [] = return NoChanges
         go ts = do
             sizeL <- choose (0,length ts - 1)
             l <- go (take sizeL ts)
-            r <- go (drop (sizeL + 1) ts)
-            a <- arbitrary
             let t = ts !! sizeL
-            return (Split l (D_Exactly t) (Split (Value (Occ a)) (D_JustAfter t) r))
-
-        -}
+            r <- go (drop (sizeL + 1) ts)
+            at <- arbitrary
+            return (Changes l t at (NoOcc <$ at) r)

@@ -16,6 +16,7 @@
 module Main where
 
 import NFRP
+import TimeSpan
 -- import Simulate
 import Graphics.Gloss.Interface.IO.Game
 
@@ -73,7 +74,7 @@ main = do
             return dtns
 
     -- Initialize with no events up to time 0 (TODO this should be part of a higher lever API)
-    fireInput (listToEPart [(spanToInc 0, [])])
+    fireInput [ChangesPart_NoChange (spanExc Nothing (Just 0))]
     lastUpdateTimeIORef <- newIORef 0
     playIO
         (InWindow "NFRP Demo" (500, 500) (100, 100))
@@ -103,10 +104,8 @@ main = do
                             _        -> Nothing
                     _   -> Nothing
 
-            fireInput (listToEPart [( spanFromExcToInc lastUpdateTime t
-                                     , [(t, inputs) | Just inputs <- [inputsMay]])
-                                   ]
-                      )
+            fireInput $ listToEPartsExcInc lastUpdateTime t
+                            [(t, inputs) | Just inputs <- [inputsMay]]
             writeIORef lastUpdateTimeIORef t
         )
         (\ _dt () ->

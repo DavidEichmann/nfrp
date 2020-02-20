@@ -53,7 +53,7 @@ newtype RightSpaceExc = RightSpaceExc Time   -- ^ [[ RightSpaceExc t' ]] = { t |
 instance Show LeftSpaceExc where
     show (LeftSpaceExc t) = "←" ++ show t ++ "○"
 instance Show RightSpaceExc where
-    show (RightSpaceExc t) = "●" ++ show t ++ "→"
+    show (RightSpaceExc t) = "○" ++ show t ++ "→"
 
 deriving instance Eq (AllOr LeftSpaceExc)
 deriving instance Eq (AllOr RightSpaceExc)
@@ -443,7 +443,6 @@ spanToIncInc (Span r l) = (lo, hi)
                 D_Exactly t -> X_JustBefore t
                 D_JustAfter t -> X_Exactly t
 
-{-
 instance Arbitrary Span where
     arbitrary = arbitrary `suchThatMap` (uncurry spanIncExcMaybe)
 
@@ -502,4 +501,3 @@ instance Arbitrary a => Arbitrary (OrderedFullUpdates a) where
                     values <- infiniteList
                     return $ (tspan, zip eventTimes values)
         return $ OrderedFullUpdates updates
-        -}

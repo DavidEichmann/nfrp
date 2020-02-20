@@ -101,6 +101,8 @@ instance ToTime Time   TimeD   where
     toTime = D_Exactly
 instance ToTime Time TimeDI where
     toTime = DI_Exactly
+instance ToTime Time TimeX where
+    toTime = X_Exactly
 instance ToTime TimeD TimeDI where
     toTime (D_Exactly   t) = DI_Exactly   t
     toTime (D_JustAfter t) = DI_JustAfter t
