@@ -230,13 +230,13 @@ instance Applicative Behavior where
                 (r', bEnd) = crop rspan (fromMaybe bMid $ btx <|> bt) r
                 in (Changes l' t bt btx r', bEnd)
 
--- -- | Basically a (immediate) step function but more convenient fr creating behaviors.
--- listToBI :: a -> [(Time, a)] -> Behavior a
--- listToBI initA events = stepI initA (listToE events)
+-- | Basically a (immediate) step function but more convenient fr creating behaviors.
+listToBI :: a -> [(Time, a)] -> Behavior a
+listToBI initA events = stepI initA (listToE events)
 
--- -- | Basically a (delayed) step function but more convenient fr creating behaviors.
--- listToB :: a -> [(Time, a)] -> Behavior a
--- listToB initA events = step initA (listToE events)
+-- | Basically a (delayed) step function but more convenient fr creating behaviors.
+listToB :: a -> [(Time, a)] -> Behavior a
+listToB initA events = step initA (listToE events)
 
 instance Delayable (Behavior a) where
     delay (Behavior a cs) = Behavior a (delay cs)
@@ -265,7 +265,7 @@ lookupB t (Behavior aInitTop cs) = go aInitTop cs
         | t < toTime t'         = go aInit left
         | toTime      t' == t   = at
         | X_JustAfter t' == t   = atx
-        | otherwise             = go aInit right
+        | otherwise             = go atx right
         where
         aL = go aInit left
         at = fromMaybe aL atM

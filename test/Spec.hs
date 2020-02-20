@@ -68,20 +68,20 @@ tests = testGroup "lcTransaction"
                 , listToEPartsExcInc 0 1
                     [ (1,"a") ]
                 , listToEPartsNegInfToInc 0 []
-                -- , lazinessErr -- Simulate blocking IO that me must not evaluate.
+                , lazinessErr -- Simulate blocking IO that me must not evaluate.
                 ]
       x @?= [(1,"a"), (2,"b"), (10,"c")]
 
-  --   , testCase "listToB" $ do
-  --       let b = listToB "0" [(0,"a"), (10, "b"), (20, "c")]
-  --       lookupB (-1) b @=? "0"
-  --       lookupB 0 b @=? "0"
-  --       lookupB 1 b @=? "a"
-  --       lookupB 10 b @=? "a"
-  --       lookupB 15 b @=? "b"
-  --       lookupB 20 b @=? "b"
-  --       lookupB 21 b @=? "c"
-  --   ]
+    , testCase "listToB" $ do
+        let b = listToB "0" [(0,"a"), (10, "b"), (20, "c")]
+        lookupB (-1) b @=? "0"
+        lookupB 0 b @=? "0"
+        lookupB 1 b @=? "a"
+        lookupB 10 b @=? "a"
+        lookupB 15 b @=? "b"
+        lookupB 20 b @=? "b"
+        lookupB 21 b @=? "c"
+    ]
   --   , testGroup "Source Event"
   --       [ testCase "Full history case" $ timeout $ do
   --           (fire, e) <- sourceEvent
@@ -120,7 +120,7 @@ tests = testGroup "lcTransaction"
   --       --     (fire, e) <- sourceEvent
   --       --     mapM_ fire [listToEPart [up] | up <- ups]
   --       --     eventToList e @?= concatMap snd ups
-        ]
+        -- ]
     ]
 
 lazinessErr :: a
