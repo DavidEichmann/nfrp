@@ -162,15 +162,14 @@ instance Difference SpanExc RightSpaceExc (Maybe (SpanExc, Time)) where
     difference s (RightSpaceExc b) = (,b) <$> s `intersect` (LeftSpaceExc b)
 
 
-{-
-instance Contains LeftSpaceExc TimeD where
-    contains (LeftSpaceExc a) t = t < a
-instance Contains RightSpaceExc TimeD where
-    contains (RightSpaceExc a) t = t > a
+-- instance Contains LeftSpaceExc TimeD where
+--     contains (LeftSpaceExc a) t = t < a
+-- instance Contains RightSpaceExc TimeD where
+--     contains (RightSpaceExc a) t = t > a
 instance Contains LeftSpaceExc Time where
-    contains ls t = ls `contains` D_Exactly t
+    contains (LeftSpaceExc ls) t = t < ls
 instance Contains RightSpaceExc Time where
-    contains rs t = rs `contains` D_Exactly t
+    contains (RightSpaceExc rs) t = t > rs
 instance Contains SpanExc Time where
     contains (SpanExc rs ls) t = ls `contains` t && rs `contains` t
 instance Contains LeftSpaceExc LeftSpaceExc where
@@ -183,16 +182,15 @@ instance Contains RightSpaceExc SpanExc where
     contains rs (SpanExc allOrRs _) = rs `contains` allOrRs
 instance Contains SpanExc SpanExc where
     contains (SpanExc r l) s = r `contains` s && l `contains` s
-instance (Contains a b, IsAllT a) => Contains a (AllOr b) where
-    contains a All    = isAllT a
-    contains a (Or b) = a `contains` b
-instance (Contains a b, IsAllT a) => Contains (AllOr a) b where
-    contains All _ = True
-    contains (Or a) b = a `contains` b
+-- instance (Contains a b, IsAllT a) => Contains a (AllOr b) where
+--     contains a All    = isAllT a
+--     contains a (Or b) = a `contains` b
+-- instance (Contains a b, IsAllT a) => Contains (AllOr a) b where
+--     contains All _ = True
+--     contains (Or a) b = a `contains` b
 
-intersects :: Intersect a b (Maybe c) => a -> b -> Bool
-intersects a b = isJust (a `intersect` b)
--}
+-- intersects :: Intersect a b (Maybe c) => a -> b -> Bool
+-- intersects a b = isJust (a `intersect` b)
 
 data SplitSpanExc
     = FullyLeftOfT SpanExc

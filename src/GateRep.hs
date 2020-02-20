@@ -94,8 +94,9 @@ import Control.Concurrent
 import Control.Concurrent.STM
 import qualified Control.Concurrent.Chan as C
 import Control.Monad (forever, forM)
+import Data.Either (partitionEithers)
 import Data.IORef
-import Data.List (find, foldl', group, nub, sort)
+import Data.List (find, foldl', group, nub, partition, sort)
 import Data.Maybe (catMaybes, fromJust, fromMaybe, isJust, isNothing)
 import qualified Data.Map as M
 import Test.QuickCheck hiding (once)
@@ -463,54 +464,127 @@ sourceEvent = do
            , event
            )
 
-
+-}
 updatesToEvent :: [EventPart a] -> Event a
 updatesToEvent = fst . updatesToEvent'
 
 updatesToEvent'
-    :: [EventPart a]
+    :: forall a
+    .  [EventPart a]
     -> ( Event a            -- ^ The event.
-       , [(Span, Event a)]  -- ^ Event Parts that overlapped with previous event prts
+       , [(SpanExc, EventPart a)]  -- ^ Event Parts that overlapped with previous event parts.
        )
-updatesToEvent' updates = (Event occsB, errCases)
+updatesToEvent' updates = (Event occs, errCases)
     where
-    (occsB, errCases) = go allT updates'
-    updates' = [ ks
-                | update <- updates
-                , ks <- knownSpansE update
-                ]
+    (occs, _, errCases) = go allT (updates)
 
-    -- returns beh and remaining events to process
-    go :: Span -> [(Span, Event a)] -> (Behavior (Occ a), [(Span, Event a)])
-    go tspan [] = error $ "updatesToEvent: missing data for time span: " ++ show tspan
-    go spanOut (x@(spanIn, (Event b)):xs)
-        | not (spanOut `contains` spanIn)
-            = let (b', xs') = go spanOut xs in (b', x:xs')
-        | otherwise = case (spanOut `difference` spanIn) of
-            (Nothing, Nothing) -> (b, xs)
-            (Nothing, Just rspan) -> case rspan of
-                Span (Or (RightSpace t)) _ -> let
-                    (rightB, xs') = go rspan xs
-                    in (Split b t rightB, xs')
-                _ -> diffErr
-            (Just lspan, Nothing) -> case lspan of
-                Span _ (Or (LeftSpace t)) -> let
-                    (leftB, xs') = go lspan xs
-                    in (Split leftB t b, xs')
-                _ -> diffErr
-            (Just lspan, Just rspan) -> case (lspan, rspan) of
-                (Span _ (Or (LeftSpace tlo)), Span (Or (RightSpace thi)) _)
-                    -> let
-                    -- Let the right branch process xs first (optimize for appending to the right).
-                    (rightB, xs') = go rspan xs
-                    (leftB, xs'') = go lspan xs'
-                    in (Split leftB tlo (Split b thi rightB), xs'')
-                (_,_) -> diffErr
+    go :: SpanExc
+       -> [EventPart a]
+       -> (Changes (Occ a), [EventPart a], [(SpanExc, EventPart a)])
+       -- ^ Final Changes for the span, unused (non-overlapping) parts, unused overlapping parts
+       -- TODO Use diff lists
+    go tspan allPs = case p of
+        ChangesPart_Change t at atx -> let
+            (lspan, rspan) = splitSpanExcAtErr tspan t
+            (r, ps' , overlaps) = go rspan ps
+            (l, ps'', overlaps') = go lspan (ps')
+            in (Changes l t at atx r, otherPs, overlaps ++ overlaps' ++ ((tspan,) <$> ps''))
+        ChangesPart_NoChange noChangeSpan -> case tspan `difference` noChangeSpan of
+            -- (Maybe (SpanExc, Time), Maybe (Time, SpanExc))
+            (Nothing, Nothing) -> (NoChanges, otherPs, (tspan,) <$> ps)
+            (Just (lspan, tl), Nothing) -> let
+                (ps', overlapsR) = partition (isInSpan noChangeSpan) ps
+                (atl, atlx, ps'', overlapsTL) = siphonChange tl ps'
+                (l, ps''', overlapsL) = go lspan ps''
+                in ( Changes l tl atl atlx NoChanges
+                   , otherPs
+                   , ((noChangeSpan,) <$> overlapsR)
+                        ++ overlapsTL
+                        ++ overlapsL
+                        ++ ((error "Impossible! we filtered for parts in tsapan, but still ended up with non-overlapping unused parts") <$ ps''')
+                   )
+            (Nothing, Just (tr, rspan)) -> let
+                (r, ps', overlapsR) = go rspan ps
+                (atr, atrx, ps'', overlapsTR) = siphonChange tr ps'
+                (ps''', overlapsL) = partition (isInSpan noChangeSpan) ps''
+                in ( Changes NoChanges tr atr atrx r
+                   , otherPs
+                   , overlapsR
+                        ++ overlapsTR
+                        ++ ((noChangeSpan,) <$> overlapsL)
+                        ++ ((error "Impossible! we filtered for parts in tsapan, but still ended up with non-overlapping unused parts") <$ ps''')
+                   )
+            (Just (lspan, tl), Just (tr, rspan)) -> let
+                -- Right
+                (r, ps'1, overlapsR) = go rspan ps
+                (atr, atrx, ps'2, overlapsTR) = siphonChange tr ps'1
+                (ps'3, overlapsMid) = partition (isInSpan noChangeSpan) ps'2
+                -- Left
+                (atl, atlx, ps'4, overlapsTL) = siphonChange tl ps'3
+                (l, ps'5, overlapsL) = go lspan ps'4
+                in ( Changes (Changes l tl atl atlx NoChanges) tr atr atrx r
+                   , otherPs
+                   , overlapsR
+                        ++ overlapsTR
+                        ++ ((noChangeSpan,) <$> overlapsMid)
+                        ++ overlapsTL
+                        ++ overlapsL
+                        ++ ((error "Impossible! we filtered for parts in tsapan, but still ended up with non-overlapping unused parts") <$ ps'5)
+                   )
         where
-        diffErr = error $ "Impossibe! After a `difference` the left span must end on Or and the right"
-                    ++ "span must start on an Or, but got: difference (" ++ show spanOut ++ ") ("
-                    ++ show spanIn ++ ") == " ++ show (difference spanOut spanIn)
--}
+        (p:ps, otherPs) = partition (isInSpan tspan) allPs
+
+        isInSpan :: SpanExc -> EventPart a -> Bool
+        isInSpan s (ChangesPart_Change t _ _) = s `contains` t
+        isInSpan s (ChangesPart_NoChange s')   = s `contains` s'
+
+        siphonChange :: Time -> [EventPart a] -> (Maybe (Occ a), Maybe (Occ a), [EventPart a], [(SpanExc, EventPart a)])
+        siphonChange t ps' = (at, atx, ps'', (\(p',_,_) -> (tspan, p')) <$> overlaps)
+            where
+            ((_,at,atx):overlaps, ps'') = partitionEithers
+                            [case nextP of
+                                ChangesPart_Change t' at' atx' | t' == t -> Left (nextP, at', atx')
+                                _ -> Right nextP
+                            | nextP <- ps' ]
+
+
+
+    -- updates' = [ ks
+    --             | update <- updates
+    --             , ks <- knownSpansE update
+    --             ]
+
+    -- -- returns beh and remaining events to process
+    -- go :: Span -> [(Span, Event a)] -> (Behavior (Occ a), [(Span, Event a)])
+    -- go tspan [] = error $ "updatesToEvent: missing data for time span: " ++ show tspan
+    -- go spanOut (x@(spanIn, (Event b)):xs)
+    --     | not (spanOut `contains` spanIn)
+    --         = let (b', xs') = go spanOut xs in (b', x:xs')
+    --     | otherwise = case (spanOut `difference` spanIn) of
+    --         (Nothing, Nothing) -> (b, xs)
+    --         (Nothing, Just rspan) -> case rspan of
+    --             Span (Or (RightSpace t)) _ -> let
+    --                 (rightB, xs') = go rspan xs
+    --                 in (Split b t rightB, xs')
+    --             _ -> diffErr
+    --         (Just lspan, Nothing) -> case lspan of
+    --             Span _ (Or (LeftSpace t)) -> let
+    --                 (leftB, xs') = go lspan xs
+    --                 in (Split leftB t b, xs')
+    --             _ -> diffErr
+    --         (Just lspan, Just rspan) -> case (lspan, rspan) of
+    --             (Span _ (Or (LeftSpace tlo)), Span (Or (RightSpace thi)) _)
+    --                 -> let
+    --                 -- Let the right branch process xs first (optimize for appending to the right).
+    --                 (rightB, xs') = go rspan xs
+    --                 (leftB, xs'') = go lspan xs'
+    --                 in (Split leftB tlo (Split b thi rightB), xs'')
+    --             (_,_) -> diffErr
+    --     where
+    --     diffErr = error $ "Impossibe! After a `difference` the left span must end on Or and the right"
+    --                 ++ "span must start on an Or, but got: difference (" ++ show spanOut ++ ") ("
+    --                 ++ show spanIn ++ ") == " ++ show (difference spanOut spanIn)
+
 -- | Watch a Behavior, sening data to a callback as they are evaluated.
 -- A dedicated thread is created that will run the callback.
 watchB
@@ -541,7 +615,7 @@ watchLatestB b callback = forkIO $ do
             t' <- case part of
                 BehaviorPart_Init a
                     | t == X_NegInf -> t <$ callback (X_NegInf, a)
-                BehaviorPart_Change t' atMay atxMay -> case (atMay, atxMay) of
+                BehaviorPart_ChangesPart (ChangesPart_Change t' atMay atxMay) -> case (atMay, atxMay) of
                     (_, (Just atx))
                         | let t'' = X_JustAfter t'
                         , t'' > t -> t'' <$ callback (t'', atx)
@@ -565,10 +639,15 @@ watchLatestBIORef b@(Behavior aInit _) = do
     tid <- watchLatestB b (writeIORef ref)
     return (tid, ref)
 
+type EventPart a = ChangesPart (Occ a)
+
+data ChangesPart a
+    = ChangesPart_Change Time (Maybe a) (Maybe a)
+    | ChangesPart_NoChange SpanExc
+
 data BehaviorPart a
     = BehaviorPart_Init a
-    | BehaviorPart_Change Time (Maybe a) (Maybe a)
-    | BehaviorPart_NoChange SpanExc
+    | BehaviorPart_ChangesPart (ChangesPart a)
 
 behaviorToChan
     :: forall a
@@ -584,9 +663,9 @@ behaviorToChan btop = do
                 Behavior a _ -> writeChan updatesChan (BehaviorPart_Init a)
         _ <- forkIO $ do
             let go :: SpanExc -> Changes a -> IO ()
-                go tspan NoChanges = writeChan updatesChan (BehaviorPart_NoChange tspan)
+                go tspan NoChanges = writeChan updatesChan (BehaviorPart_ChangesPart (ChangesPart_NoChange tspan))
                 go tspan (Changes left t at atx right) = do
-                    writeChan updatesChan (BehaviorPart_Change t at atx)
+                    writeChan updatesChan (BehaviorPart_ChangesPart (ChangesPart_Change t at atx))
                     let (lspan, rspan) = splitSpanExcAtErr tspan t
                     _ <- forkIO $ go lspan left
                     go rspan right
