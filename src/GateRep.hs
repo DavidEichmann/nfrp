@@ -307,17 +307,19 @@ eventToList (Event cs) = go cs
 
 -- Delayed step.
 step :: a -> Event a -> Behavior a
-step aInit (Event cs) = Behavior aInit (go cs)
-    where
-    go NoChanges = NoChanges
-    go (Changes l t at atx r) = let nullRes = Changes (go l) t Nothing Nothing (go r)
-        in case (at, atx) of
-            (_, Just (Occ _)) -> error "eventToList: Found delayed event occurence"
-            (Just _, Nothing) -> error "eventToList: unexpected (Changes _ _ (Just _) NoOcc _). We should always know the just after value for events."
-            (Nothing, Nothing) -> nullRes
-            (Nothing, Just NoOcc) -> nullRes
-            (Just (Occ a), Just NoOcc) -> Changes (go l) t Nothing (Just a) (go r)
-            (Just NoOcc  , Just NoOcc) -> Changes (go l) t Nothing Nothing (go r)
+step aInit e = delay (stepI aInit e)
+-- TODO use a more efficient implementation:
+-- step aInit (Event cs) = Behavior aInit (go cs)
+--     where
+--     go NoChanges = NoChanges
+--     go (Changes l t at atx r) = let nullRes = Changes (go l) t Nothing Nothing (go r)
+--         in case (at, atx) of
+--             (_, Just (Occ _)) -> error "eventToList: Found delayed event occurence"
+--             (Just _, Nothing) -> error "eventToList: unexpected (Changes _ _ (Just _) NoOcc _). We should always know the just after value for events."
+--             (Nothing, Nothing) -> nullRes
+--             (Nothing, Just NoOcc) -> nullRes
+--             (Just (Occ a), Just NoOcc) -> Changes (go l) t Nothing (Just a) (go r)
+--             (Just NoOcc  , Just NoOcc) -> Changes (go l) t Nothing Nothing (go r)
 
 -- Immediate variant of step.
 stepI :: forall a . a -> Event a -> Behavior a
