@@ -760,3 +760,12 @@ instance Arbitrary a => Arbitrary (Event a) where
             r <- go (drop (sizeL + 1) ts)
             at <- arbitrary
             return (Changes l t at (NoOcc <$ at) r)
+
+
+newtype OrderedFullEventParts a = OrderedFullEventParts [EventPart a] deriving (Show)
+instance Arbitrary a => Arbitrary (OrderedFullEventParts a) where
+    arbitrary = do
+        occTimes :: [Time] <- increasingListOf arbitrary
+        vals :: [a] <- infiniteListOf arbitrary
+        let occs = zip occTimes vals
+        return $ OrderedFullEventParts (listToEPartsExcInc Nothing Nothing occs)

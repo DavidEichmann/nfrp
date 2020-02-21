@@ -491,13 +491,3 @@ arbitraryTimeInSpan s = arbitraryTimeDInSpan s `suchThatMap` (\td -> let
 
 increasingListOf :: Ord a => Gen a -> Gen [a]
 increasingListOf xs = fmap head . group . sort <$> listOf xs
-
-newtype OrderedFullUpdates a = OrderedFullUpdates [(Span, [(Time, a)])] deriving (Show)
-instance Arbitrary a => Arbitrary (OrderedFullUpdates a) where
-    arbitrary = do
-        OrderedFullSpans spans <- arbitrary
-        updates <- forM spans $ \ tspan -> do
-                    eventTimes <- increasingListOf (arbitraryTimeInSpan tspan)
-                    values <- infiniteList
-                    return $ (tspan, zip eventTimes values)
-        return $ OrderedFullUpdates updates
