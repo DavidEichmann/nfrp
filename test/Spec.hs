@@ -82,24 +82,24 @@ tests = testGroup "lcTransaction"
         lookupB 20 b @=? "b"
         lookupB 21 b @=? "c"
     ]
-  --   , testGroup "Source Event"
-  --       [ testCase "Full history case" $ timeout $ do
-  --           (fire, e) <- sourceEvent
-  --           fire (listToEPart [(spanToExc            4 , [(0,"a"), (3,"b")])])
-  --           fire (listToEPart [(spanFromIncToExc 4   6 , [])])
-  --           fire (listToEPart [(spanFromIncToInc 6   10, [(6,"c"), (7,"d")])])
-  --           fire (listToEPart [(spanFromExcToExc 10  22, [(11,"e")])])
-  --           fire (listToEPart [(spanFromIncToExc 22  90, [(25,"f")])])
-  --           fire (listToEPart [(spanFromInc      90    , [(1000,"g")])])
-  --           eventToList e @?=
-  --                 [ (0, "a")
-  --                 , (3, "b")
-  --                 , (6, "c")
-  --                 , (7, "d")
-  --                 , (11, "e")
-  --                 , (25, "f")
-  --                 , (1000, "g")
-  --                 ]
+    , testGroup "Source Event"
+        [ testCase "Full history case" $ timeout $ do
+            (fire, e) <- sourceEvent
+            fire (listToEPartsNegInfToInc     4  [(0,"a"), (4,"b")])
+            fire (listToEPartsExcInc      4   6  [])
+            fire (listToEPartsExcInc      6   10 [(7,"c"), (10,"d")])
+            fire (listToEPartsExcInc      10  22 [(11,"e")])
+            fire (listToEPartsExcInc      22  90 [(25,"f")])
+            fire (listToEPartsExcToInf    90     [(1000,"g")])
+            eventToList e @?=
+                  [ (0, "a")
+                  , (4, "b")
+                  , (7, "c")
+                  , (10, "d")
+                  , (11, "e")
+                  , (25, "f")
+                  , (1000, "g")
+                  ]
   --       , testCase "step gives delayed knowlage lazy" $ timeout $ do
   --           (fire, e) <- sourceEvent
   --           let b = step "0" e
@@ -120,7 +120,7 @@ tests = testGroup "lcTransaction"
   --       --     (fire, e) <- sourceEvent
   --       --     mapM_ fire [listToEPart [up] | up <- ups]
   --       --     eventToList e @?= concatMap snd ups
-        -- ]
+        ]
     ]
 
 lazinessErr :: a

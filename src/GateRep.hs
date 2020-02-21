@@ -355,17 +355,20 @@ behaviorPart (Span All (Or (LeftSpace hi))) a = Split (Value $ Known a) hi (Valu
 behaviorPart (Span (Or (RightSpace lo)) All) a = Split (Value Unknown) lo (Value $ Known a)
 -}
 -- | Assumes a finite input list.
--- Errors if there are overlapping time spans, or any event occurences appear outside of the span.
+-- Errors if there are overlapping time spans, or any event occurrences appear outside of the span.
 listToEPartsExcInc :: forall a . Time -> Time -> [(Time, a)] -> [EventPart a]
 listToEPartsExcInc lo hi xs
-    | let ts = lo : ((fst <$> xs) ++ [hi])
-    , all (uncurry (<)) (zip ts (tail ts))
-        =  error $ "listToEPartsExcInc: time not strictly increasing: " ++ show ts
+    | not (all (uncurry (<)) (zip occTs (tail occTs)))
+        =  error $ "listToEPartsExcInc: time occurrences not strictly increasing: " ++ show occTs
+    | not (all (\t -> lo < t && t <= hi) occTs)
+        =  error $ "listToEPartsExcInc: time occurrences not in (exc,inc) range " ++ show (lo,hi) ++ ": " ++ show occTs
     | otherwise = go lo xs
     where
+    occTs = fst <$> xs
     go t []
         | t == hi   = []
-        | otherwise = [ChangesPart_NoChange (spanExc (Just t) (Just hi))]
+        | otherwise = [ChangesPart_NoChange (spanExc (Just t) (Just hi))
+                      ]
     go t ((t', a):xs')
         = ChangesPart_NoChange (spanExc (Just t) (Just t'))
         -- ^^^ note it's safe to use spanExc because we checked tha t is strictly increasing.
@@ -373,7 +376,7 @@ listToEPartsExcInc lo hi xs
         : go t' xs'
 
 -- | Assumes a finite input list.
--- Errors if there are overlapping time spans, or any event occurences appear outside of the span.
+-- Errors if there are overlapping time spans, or any event occurrences appear outside of the span.
 listToEPartsNegInfToInc :: forall a . Time -> [(Time, a)] -> [EventPart a]
 listToEPartsNegInfToInc hi [] = [ ChangesPart_NoChange (spanExc Nothing (Just hi))
                                 , ChangesPart_Change hi Nothing Nothing
@@ -382,6 +385,46 @@ listToEPartsNegInfToInc hi ((lo, a):xs)
     = ChangesPart_NoChange (spanExc Nothing (Just lo))
     : ChangesPart_Change lo (Just (Occ a)) (Just NoOcc)
     : listToEPartsExcInc lo hi xs
+
+-- | Assumes a finite input list.
+-- Errors if there are overlapping time spans, or any event occurrences appear outside of the span.
+listToEPartsExcToInf :: forall a . Time -> [(Time, a)] -> [EventPart a]
+listToEPartsExcToInf lo [] = [ ChangesPart_Change lo Nothing Nothing
+                             , ChangesPart_NoChange (spanExc (Just lo) Nothing)
+                             ]
+listToEPartsExcToInf lo allXs
+    = listToEPartsExcInc lo hi (init allXs) ++
+    [ ChangesPart_Change hi (Just (Occ a)) (Just NoOcc)
+    , ChangesPart_NoChange (spanExc (Just hi) Nothing)
+    ]
+    where
+    (hi,a) = last allXs
+
+
+Use listToEPartsExcInc' to implement the vaiants above. This should scan left to right
+and alternate between inserting NoChanges and Changes elements
+
+-- | Assumes a finite input list.
+-- Errors if there are overlapping time spans, or any event occurrences appear outside of the span.
+listToEPartsExcInc' :: forall a . Maybe Time -> Maybe Time -> [(Time, a)] -> [EventPart a]
+listToEPartsExcInc' lo hi xs
+    | not (all (uncurry (<)) (zip occTs (tail occTs)))
+        =  error $ "listToEPartsExcInc: time occurrences not strictly increasing: " ++ show occTs
+    | not (all (\t -> lo < t && t <= hi) occTs)
+        =  error $ "listToEPartsExcInc: time occurrences not in (exc,inc) range " ++ show (lo,hi) ++ ": " ++ show occTs
+    | otherwise = go lo xs
+    where
+    occTs = fst <$> xs
+    go t []
+        | t == hi   = []
+        | otherwise = [ChangesPart_NoChange (spanExc (Just t) (Just hi))
+                      ]
+    go t ((t', a):xs')
+        = ChangesPart_NoChange (spanExc (Just t) (Just t'))
+        -- ^^^ note it's safe to use spanExc because we checked tha t is strictly increasing.
+        : ChangesPart_Change t' (Just (Occ a)) (Just NoOcc)
+        : go t' xs'
+
 
 {-
 lookupMaxBPart :: forall a . BehaviorPart a -> Maybe (TimeX, a)
