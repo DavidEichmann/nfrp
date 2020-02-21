@@ -61,13 +61,13 @@ tests = testGroup "lcTransaction"
     , testProperty "listToE == eventToList" (\ (x :: Event Int) -> eventToList (listToE (eventToList x)) == eventToList x)
     , testCase "updatesToEvent lazyness" $ do
       let x = take 3 $ eventToList $ updatesToEvent $ concat
-                [ listToEPartsExcInc 1 10
+                [ listToEPartsExcInc (Just 1) (Just 10)
                     [ (2,"b")
                     , (10,"c")
                     ]
-                , listToEPartsExcInc 0 1
+                , listToEPartsExcInc (Just 0) (Just 1)
                     [ (1,"a") ]
-                , listToEPartsNegInfToInc 0 []
+                , listToEPartsExcInc Nothing (Just 0) []
                 , lazinessErr -- Simulate blocking IO that me must not evaluate.
                 ]
       x @?= [(1,"a"), (2,"b"), (10,"c")]
@@ -85,12 +85,12 @@ tests = testGroup "lcTransaction"
     , testGroup "Source Event"
         [ testCase "Full history case" $ timeout $ do
             (fire, e) <- sourceEvent
-            fire (listToEPartsNegInfToInc     4  [(0,"a"), (4,"b")])
-            fire (listToEPartsExcInc      4   6  [])
-            fire (listToEPartsExcInc      6   10 [(7,"c"), (10,"d")])
-            fire (listToEPartsExcInc      10  22 [(11,"e")])
-            fire (listToEPartsExcInc      22  90 [(25,"f")])
-            fire (listToEPartsExcToInf    90     [(1000,"g")])
+            fire (listToEPartsExcInc  Nothing    (Just 4)  [(0,"a"), (4,"b")])
+            fire (listToEPartsExcInc  (Just 4)   (Just 6)  [])
+            fire (listToEPartsExcInc  (Just 6)   (Just 10) [(7,"c"), (10,"d")])
+            fire (listToEPartsExcInc  (Just 10)  (Just 22) [(11,"e")])
+            fire (listToEPartsExcInc  (Just 22)  (Just 90) [(25,"f")])
+            fire (listToEPartsExcInc  (Just 90)  Nothing   [(1000,"g")])
             eventToList e @?=
                   [ (0, "a")
                   , (4, "b")

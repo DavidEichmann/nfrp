@@ -354,76 +354,38 @@ behaviorPart (Span (Or (RightSpace lo)) (Or (LeftSpace hi))) a = Split (Value Un
 behaviorPart (Span All (Or (LeftSpace hi))) a = Split (Value $ Known a) hi (Value Unknown)
 behaviorPart (Span (Or (RightSpace lo)) All) a = Split (Value Unknown) lo (Value $ Known a)
 -}
--- | Assumes a finite input list.
+
+-- | Evaluates all event occurence times.
 -- Errors if there are overlapping time spans, or any event occurrences appear outside of the span.
-listToEPartsExcInc :: forall a . Time -> Time -> [(Time, a)] -> [EventPart a]
-listToEPartsExcInc lo hi xs
+listToEPartsExcInc :: forall a . Maybe Time -> Maybe Time -> [(Time, a)] -> [EventPart a]
+listToEPartsExcInc loMTop hiM xsTop
     | not (all (uncurry (<)) (zip occTs (tail occTs)))
         =  error $ "listToEPartsExcInc: time occurrences not strictly increasing: " ++ show occTs
-    | not (all (\t -> lo < t && t <= hi) occTs)
-        =  error $ "listToEPartsExcInc: time occurrences not in (exc,inc) range " ++ show (lo,hi) ++ ": " ++ show occTs
-    | otherwise = go lo xs
+    | let tspan = spanExc loMTop hiM
+    , not (all (\t -> tspan `contains` t || Just t == hiM) occTs)
+        =  error $ "listToEPartsExcInc: time occurrences not in range " ++ show (loMTop,hiM) ++ ": " ++ show occTs
+    | otherwise = goNoChange loMTop xsTop
     where
-    occTs = fst <$> xs
-    go t []
-        | t == hi   = []
-        | otherwise = [ChangesPart_NoChange (spanExc (Just t) (Just hi))
-                      ]
-    go t ((t', a):xs')
-        = ChangesPart_NoChange (spanExc (Just t) (Just t'))
-        -- ^^^ note it's safe to use spanExc because we checked tha t is strictly increasing.
-        : ChangesPart_Change t' (Just (Occ a)) (Just NoOcc)
-        : go t' xs'
+    occTs = fst <$> xsTop
 
--- | Assumes a finite input list.
--- Errors if there are overlapping time spans, or any event occurrences appear outside of the span.
-listToEPartsNegInfToInc :: forall a . Time -> [(Time, a)] -> [EventPart a]
-listToEPartsNegInfToInc hi [] = [ ChangesPart_NoChange (spanExc Nothing (Just hi))
-                                , ChangesPart_Change hi Nothing Nothing
-                                ]
-listToEPartsNegInfToInc hi ((lo, a):xs)
-    = ChangesPart_NoChange (spanExc Nothing (Just lo))
-    : ChangesPart_Change lo (Just (Occ a)) (Just NoOcc)
-    : listToEPartsExcInc lo hi xs
+    goNoChange
+        :: Maybe Time    -- ^ Start of NoChange exclusive (Nothing = -Inf)
+        -> [(Time, a)]   -- ^ remaining event occs
+        -> [EventPart a] -- ^ parts spanning from current time (inclusive) to hiM (Inc)
+    goNoChange loM [] = ChangesPart_NoChange (spanExc loM hiM) : goOcc []
+    goNoChange loM xs@((t,_):_)
+        = ChangesPart_NoChange (spanExc loM (Just t)) : goOcc xs
 
--- | Assumes a finite input list.
--- Errors if there are overlapping time spans, or any event occurrences appear outside of the span.
-listToEPartsExcToInf :: forall a . Time -> [(Time, a)] -> [EventPart a]
-listToEPartsExcToInf lo [] = [ ChangesPart_Change lo Nothing Nothing
-                             , ChangesPart_NoChange (spanExc (Just lo) Nothing)
-                             ]
-listToEPartsExcToInf lo allXs
-    = listToEPartsExcInc lo hi (init allXs) ++
-    [ ChangesPart_Change hi (Just (Occ a)) (Just NoOcc)
-    , ChangesPart_NoChange (spanExc (Just hi) Nothing)
-    ]
-    where
-    (hi,a) = last allXs
+    goOcc
+        :: [(Time, a)]   -- ^ remaining event occs (current time is first event time else hiM)
+        -> [EventPart a] -- ^ parts spanning from current time (inclusive) to hiM (Inc)
+    goOcc [] = case hiM of
+        Nothing -> []
+        Just hi -> [ChangesPart_Change hi Nothing Nothing]
+    goOcc ((t,a):xs) = ChangesPart_Change t (Just (Occ a)) (Just NoOcc) : if Just t == hiM
+        then []
+        else goNoChange (Just t) xs
 
-
-Use listToEPartsExcInc' to implement the vaiants above. This should scan left to right
-and alternate between inserting NoChanges and Changes elements
-
--- | Assumes a finite input list.
--- Errors if there are overlapping time spans, or any event occurrences appear outside of the span.
-listToEPartsExcInc' :: forall a . Maybe Time -> Maybe Time -> [(Time, a)] -> [EventPart a]
-listToEPartsExcInc' lo hi xs
-    | not (all (uncurry (<)) (zip occTs (tail occTs)))
-        =  error $ "listToEPartsExcInc: time occurrences not strictly increasing: " ++ show occTs
-    | not (all (\t -> lo < t && t <= hi) occTs)
-        =  error $ "listToEPartsExcInc: time occurrences not in (exc,inc) range " ++ show (lo,hi) ++ ": " ++ show occTs
-    | otherwise = go lo xs
-    where
-    occTs = fst <$> xs
-    go t []
-        | t == hi   = []
-        | otherwise = [ChangesPart_NoChange (spanExc (Just t) (Just hi))
-                      ]
-    go t ((t', a):xs')
-        = ChangesPart_NoChange (spanExc (Just t) (Just t'))
-        -- ^^^ note it's safe to use spanExc because we checked tha t is strictly increasing.
-        : ChangesPart_Change t' (Just (Occ a)) (Just NoOcc)
-        : go t' xs'
 
 
 {-
