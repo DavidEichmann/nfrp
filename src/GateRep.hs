@@ -4,7 +4,10 @@
 {-# OPTIONS_GHC -Wincomplete-uni-patterns #-}
 
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -27,18 +30,20 @@
 
 module GateRep where
 
-import Control.Applicative
-import Control.Concurrent
-import Control.Concurrent.STM
+import           Data.Binary (Binary)
+import           Control.Applicative
+import           Control.Concurrent
+import           Control.Concurrent.STM
 import qualified Control.Concurrent.Chan as C
-import Control.Monad (forever, forM_)
-import Data.Either (partitionEithers)
-import Data.IORef
-import Data.List (group, partition)
-import Data.Maybe (catMaybes, fromJust, fromMaybe, mapMaybe)
+import           Control.Monad (forever, forM_)
+import           Data.Either (partitionEithers)
+import           Data.IORef
+import           Data.List (group, partition)
+import           Data.Maybe (catMaybes, fromJust, fromMaybe, mapMaybe)
 import qualified Data.Map as M
 import qualified Data.Set as S
-import Test.QuickCheck hiding (once)
+import           GHC.Generics (Generic)
+import           Test.QuickCheck hiding (once)
 
 import Time
 import TimeSpan
@@ -74,7 +79,7 @@ data Changes a
         (Maybe a)        -- ^ Possible change of value at (inluding) t.
         (Maybe a)        -- ^ Possible change of value just after t.
         (Changes a)     -- ^ Value changes strictly after t.
-    deriving (Functor, Show)
+    deriving stock (Functor, Show, Generic)
 
 instance Eq a => Eq (Behavior a) where
     a == b = alwaysB (==True) ((==) <$> a <*> b)
@@ -210,7 +215,8 @@ lookupB t (Behavior aInitTop cs) = go aInitTop cs
 
 -- | Event occurence
 data Occ a = NoOcc | Occ a
-    deriving (Eq, Show, Functor)
+    deriving stock (Eq, Show, Functor, Generic)
+    deriving anyclass (Binary)
 
 newtype Event a = Event { unEvent :: Changes (Occ a) }
     deriving (Show, Functor)
@@ -374,6 +380,7 @@ knownSpansB btop = go allT btop
 --
 -- IO stuff
 --
+-}
 
 chanToEvent :: Chan (EventPart a) -> IO (Event a)
 chanToEvent inputChan = do
@@ -385,7 +392,6 @@ chanToEvent inputChan = do
 --     let b = unEvent e
 --     watchB b
 
--}
 sourceEvent
     :: forall a
     .  IO ([EventPart a] -> IO ()
@@ -567,6 +573,9 @@ updatesToEvent' updates = (Event occs, errCases)
     --                 ++ "span must start on an Or, but got: difference (" ++ show spanOut ++ ") ("
     --                 ++ show spanIn ++ ") == " ++ show (difference spanOut spanIn)
 
+watchE :: Event a -> (EventPart a -> IO ()) -> IO ThreadId
+watchE = _
+
 -- | Watch a Behavior, sening data to a callback as they are evaluated.
 -- A dedicated thread is created that will run the callback.
 watchB
@@ -626,7 +635,8 @@ type EventPart a = ChangesPart (Occ a)
 data ChangesPart a
     = ChangesPart_Change Time (Maybe a) (Maybe a)
     | ChangesPart_NoChange SpanExc
-    deriving (Show)
+    deriving stock (Show, Generic)
+    deriving anyclass (Binary)
 
 data BehaviorPart a
     = BehaviorPart_Init a
@@ -657,6 +667,7 @@ behaviorToChan btop = do
             go allT cs
         return ()
     return (tid, updatesChan)
+
 --
 -- QuickCheck Stuff
 --

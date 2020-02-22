@@ -3,7 +3,10 @@
 {-# OPTIONS_GHC -Wno-unused-top-binds #-}
 
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -28,6 +31,8 @@ module TimeSpan where
 
 import Data.List (group, sort)
 import Data.Maybe (isJust)
+import Data.Binary (Binary)
+import GHC.Generics (Generic)
 import Test.QuickCheck hiding (once)
 
 import Time
@@ -35,13 +40,16 @@ import Time
 data AllOr a
     = All   -- ^ All of time [-Inf, Inf]
     | Or a  -- ^ Just that a.
-    deriving (Show) -- NOT Ord
+    deriving stock (Show, Generic) -- NOT Ord
+    deriving anyclass (Binary)
 
 -- Half spaces
 newtype LeftSpaceExc  = LeftSpaceExc  Time   -- ^ [[ LeftSpaceExc  t' ]] = { t | t < t' }
-    deriving (Eq,Ord)
+    deriving stock (Eq, Ord, Generic)
+    deriving anyclass (Binary)
 newtype RightSpaceExc = RightSpaceExc Time   -- ^ [[ RightSpaceExc t' ]] = { t | t > t' }
-    deriving (Eq,Ord)
+    deriving stock (Eq, Ord, Generic)
+    deriving anyclass (Binary)
 
 instance Show LeftSpaceExc where
     show (LeftSpaceExc t) = "←" ++ show t ++ "○"
@@ -57,7 +65,8 @@ data SpanExc
     = SpanExc
         (AllOr RightSpaceExc) -- ^ Time span left  bound Exclusive. All == Inclusive -Inf
         (AllOr LeftSpaceExc)  -- ^ Time span right bound Exclusive. All == !Inclusive! Inf
-    deriving (Eq) -- NOT Ord
+    deriving stock (Eq, Generic) -- NOT Ord
+    deriving anyclass (Binary)
 
 instance Show SpanExc where
     show (SpanExc allOrR allOrL) = "SpanExc [" ++ rt  ++ " " ++ lt ++ "]"

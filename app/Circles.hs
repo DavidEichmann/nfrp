@@ -1,32 +1,44 @@
 {-# OPTIONS_GHC -Wno-unticked-promoted-constructors #-}
 
+{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE ExistentialQuantification #-}
-{-# LANGUAGE TypeInType #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE GADTs #-}
+{-# LANGUAGE TypeInType #-}
 
 module Main where
 
-import NFRP
-import GateRep
-import Graphics.Gloss.Interface.IO.Game hiding (Event)
-
-import Data.Map (Map)
+import           GHC.Generics (Generic)
+import           Graphics.Gloss.Interface.IO.Game hiding (Event)
+import           Data.Binary (Binary)
+import           Data.IORef
+import           Data.Map (Map)
 import qualified Data.Map as Map
-import Data.IORef
+
+import           GateRep
+import           NFRP
 
 data Node
     = Player1
     | Player2
-    deriving (Eq, Ord, Bounded, Enum)
+    deriving stock (Eq, Ord, Bounded, Enum, Generic)
+    deriving anyclass (Binary)
 
 data Game = Game
     { player1Pos :: Pos
@@ -35,7 +47,8 @@ data Game = Game
     deriving (Show)
 
 data InputDir = DirUp | DirRight | DirDown | DirLeft
-    deriving (Eq, Ord, Show, Read)
+    deriving stock (Eq, Ord, Show, Read, Generic)
+    deriving anyclass (Binary)
 
 createGame :: Map Node (Event InputDir) -> Behavior Game
 createGame inputs
@@ -58,12 +71,18 @@ main = do
     putStr "Choose Player (1/2): "
     myNode <-([minBound..maxBound] !!) <$> readLn
 
+    let localhost = "127.0.0.1"
+        addresses = Map.fromList
+            [ (Player1, (localhost, "9001"))
+            , (Player2, (localhost, "9002"))
+            ]
+
     --
     -- FRP
     --
 
     -- Inputs
-    (fireInput, inputs) <- sourceEvents myNode _
+    (fireInput, inputs) <- sourceEvents myNode addresses
     let gameB = createGame inputs
 
     --
