@@ -16,67 +16,71 @@
 module Main where
 
 import NFRP
-import Time
-import TimeSpan
--- import Simulate
-import Graphics.Gloss.Interface.IO.Game
+import GateRep
+import Graphics.Gloss.Interface.IO.Game hiding (Event)
 
--- import Data.Map as Map
-import Data.Time.Clock
+import Data.Map (Map)
+import qualified Data.Map as Map
 import Data.IORef
--- import Control.Monad (forM_)
--- import Control.Concurrent (threadDelay, forkIO)
+
+data Node
+    = Player1
+    | Player2
+    deriving (Eq, Ord, Bounded, Enum)
 
 data Game = Game
-    { playerPos :: Pos
+    { player1Pos :: Pos
+    , player2Pos :: Pos
     }
+    deriving (Show)
 
 data InputDir = DirUp | DirRight | DirDown | DirLeft
     deriving (Eq, Ord, Show, Read)
 
-main :: IO ()
-main = do
-    --
-    -- FRP
-    --
-
-    -- Inputs
-    (fireInput, inputE) <- sourceEvent
-
-    -- Game Logic
-    let playerPosB :: Behavior Pos
-        playerPosB = step (0, 0) ((\dir -> case dir of
+createGame :: Map Node (Event InputDir) -> Behavior Game
+createGame inputs
+    = Game
+        <$> inputEToPos (inputs Map.! Player1)
+        <*> inputEToPos (inputs Map.! Player2)
+    where
+    inputEToPos :: Event InputDir -> Behavior Pos
+    inputEToPos inputE = step (0, 0) ((\dir -> case dir of
                     DirLeft  -> (-delta,  0)
                     DirRight -> ( delta,  0)
                     DirUp    -> ( 0,  delta)
                     DirDown  -> ( 0, -delta)
                     ) <$> inputE)
-        delta = 100
+    delta = 100
+
+main :: IO ()
+main = do
+
+    putStr "Choose Player (1/2): "
+    myNode <-([minBound..maxBound] !!) <$> readLn
+
+    --
+    -- FRP
+    --
+
+    -- Inputs
+    (fireInput, inputs) <- sourceEvents myNode _
+    let gameB = createGame inputs
 
     --
     -- FRP -> IORef
     --
 
-    _ <- watchB playerPosB print
-    (_, playerPosIORef) <- watchLatestBIORef playerPosB
+    _ <- watchB gameB print
+    (_, gameIORef) <- watchLatestBIORef gameB
     let getGame = do
-            (_, playerPos') <- readIORef playerPosIORef
-            return (Game playerPos')
+            (_, game) <- readIORef gameIORef
+            return game
 
     --
     -- Game Loop
     --
 
-    gameStartTime <- getCurrentTime
-    let getGameTime = do
-            t <- getCurrentTime
-            let dt = t `diffUTCTime` gameStartTime
-                dtns = floor (1000000 * dt)
-            return dtns
-
     -- Initialize with no events up to time 0 (TODO this should be part of a higher lever API)
-    fireInput (listToEPartsExcInc Nothing (Just 0) [])
-    lastUpdateTimeIORef :: IORef Time <- newIORef 0
     playIO
         (InWindow "NFRP Demo" (500, 500) (100, 100))
         black
@@ -86,14 +90,12 @@ main = do
         (\ () -> do
             game <- getGame
             return $ Pictures
-                [ drawCharacter red (playerPos game)
+                [ drawCharacter red  (player1Pos game)
+                , drawCharacter blue (player2Pos game)
                 ]
         )
         -- Fire Input Events
         (\ event () -> do
-            t <- getGameTime
-            lastUpdateTime <- readIORef lastUpdateTimeIORef
-
             -- Get inputs.
             let inputsMay = case event of
                     EventKey (SpecialKey sk) Down _modifiers _mousePos
@@ -105,9 +107,7 @@ main = do
                             _        -> Nothing
                     _   -> Nothing
 
-            fireInput $ listToEPartsExcInc (Just lastUpdateTime) (Just t)
-                            [(t, inputs) | Just inputs <- [inputsMay]]
-            writeIORef lastUpdateTimeIORef t
+            fireInput $ inputsMay
         )
         (\ _dt () ->
             -- TODO step world... do we need to do this?

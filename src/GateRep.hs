@@ -31,11 +31,11 @@ import Control.Applicative
 import Control.Concurrent
 import Control.Concurrent.STM
 import qualified Control.Concurrent.Chan as C
-import Control.Monad (forever, forM, forM_)
+import Control.Monad (forever, forM_)
 import Data.Either (partitionEithers)
 import Data.IORef
-import Data.List (find, foldl', group, nub, partition, sort)
-import Data.Maybe (catMaybes, fromJust, fromMaybe, isJust, isNothing, mapMaybe)
+import Data.List (group, partition)
+import Data.Maybe (catMaybes, fromJust, fromMaybe, mapMaybe)
 import qualified Data.Map as M
 import qualified Data.Set as S
 import Test.QuickCheck hiding (once)

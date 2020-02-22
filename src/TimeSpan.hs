@@ -26,15 +26,8 @@
 
 module TimeSpan where
 
-import Control.Applicative
-import Control.Concurrent
-import Control.Concurrent.STM
-import qualified Control.Concurrent.Chan as C
-import Control.Monad (forever, forM)
-import Data.IORef
-import Data.List (find, foldl', group, nub, sort)
-import Data.Maybe (catMaybes, fromJust, fromMaybe, isJust)
-import qualified Data.Map as M
+import Data.List (group, sort)
+import Data.Maybe (isJust)
 import Test.QuickCheck hiding (once)
 
 import Time

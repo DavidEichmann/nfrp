@@ -34,11 +34,12 @@ module NFRP
 
 import Control.Monad.State
 -- import Unsafe.Coerce
--- import Data.IORef
+import Control.Concurrent.MVar
 import qualified Data.Map as Map
 import Data.Map (Map, delete)
 -- import Data.Maybe (mapMaybe)
 -- import qualified Data.Map as Map
+import Data.Time.Clock.System
 
 import Control.Monad (forM_)
 import Control.Concurrent (forkIO)
@@ -47,7 +48,7 @@ import Control.Concurrent (forkIO)
 -- import Circuit
 import GateRep
 -- import LiveCircuit
--- import Time
+import Time
 -- import TypeLevelStuff
 
 -- import Debug.Trace
@@ -61,15 +62,16 @@ import GateRep
 --
 -- TODO actual clock synchronization
 sourceEvents
-    :: (Eq node, Ord node, Bounded node, Enum node)
+    :: forall node input
+    .  (Eq node, Ord node, Bounded node, Enum node)
     => node
     -- ^ This node
     -> Map node () -- ???? TODO
     -- ^ Addresses of other nodes (Should be total though may exclude thisNode)
-    -> IO ( input -> IO ()
-          -- ^ Map from node to input events.
+    -> IO ( (Maybe input) -> IO ()
+          -- ^ Fire input event for this node (Or nothing to indicate a lack of events).
           , Map node (Event input)
-          -- ^ Fire input event for this node.
+          -- ^ Map from node to input events.
           )
 sourceEvents thisNode addresses = do
     -- Create source events for all nodes including this node.
@@ -79,23 +81,36 @@ sourceEvents thisNode addresses = do
     -- Connect to other nodes asynchronously and fire source events accordingly.
     let otherNodeAddresses = delete thisNode addresses
     forM_ otherNodeAddresses $ \ _ -> forkIO $ do
+        _TODO
         return ()
 
     -- TODO Clock Sync
 
-    -- Initialize this node's event with no events till current time.
+    -- Initialize this node's event with no events till time 0.
+    let (fireRaw, _) = sourceEs Map.! thisNode
+    localStartTime <- currentIntegerTime
+    fireRaw (listToEPartsExcInc Nothing (Just localStartTime) [])
 
     -- Create fire event function based on current time.
-    let (fireRaw, thisNodeE) = sourceEs Map.! thisNode
+    lastFireTimeMVar <- newMVar localStartTime
+    let fire :: Maybe input -> IO ()
+        fire inputM = modifyMVar_ lastFireTimeMVar $ \ lastFireTime -> do
+            t <- currentIntegerTime
+            fireRaw $ listToEPartsExcInc
+                        (Just lastFireTime)
+                        (Just t)
+                        [(t, input) | Just input <- [inputM]]
+            return t
 
-        fire :: input -> IO ()
-        fire = _
+    return $ (fire, snd <$> sourceEs)
 
 
-
-    return $ _ (fire, thisNodeE)
-
-
+currentIntegerTime :: IO Time
+currentIntegerTime = do
+    MkSystemTime s ns <- getSystemTime
+    let si  = fromIntegral s
+        nsi = fromIntegral ns
+    return (si * (10^(9 :: Int)) + nsi)
 {-
 
 # Delays
