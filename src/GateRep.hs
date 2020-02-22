@@ -573,8 +573,18 @@ updatesToEvent' updates = (Event occs, errCases)
     --                 ++ "span must start on an Or, but got: difference (" ++ show spanOut ++ ") ("
     --                 ++ show spanIn ++ ") == " ++ show (difference spanOut spanIn)
 
+watchChanges :: Changes a -> (ChangesPart a -> IO ()) -> IO ThreadId
+watchChanges changesTop callback = forkIO $ do
+    let go tspan NoChanges = callback (ChangesPart_NoChange tspan)
+        go tspan (Changes left t at atx right) = do
+            callback (ChangesPart_Change t at atx)
+            let (lspan, rspan) = splitSpanExcAtErr tspan t
+            _ <- forkIO $ go lspan left
+            go rspan right
+    go allT changesTop
+
 watchE :: Event a -> (EventPart a -> IO ()) -> IO ThreadId
-watchE = _
+watchE (Event cs) = watchChanges cs
 
 -- | Watch a Behavior, sening data to a callback as they are evaluated.
 -- A dedicated thread is created that will run the callback.
@@ -653,18 +663,9 @@ behaviorToChan
 behaviorToChan btop = do
     updatesChan <- newChan
     tid <- forkIO $ do
-        _ <- forkIO $ case btop of
-                Behavior a _ -> writeChan updatesChan (BehaviorPart_Init a)
-        _ <- forkIO $ do
-            let go :: SpanExc -> Changes a -> IO ()
-                go tspan NoChanges = writeChan updatesChan (BehaviorPart_ChangesPart (ChangesPart_NoChange tspan))
-                go tspan (Changes left t at atx right) = do
-                    writeChan updatesChan (BehaviorPart_ChangesPart (ChangesPart_Change t at atx))
-                    let (lspan, rspan) = splitSpanExcAtErr tspan t
-                    _ <- forkIO $ go lspan left
-                    go rspan right
-            let Behavior _ cs = btop
-            go allT cs
+        let Behavior a cs = btop
+        _ <- forkIO $ case a of !a' -> writeChan updatesChan (BehaviorPart_Init a')
+        _ <- watchChanges cs (writeChan updatesChan . BehaviorPart_ChangesPart)
         return ()
     return (tid, updatesChan)
 

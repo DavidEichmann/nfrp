@@ -11,14 +11,10 @@ import Test.Tasty.QuickCheck
 
 import Control.Monad (when)
 import Data.Maybe (isJust, isNothing)
--- import Data.Serialize (Serialize)
--- import Data.Dynamic
--- import qualified Data.Map as M
--- import GHC.Generics (Generic)
--- import qualified Data.Time as Time
 import qualified System.Timeout as Sys
 
 import NFRP
+import GateRep
 import Time
 import TimeSpan
 

@@ -37,7 +37,7 @@ import           NFRP
 data Node
     = Player1
     | Player2
-    deriving stock (Eq, Ord, Bounded, Enum, Generic)
+    deriving stock (Eq, Ord, Show, Bounded, Enum, Generic)
     deriving anyclass (Binary)
 
 data Game = Game
@@ -67,9 +67,11 @@ createGame inputs
 
 main :: IO ()
 main = do
-
-    putStr "Choose Player (1/2): "
-    myNode <-([minBound..maxBound] !!) <$> readLn
+    putStrLn "Choose Player (1/2):"
+    myNodeIx <- subtract 1 <$> readLn
+    let myNode = [minBound..maxBound] !! myNodeIx
+    putStrLn $ "You've chosen: " ++ show myNode
+    let windowPos = (10 + (myNodeIx * 510),10)
 
     let localhost = "127.0.0.1"
         addresses = Map.fromList
@@ -89,7 +91,7 @@ main = do
     -- FRP -> IORef
     --
 
-    _ <- watchB gameB print
+    -- _ <- watchB gameB print
     (_, gameIORef) <- watchLatestBIORef gameB
     let getGame = do
             (_, game) <- readIORef gameIORef
@@ -101,7 +103,7 @@ main = do
 
     -- Initialize with no events up to time 0 (TODO this should be part of a higher lever API)
     playIO
-        (InWindow "NFRP Demo" (500, 500) (100, 100))
+        (InWindow "NFRP Demo" (500, 500) windowPos)
         black
         60
         ()
@@ -125,7 +127,6 @@ main = do
                             KeyLeft  -> Just DirLeft
                             _        -> Nothing
                     _   -> Nothing
-
             fireInput $ inputsMay
         )
         (\ _dt () ->

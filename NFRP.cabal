@@ -67,15 +67,17 @@ executable Circles
     ghc-options: -Wall -threaded -rtsopts -with-rtsopts=-N
     build-depends:
         base ==4.11.1.0,
-        containers >=0.5.9,
         async -any,
+        binary -any,
+        containers >=0.5.9,
+        gloss -any,
+        gtk3 -any,
+        ncurses -any,
         network -any,
         NFRP -any,
         safe -any,
-        gtk3 -any,
-        time == 1.8.0.2,
-        ncurses -any,
-        gloss -any
+        time == 1.8.0.2
+
 
 test-suite NFRP-test
     type: exitcode-stdio-1.0
