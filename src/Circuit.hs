@@ -19,7 +19,7 @@
 {-# LANGUAGE GADTs #-}
 
 module Circuit where
-
+{-
 import Control.Monad.State
 import Unsafe.Coerce
 import Data.Kind
@@ -396,3 +396,5 @@ buildCircuit builder
     where
         (out, MomentState nextVIx gates gateIxs edges ls) = runState builder (MomentState 0 Map.empty Map.empty [] [])
         graph = Graph.buildG (0, nextVIx - 1) edges
+
+-}

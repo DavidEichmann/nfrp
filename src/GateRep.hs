@@ -35,10 +35,11 @@ import           Control.Applicative
 import           Control.Concurrent
 import           Control.Concurrent.STM
 import qualified Control.Concurrent.Chan as C
+import           Control.DeepSeq
 import           Control.Monad (forever, forM_)
 import           Data.Either (partitionEithers)
 import           Data.IORef
-import           Data.List (group, partition)
+import           Data.List (group, intercalate, partition)
 import           Data.Maybe (catMaybes, fromJust, fromMaybe, mapMaybe)
 import qualified Data.Map as M
 import qualified Data.Set as S
@@ -216,7 +217,7 @@ lookupB t (Behavior aInitTop cs) = go aInitTop cs
 -- | Event occurence
 data Occ a = NoOcc | Occ a
     deriving stock (Eq, Show, Functor, Generic)
-    deriving anyclass (Binary)
+    deriving anyclass (Binary, NFData)
 
 newtype Event a = Event { unEvent :: Changes (Occ a) }
     deriving (Show, Functor)
@@ -414,14 +415,14 @@ sourceEvent = do
                         let lo = fst (spanExcBoundaries tspan)
                             prevSpanMay = snd <$> M.lookupLE lo knownSpans
                             nextSpanMay = snd <$> M.lookupGE lo knownSpans
-                            overlapStr s = "(existing, new) = " ++ show s
+                            overlapStr s = "new " ++ show tspan ++ " intersects old " ++ show s
                         in if maybe False (`intersects` tspan) prevSpanMay
                             then Just (overlapStr (fromJust prevSpanMay))
                             else if maybe False (`intersects` tspan) nextSpanMay
                                 then Just (overlapStr (fromJust nextSpanMay))
                                 else Nothing
                     findOverlap (ChangesPart_Change t _ _) = if S.member t knownTimes
-                            then Just (show $ "existing = new = " ++ show t) else Nothing
+                            then Just ("existing = new = " ++ show t) else Nothing
                 case mapMaybe findOverlap parts of
                     [] -> do
                         forM_ parts $ \ part -> case part of
@@ -432,7 +433,7 @@ sourceEvent = do
                             ChangesPart_Change t _ _ ->
                                 modifyTVar knowlageCoverTVar (\(m, s) -> (m, S.insert t s))
                         return Nothing
-                    xs -> return . Just $ "Source Event: update overlaps existing knowlage: " ++ unwords xs
+                    xs -> return . Just $ "Source Event: update overlaps existing knowlage: " ++ intercalate " AND " xs
 
             case hasOverlapMay of
                 Just err -> fail err
@@ -573,24 +574,27 @@ updatesToEvent' updates = (Event occs, errCases)
     --                 ++ "span must start on an Or, but got: difference (" ++ show spanOut ++ ") ("
     --                 ++ show spanIn ++ ") == " ++ show (difference spanOut spanIn)
 
-watchChanges :: Changes a -> (ChangesPart a -> IO ()) -> IO ThreadId
+watchChanges :: NFData a => Changes a -> (ChangesPart a -> IO ()) -> IO ThreadId
 watchChanges changesTop callback = forkIO $ do
     let go tspan NoChanges = callback (ChangesPart_NoChange tspan)
-        go tspan (Changes left t at atx right) = do
-            callback (ChangesPart_Change t at atx)
+        go tspan (Changes left !t at atx right) = do
+            _ <- forkIO $
+                (t, at, atx) `deepseq`
+                callback (ChangesPart_Change t at atx)
             let (lspan, rspan) = splitSpanExcAtErr tspan t
             _ <- forkIO $ go lspan left
             go rspan right
     go allT changesTop
 
-watchE :: Event a -> (EventPart a -> IO ()) -> IO ThreadId
+watchE :: NFData a => Event a -> (EventPart a -> IO ()) -> IO ThreadId
 watchE (Event cs) = watchChanges cs
 
 -- | Watch a Behavior, sening data to a callback as they are evaluated.
 -- A dedicated thread is created that will run the callback.
 watchB
     :: forall a
-    .  Behavior a
+    .  NFData a
+    => Behavior a
     -> (BehaviorPart a -> IO ())
     -- ^ IO function to call with partial behavior value.
     -- Will always be called on it's own thread and possibly concurrently.
@@ -606,7 +610,7 @@ watchB btop notifyPart = forkIO $ do
 -- TODO because we don't have a value attached to BehaviorPart_NoChange we can't
 -- send updates for the same a but with a more up to date time. So you only get
 -- latest *change* time at the moment.
-watchLatestB :: Behavior a -> ((TimeX, a) -> IO ()) -> IO ThreadId
+watchLatestB :: NFData a => Behavior a -> ((TimeX, a) -> IO ()) -> IO ThreadId
 watchLatestB b callback = forkIO $ do
     (_, chan) <- behaviorToChan b
     -- do forever
@@ -634,7 +638,7 @@ watchLatestB b callback = forkIO $ do
 
 -- TODO move to NFRP higher level api (because we assume X_NegInf is full)
 -- | Note the initial value is the value at X_NegInf. Ensure this exists!
-watchLatestBIORef :: Behavior a -> IO (ThreadId, IORef (TimeX, a))
+watchLatestBIORef :: NFData a => Behavior a -> IO (ThreadId, IORef (TimeX, a))
 watchLatestBIORef b@(Behavior aInit _) = do
     ref <- newIORef (X_NegInf, aInit)
     tid <- watchLatestB b (writeIORef ref)
@@ -655,7 +659,8 @@ data BehaviorPart a
 
 behaviorToChan
     :: forall a
-    .  Behavior a
+    .  NFData a
+    => Behavior a
     -- ^ IO function to call with partial behavior value.
     -- Will always be called on it's own thread and possibly concurrently.
     -- Note the value is lazy but the times are strict

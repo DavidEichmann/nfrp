@@ -34,6 +34,7 @@ module NFRP
 import           Control.Concurrent (forkIO)
 import           Control.Concurrent.Chan
 import           Control.Concurrent.MVar
+import           Control.DeepSeq
 import           Control.Monad (forM_)
 import           Control.Monad.State
 import           Data.Binary (Binary, encode, decode)
@@ -57,7 +58,10 @@ import           Time
 -- TODO actual clock synchronization
 sourceEvents
     :: forall node input
-    .  (Eq node, Ord node, Bounded node, Enum node, Binary node, Binary input)
+    .  ( Eq node, Ord node, Bounded node, Enum node
+       , Binary node, Binary input
+       , NFData input
+       )
     => node
     -- ^ This node
     -> Map node (String, String)

@@ -78,6 +78,25 @@ tests = testGroup "lcTransaction"
         lookupB 20 b @=? "b"
         lookupB 21 b @=? "c"
     ]
+
+    , testCase "instance Applicative Behavior" $ do
+        let a = listToB ("0"++) [(1,("1"++)),        (3,("3"++))        ]
+            b = listToB "a"     [            (2,"b"),            (4,"c")]
+            c = a <*> b
+        lookupB (-1)      c @?= "0a"
+        lookupB 1         c @?= "0a"
+        lookupB (delay 1) c @?= "1a"
+        lookupB 2         c @?= "1a"
+        lookupB (delay 2) c @?= "1b"
+        lookupB 3         c @?= "1b"
+        lookupB (delay 3) c @?= "3b"
+        lookupB 4         c @?= "3b"
+        lookupB (delay 4) c @?= "3c"
+        lookupB 5         c @?= "3c"
+
+    , testProperty "instance Applicative Behavior fully evaluate" $ \ (a :: Behavior Int) b ->
+        alwaysB (\x -> x == 0 || x /= 0) ((+) <$> a <*> b)
+
     , testGroup "Source Event"
         [ testCase "Full history case" $ timeout $ do
             (fire, e) <- sourceEvent
@@ -96,6 +115,36 @@ tests = testGroup "lcTransaction"
                   , (25, "f")
                   , (1000, "g")
                   ]
+
+        , testCase "instance Applicative Behavior lazy" $ timeout $ do
+            (fire1, e1) <- sourceEvent
+            (fire2, e2) <- sourceEvent
+            let b = (++) <$> step "a" e1 <*> step "1" e2
+
+            fire1 (listToEPartsExcInc  Nothing   (Just 0)  [])
+            fire2 (listToEPartsExcInc  Nothing   (Just 0)  [])
+            lookupB        0  b @?= "a1"
+            lookupB (delay 0) b @?= "a1"
+
+            fire1 (listToEPartsExcInc  (Just 0)  (Just 5)  [(1,"b")])
+            fire2 (listToEPartsExcInc  (Just 0)  (Just 5)  [(1,"2")])
+            lookupB        1  b @?= "a1"
+            lookupB (delay 1) b @?= "b2"
+
+            fire1 (listToEPartsExcInc  (Just 12) (Just 15) [(13,"d")])
+            fire2 (listToEPartsExcInc  (Just 12) (Just 15) [(13,"4")])
+            lookupB (delay 13) b @?= "d4"
+
+            fire1 (listToEPartsExcInc  (Just 5)  (Just 7)  [])
+            fire2 (listToEPartsExcInc  (Just 5)  (Just 9)  [(8,"3")])
+            fire1 (listToEPartsExcInc  (Just 7)  (Just 12) [(11,"c")])
+            fire2 (listToEPartsExcInc  (Just 9)  (Just 12) [])
+            lookupB        8   b @?= "b2"
+            lookupB (delay 8)  b @?= "b3"
+            lookupB        11  b @?= "b3"
+            lookupB (delay 11) b @?= "c3"
+            lookupB (delay 13) b @?= "d4"
+
         , testCase "step gives delayed knowlage lazy" $ timeout $ do
             (fire, e) <- sourceEvent
             let b = step "0" e

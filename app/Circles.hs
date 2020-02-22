@@ -24,12 +24,13 @@
 
 module Main where
 
-import           GHC.Generics (Generic)
-import           Graphics.Gloss.Interface.IO.Game hiding (Event)
+import           Control.DeepSeq
 import           Data.Binary (Binary)
 import           Data.IORef
 import           Data.Map (Map)
 import qualified Data.Map as Map
+import           GHC.Generics (Generic)
+import           Graphics.Gloss.Interface.IO.Game hiding (Event)
 
 import           GateRep
 import           NFRP
@@ -44,11 +45,12 @@ data Game = Game
     { player1Pos :: Pos
     , player2Pos :: Pos
     }
-    deriving (Show)
+    deriving stock (Show, Generic)
+    deriving anyclass (Binary, NFData)
 
 data InputDir = DirUp | DirRight | DirDown | DirLeft
     deriving stock (Eq, Ord, Show, Read, Generic)
-    deriving anyclass (Binary)
+    deriving anyclass (Binary, NFData)
 
 createGame :: Map Node (Event InputDir) -> Behavior Game
 createGame inputs
@@ -65,6 +67,21 @@ createGame inputs
                     ) <$> inputE)
     delta = 100
 
+createSourceEvents
+    :: (Binary input, NFData input)
+    => Node
+    -> IO ( Maybe input -> IO ()
+          , Map Node (Event input)
+          )
+createSourceEvents myNode = do
+    let localhost = "127.0.0.1"
+        addresses = Map.fromList
+            [ (Player1, (localhost, "9001"))
+            , (Player2, (localhost, "9002"))
+            ]
+    sourceEvents myNode addresses
+
+
 main :: IO ()
 main = do
     putStrLn "Choose Player (1/2):"
@@ -73,18 +90,12 @@ main = do
     putStrLn $ "You've chosen: " ++ show myNode
     let windowPos = (10 + (myNodeIx * 510),10)
 
-    let localhost = "127.0.0.1"
-        addresses = Map.fromList
-            [ (Player1, (localhost, "9001"))
-            , (Player2, (localhost, "9002"))
-            ]
-
     --
     -- FRP
     --
 
     -- Inputs
-    (fireInput, inputs) <- sourceEvents myNode addresses
+    (fireInput, inputs) <- createSourceEvents myNode
     let gameB = createGame inputs
 
     --
