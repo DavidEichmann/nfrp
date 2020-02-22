@@ -42,7 +42,6 @@ library
         safe -any,
         stm -any,
         time == 1.8.0.2,
-        transformers -any,
         vector -any
 
 

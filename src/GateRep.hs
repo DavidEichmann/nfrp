@@ -26,69 +26,6 @@
 {-# LANGUAGE UndecidableSuperClasses #-}
 
 module GateRep where
-    -- ( Behavior
-    -- , listToB
-    -- , listToBI
-
-    -- , Event
-    -- , Occ (..)
-    -- , listToE
-    -- , updatesToEvent
-    -- , updatesToEvent'
-    -- , eventToList
-    -- , never
-    -- , once
-
-    -- -- * Querying
-    -- , lookupB
-
-    -- -- * Combinators
-    -- , step
-    -- , stepI
-    -- , leftmost
-
-    -- -- * Partial Behviors/Events
-    -- , MaybeKnown (..)
-    -- , BehaviorPart
-    -- , EventPart
-    -- , listToEPart
-
-    -- -- * Time Spans (TODO move to Time module)
-    -- , Span
-    -- , spanIncExc
-    -- , endsOn
-
-    -- -- ** Convenient Span construction.
-    -- , allT
-    -- , spanToExc             -- ^ Usually use this AND
-    -- , spanFromInc           -- ^ Usually use this AND
-    -- , spanFromIncToExc      -- ^ Usually use this
-
-    -- , spanToInc
-    -- , spanFromExc
-    -- , spanFromExcToInc
-
-    -- , spanFromIncToInc
-    -- , spanFromExcToExc
-
-    -- -- * Span operations
-    -- , Intersect (..)
-    -- , Difference (..)
-
-    -- -- * Interfacing with the real world
-    -- , sourceEvent
-    -- , watchB
-    -- , watchLatestB
-    -- , watchLatestBIORef
-
-    -- -- Internal (Exposed for testing)
-    -- , LeftSpace
-    -- , RightSpace
-    -- , AllOr (..)
-
-    -- -- * Quick Check
-    -- , OrderedFullUpdates (..)
-    -- ) where
 
 import Control.Applicative
 import Control.Concurrent

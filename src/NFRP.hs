@@ -1,45 +1,47 @@
 {-# OPTIONS_GHC -Wno-unticked-promoted-constructors #-}
 {-# OPTIONS_GHC -Wno-partial-type-signatures #-}
 
-{-# LANGUAGE PartialTypeSignatures #-}
-{-# LANGUAGE UndecidableSuperClasses #-}
-{-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE ExistentialQuantification #-}
-{-# LANGUAGE TypeInType #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE PartialTypeSignatures #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeInType #-}
 
 module NFRP
-    (
-    -- -- Framework
-    --   actuate
+    ( Behavior
+    , Event
+    , never
+    , once
 
-    -- -- , SomeNode (..)
-    -- -- , ReifySomeNode (..)
+    -- * Combinators
+    , step
+    , stepI
+    -- , leftmost
 
-    -- , Sing (..)
-    -- , EventInjector
-    -- , injectEvent
-    -- , module Circuit
-    -- , module Time
-    module GateRep
+    -- * Interfacing with the real world
+    , sourceEvents
     ) where
 
--- import Control.Monad.State
+import Control.Monad.State
 -- import Unsafe.Coerce
 -- import Data.IORef
+import qualified Data.Map as Map
+import Data.Map (Map, delete)
 -- import Data.Maybe (mapMaybe)
 -- import qualified Data.Map as Map
 
--- import Control.Concurrent
+import Control.Monad (forM_)
+import Control.Concurrent (forkIO)
 -- import Control.Concurrent.Async
 
 -- import Circuit
@@ -51,14 +53,47 @@ import GateRep
 -- import Debug.Trace
 
 
+-- | Create homogenious event input events for all nodes in a network. The event for this node
+-- can be fired with the returned function. All other nodes' events are received via broadcast.
+--
+-- WARNING you should only do this once with inputs being all possible inputs. Doing this multiple
+-- times will create multiple time deomains!
+--
+-- TODO actual clock synchronization
+sourceEvents
+    :: (Eq node, Ord node, Bounded node, Enum node)
+    => node
+    -- ^ This node
+    -> Map node () -- ???? TODO
+    -- ^ Addresses of other nodes (Should be total though may exclude thisNode)
+    -> IO ( input -> IO ()
+          -- ^ Map from node to input events.
+          , Map node (Event input)
+          -- ^ Fire input event for this node.
+          )
+sourceEvents thisNode addresses = do
+    -- Create source events for all nodes including this node.
+    sourceEs :: Map node ([EventPart a] -> IO (), Event a)
+        <- Map.fromList <$> (forM [minBound..maxBound] $ \ node -> (node,) <$> sourceEvent)
+
+    -- Connect to other nodes asynchronously and fire source events accordingly.
+    let otherNodeAddresses = delete thisNode addresses
+    forM_ otherNodeAddresses $ \ _ -> forkIO $ do
+        return ()
+
+    -- TODO Clock Sync
+
+    -- Initialize this node's event with no events till current time.
+
+    -- Create fire event function based on current time.
+    let (fireRaw, thisNodeE) = sourceEs Map.! thisNode
+
+        fire :: input -> IO ()
+        fire = _
 
 
 
-
-
-
-
-
+    return $ _ (fire, thisNodeE)
 
 
 {-
