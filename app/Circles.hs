@@ -4,6 +4,7 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE ExistentialQuantification #-}
@@ -31,21 +32,33 @@ import           Data.Map (Map)
 import qualified Data.Map as Map
 import           GHC.Generics (Generic)
 import           Graphics.Gloss.Interface.IO.Game hiding (Event)
+import           System.Console.CmdArgs
 
 import           GateRep
 import           NFRP
 
+data CommandLineOpts = CommandLineOpts
+    { node :: Maybe Node
+    } deriving (Show, Data, Typeable)
+
+commandLineOpts :: CommandLineOpts
+commandLineOpts = CommandLineOpts
+    { node = def
+                &= help ("One of " ++ show [minBound..(maxBound :: Node)])
+                &= typ  ("NODE")
+    }
+
 data Node
     = Player1
     | Player2
-    deriving stock (Eq, Ord, Show, Bounded, Enum, Generic)
+    deriving stock (Eq, Ord, Show, Bounded, Enum, Data, Generic)
     deriving anyclass (Binary)
 
 data Game = Game
     { player1Pos :: Pos
     , player2Pos :: Pos
     }
-    deriving stock (Show, Generic)
+    deriving stock (Show, Read, Generic)
     deriving anyclass (Binary, NFData)
 
 data InputDir = DirUp | DirRight | DirDown | DirLeft
@@ -84,11 +97,20 @@ createSourceEvents myNode = do
 
 main :: IO ()
 main = do
-    putStrLn "Choose Player (1/2):"
-    myNodeIx <- subtract 1 <$> readLn
-    let myNode = [minBound..maxBound] !! myNodeIx
-    putStrLn $ "You've chosen: " ++ show myNode
-    let windowPos = (10 + (myNodeIx * 510),10)
+
+    -- Choose player
+    opts <- cmdArgs commandLineOpts
+    myNode <- case node opts of
+        Just n -> return n
+        Nothing -> do
+            putStrLn "Choose Player (1/2):"
+            myNodeIx <- subtract 1 <$> readLn
+            let myNode = [minBound..maxBound] !! myNodeIx
+            putStrLn $ "You've chosen: " ++ show myNode
+            return myNode
+
+    let myNodeIx = fromEnum myNode
+        windowPos = (10 + (myNodeIx * 510),10)
 
     --
     -- FRP

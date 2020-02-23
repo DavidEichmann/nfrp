@@ -70,6 +70,7 @@ executable Circles
         base ==4.11.1.0,
         async -any,
         binary -any,
+        cmdargs -any,
         containers >=0.5.9,
         deepseq -any,
         gloss -any,
