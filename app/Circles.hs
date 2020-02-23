@@ -45,7 +45,7 @@ commandLineOpts :: CommandLineOpts
 commandLineOpts = CommandLineOpts
     { node = def
                 &= help ("One of " ++ show [minBound..(maxBound :: Node)])
-                &= typ  ("NODE")
+                &= typ  "NODE"
     }
 
 data Node
