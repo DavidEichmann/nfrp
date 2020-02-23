@@ -14,7 +14,7 @@ import Data.Maybe (isJust, isNothing)
 import qualified System.Timeout as Sys
 
 import NFRP
-import GateRep
+import FRP
 import Time
 import TimeSpan
 
@@ -57,13 +57,13 @@ tests = testGroup "lcTransaction"
     , testProperty "listToE == eventToList" (\ (x :: Event Int) -> eventToList (listToE (eventToList x)) == eventToList x)
     , testCase "updatesToEvent lazyness" $ do
       let x = take 3 $ eventToList $ updatesToEvent $ concat
-                [ listToEPartsExcInc (Just 1) (Just 10)
+                [ listToPartialE (Just 1) (Just 10)
                     [ (2,"b")
                     , (10,"c")
                     ]
-                , listToEPartsExcInc (Just 0) (Just 1)
+                , listToPartialE (Just 0) (Just 1)
                     [ (1,"a") ]
-                , listToEPartsExcInc Nothing (Just 0) []
+                , listToPartialE Nothing (Just 0) []
                 , lazinessErr -- Simulate blocking IO that me must not evaluate.
                 ]
       x @?= [(1,"a"), (2,"b"), (10,"c")]
@@ -100,12 +100,12 @@ tests = testGroup "lcTransaction"
     , testGroup "Source Event"
         [ testCase "Full history case" $ timeout $ do
             (fire, e) <- sourceEvent
-            fire (listToEPartsExcInc  Nothing    (Just 4)  [(0,"a"), (4,"b")])
-            fire (listToEPartsExcInc  (Just 4)   (Just 6)  [])
-            fire (listToEPartsExcInc  (Just 6)   (Just 10) [(7,"c"), (10,"d")])
-            fire (listToEPartsExcInc  (Just 10)  (Just 22) [(11,"e")])
-            fire (listToEPartsExcInc  (Just 22)  (Just 90) [(25,"f")])
-            fire (listToEPartsExcInc  (Just 90)  Nothing   [(1000,"g")])
+            fire (listToPartialE  Nothing    (Just 4)  [(0,"a"), (4,"b")])
+            fire (listToPartialE  (Just 4)   (Just 6)  [])
+            fire (listToPartialE  (Just 6)   (Just 10) [(7,"c"), (10,"d")])
+            fire (listToPartialE  (Just 10)  (Just 22) [(11,"e")])
+            fire (listToPartialE  (Just 22)  (Just 90) [(25,"f")])
+            fire (listToPartialE  (Just 90)  Nothing   [(1000,"g")])
             eventToList e @?=
                   [ (0, "a")
                   , (4, "b")
@@ -121,24 +121,24 @@ tests = testGroup "lcTransaction"
             (fire2, e2) <- sourceEvent
             let b = (++) <$> step "a" e1 <*> step "1" e2
 
-            fire1 (listToEPartsExcInc  Nothing   (Just 0)  [])
-            fire2 (listToEPartsExcInc  Nothing   (Just 0)  [])
+            fire1 (listToPartialE  Nothing   (Just 0)  [])
+            fire2 (listToPartialE  Nothing   (Just 0)  [])
             lookupB        0  b @?= "a1"
             lookupB (delay 0) b @?= "a1"
 
-            fire1 (listToEPartsExcInc  (Just 0)  (Just 5)  [(1,"b")])
-            fire2 (listToEPartsExcInc  (Just 0)  (Just 5)  [(1,"2")])
+            fire1 (listToPartialE  (Just 0)  (Just 5)  [(1,"b")])
+            fire2 (listToPartialE  (Just 0)  (Just 5)  [(1,"2")])
             lookupB        1  b @?= "a1"
             lookupB (delay 1) b @?= "b2"
 
-            fire1 (listToEPartsExcInc  (Just 12) (Just 15) [(13,"d")])
-            fire2 (listToEPartsExcInc  (Just 12) (Just 15) [(13,"4")])
+            fire1 (listToPartialE  (Just 12) (Just 15) [(13,"d")])
+            fire2 (listToPartialE  (Just 12) (Just 15) [(13,"4")])
             lookupB (delay 13) b @?= "d4"
 
-            fire1 (listToEPartsExcInc  (Just 5)  (Just 7)  [])
-            fire2 (listToEPartsExcInc  (Just 5)  (Just 9)  [(8,"3")])
-            fire1 (listToEPartsExcInc  (Just 7)  (Just 12) [(11,"c")])
-            fire2 (listToEPartsExcInc  (Just 9)  (Just 12) [])
+            fire1 (listToPartialE  (Just 5)  (Just 7)  [])
+            fire2 (listToPartialE  (Just 5)  (Just 9)  [(8,"3")])
+            fire1 (listToPartialE  (Just 7)  (Just 12) [(11,"c")])
+            fire2 (listToPartialE  (Just 9)  (Just 12) [])
             lookupB        8   b @?= "b2"
             lookupB (delay 8)  b @?= "b3"
             lookupB        11  b @?= "b3"
@@ -148,13 +148,13 @@ tests = testGroup "lcTransaction"
         , testCase "step gives delayed knowlage lazy" $ timeout $ do
             (fire, e) <- sourceEvent
             let b = step "0" e
-            fire (listToEPartsExcInc Nothing (Just 4) [(0,"a"), (3,"b")])
+            fire (listToPartialE Nothing (Just 4) [(0,"a"), (3,"b")])
             lookupB 0 b @?= "0"
             lookupB (X_JustAfter 0) b @?= "a"
             lookupB 3 b @?= "a"
             lookupB (X_JustAfter 3) b @?= "b"
             lookupB 4 b @?= "b"
-            fire (listToEPartsExcInc (Just 4) (Just 5) [(5,"c")])
+            fire (listToPartialE (Just 4) (Just 5) [(5,"c")])
             lookupB (X_JustAfter 4) b @?= "b"
             lookupB 5 b @?= "b"
             lookupB (X_JustAfter 5) b @?= "c"

@@ -28,7 +28,41 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
 
-module GateRep where
+module FRP (
+    -- * Combinators
+      Behavior
+    , alwaysB
+
+    , Event
+    , never
+    , once
+    , step
+    , stepI
+
+    -- * Event Sources / Observing in IO
+    , sourceEvent
+    , listToPartialE
+    , watchE
+    , watchB
+    , watchLatestB
+    , watchLatestBIORef
+
+
+    -- * Convert to and from list.
+    , behaviourToList
+    , listToB
+    , listToBI
+    , eventToList
+    , listToE
+
+    -- * Iternal Stuff
+    , ChangesPart (..)
+    , EventPart
+    , BehaviorPart (..)
+    , updatesToEvent
+    , updatesToEvent'
+    , lookupB
+    ) where
 
 import           Data.Binary (Binary)
 import           Control.Applicative
@@ -89,11 +123,11 @@ instance Eq a => Eq (Behavior a) where
 alwaysB :: (a -> Bool) -> Behavior a -> Bool
 alwaysB f b = all f allVals
     where
-    (aInit, tas) = bToList b
+    (aInit, tas) = behaviourToList b
     allVals = aInit : (snd <$> tas)
 
-bToList :: Behavior a -> (a, [(TimeD, a)])
-bToList (Behavior a cs) = (a, go cs)
+behaviourToList :: Behavior a -> (a, [(TimeD, a)])
+behaviourToList (Behavior a cs) = (a, go cs)
     where
     go NoChanges = []
     go (Changes left t at atx right) = go left ++ catMaybes [(D_Exactly t,) <$> at, (D_JustAfter t,) <$> atx] ++ go right
@@ -291,37 +325,24 @@ stepI aInit (Event cs) = Behavior aInit (go cs)
             (Just (Occ a), Just NoOcc) -> Changes (go l) t (Just a) Nothing (go r)
             (Just NoOcc  , Just NoOcc) -> Changes (go l) t Nothing Nothing (go r)
 
-{-
--- | take the left most of simultaneous events
-leftmost :: [Event a] -> Event a
-leftmost es = foldl' const never es
-
---
--- Explicitly partial versions of Behavior/Event
---
-
-data MaybeKnown a = Unknown | Known a
-    deriving (Show)
-type BehaviorPart a = Behavior (MaybeKnown a)
-newtype EventPart a = EventPart { unEventPart :: BehaviorPart (Occ a) }
-    deriving (Show)
-
-behaviorPart :: Span -> a -> BehaviorPart a
-behaviorPart (Span All All) a = Value (Known a)
-behaviorPart (Span (Or (RightSpace lo)) (Or (LeftSpace hi))) a = Split (Value Unknown) lo (Split (Value $ Known a) hi (Value Unknown))
-behaviorPart (Span All (Or (LeftSpace hi))) a = Split (Value $ Known a) hi (Value Unknown)
-behaviorPart (Span (Or (RightSpace lo)) All) a = Split (Value Unknown) lo (Value $ Known a)
--}
-
 -- | Evaluates all event occurence times.
+-- Exclusive, Inclusive
 -- Errors if there are overlapping time spans, or any event occurrences appear outside of the span.
-listToEPartsExcInc :: forall a . Maybe Time -> Maybe Time -> [(Time, a)] -> [EventPart a]
-listToEPartsExcInc loMTop hiM xsTop
+listToPartialE
+    :: forall a
+    .  Maybe Time
+    -- ^ Start time of knowlage span (excluive). Nothing means -Infinity.
+    -> Maybe Time
+    -- ^ Start time of knowlage span (inclusive). Nothing means Infinity.
+    -> [(Time, a)]
+    -- ^ Event occurences within the knowlage span (times must be strictly increasing).
+    -> PartialEvent a
+listToPartialE loMTop hiM xsTop
     | not (all (uncurry (<)) (zip occTs (tail occTs)))
-        =  error $ "listToEPartsExcInc: time occurrences not strictly increasing: " ++ show occTs
+        =  error $ "listToPartialE: time occurrences not strictly increasing: " ++ show occTs
     | let tspan = spanExc loMTop hiM
     , not (all (\t -> tspan `contains` t || Just t == hiM) occTs)
-        =  error $ "listToEPartsExcInc: time occurrences not in range " ++ show (loMTop,hiM) ++ ": " ++ show occTs
+        =  error $ "listToPartialE: time occurrences not in range " ++ show (loMTop,hiM) ++ ": " ++ show occTs
     | otherwise = goNoChange loMTop xsTop
     where
     occTs = fst <$> xsTop
@@ -329,14 +350,14 @@ listToEPartsExcInc loMTop hiM xsTop
     goNoChange
         :: Maybe Time    -- ^ Start of NoChange exclusive (Nothing = -Inf)
         -> [(Time, a)]   -- ^ remaining event occs
-        -> [EventPart a] -- ^ parts spanning from current time (inclusive) to hiM (Inc)
+        -> PartialEvent a -- ^ parts spanning from current time (inclusive) to hiM (Inc)
     goNoChange loM [] = ChangesPart_NoChange (spanExc loM hiM) : goOcc []
     goNoChange loM xs@((t,_):_)
         = ChangesPart_NoChange (spanExc loM (Just t)) : goOcc xs
 
     goOcc
         :: [(Time, a)]   -- ^ remaining event occs (current time is first event time else hiM)
-        -> [EventPart a] -- ^ parts spanning from current time (inclusive) to hiM (Inc)
+        -> PartialEvent a -- ^ parts spanning from current time (inclusive) to hiM (Inc)
     goOcc [] = case hiM of
         Nothing -> []
         Just hi -> [ChangesPart_Change hi Nothing Nothing]
@@ -344,56 +365,9 @@ listToEPartsExcInc loMTop hiM xsTop
         then []
         else goNoChange (Just t) xs
 
-
-
-{-
-lookupMaxBPart :: forall a . BehaviorPart a -> Maybe (TimeX, a)
-lookupMaxBPart btop = go allT btop
-    where
-    go :: Span -> BehaviorPart a -> Maybe (TimeX, a)
-    go tspan (Value (Known a)) = Just (snd (spanToIncInc tspan), a)
-    go _     (Value Unknown  ) = Nothing
-    go tspan (Split l t r) = let (lspan, rspan) = splitSpanAtErr tspan t "lookupMaxBPart"
-                              in go rspan r <|> go lspan l
-
-unionBP :: BehaviorPart a -> BehaviorPart a -> BehaviorPart a
-unionBP aB bB =
-    ( \ a b -> case (a, b) of
-        (Unknown, _) -> b
-        (_, Unknown) -> a
-        (Known _, Known _) -> error "unionBP: Knowlage overlap"
-    ) <$> aB <*> bB
-
-knownSpansE :: EventPart a -> [(Span, Event a)]
-knownSpansE (EventPart b) = fmap Event <$> knownSpansB b
-
-knownSpansB :: BehaviorPart a -> [(Span, Behavior a)]
-knownSpansB btop = go allT btop
-    where
-    -- This is very similar to eventToList
-    go :: Span -> Behavior (MaybeKnown a) -> [(Span, Behavior a)]
-    go _     (Value Unknown) = []
-    go tspan (Value (Known a)) = [(tspan, Value a)]
-    go tspan (Split l t r) = let
-        (lspan, rspan) = splitSpanAtErr tspan t "knownSpansB"
-        spansL = go lspan l
-        spansR = go rspan r
-        in if null spansL
-            then spansR
-            else if null spansR
-                then spansL
-                else let
-                    (lastLSpan,lastLB) = last spansL
-                    (headRSpan,headRB) = head spansR
-                    in case lastLSpan `endsOn` headRSpan of
-                        Just (midSpan, midT) ->  init spansL ++ [(midSpan, Split lastLB midT headRB)] ++ tail spansR
-                        Nothing -> spansL ++ spansR
-
-
 --
 -- IO stuff
 --
--}
 
 chanToEvent :: Chan (EventPart a) -> IO (Event a)
 chanToEvent inputChan = do
@@ -407,7 +381,7 @@ chanToEvent inputChan = do
 
 sourceEvent
     :: forall a
-    .  IO ([EventPart a] -> IO ()
+    .  IO (PartialEvent a -> IO ()
           -- ^ Update the event
           , Event a
           )
@@ -417,7 +391,7 @@ sourceEvent = do
     knowlageCoverTVar <- newTVarIO ( M.empty  -- Map from known time tspan low (exclusive) to TimeSpanExc
                                    , S.empty  -- Set of know instants
                                    )
-    let updater :: [EventPart a] -> IO ()
+    let updater :: PartialEvent a -> IO ()
         updater parts = do
             -- TODO can we use updatesToEvent' and observe the returned overlapping values instead of tracking them here?
             -- Check for overlap with knowlage
@@ -457,12 +431,12 @@ sourceEvent = do
            , event
            )
 
-updatesToEvent :: [EventPart a] -> Event a
+updatesToEvent :: PartialEvent a -> Event a
 updatesToEvent = fst . updatesToEvent'
 
 updatesToEvent'
     :: forall a
-    .  [EventPart a]
+    .  PartialEvent a
     -> ( Event a            -- ^ The event.
        , [(SpanExc, EventPart a)]  -- ^ Event Parts that overlapped with previous event parts.
        )
@@ -472,9 +446,9 @@ updatesToEvent' updates = (Event occs, errCases)
 
     go :: SpanExc
        -- ^ span of the resulting changes.
-       -> [EventPart a]
+       -> PartialEvent a
        -- ^ Must all be in the span
-       -> (Changes (Occ a), [EventPart a], [(SpanExc, EventPart a)])
+       -> (Changes (Occ a), PartialEvent a, [(SpanExc, EventPart a)])
        -- ^ Final Changes for the span, unused (non-overlapping) parts, unused overlapping parts
        -- TODO Use diff lists
     go tspan allPs = case allPs of
@@ -535,7 +509,7 @@ updatesToEvent' updates = (Event occs, errCases)
       isInSpan s (ChangesPart_Change t _ _) = s `contains` t
       isInSpan s (ChangesPart_NoChange s')   = s `contains` s'
 
-      siphonChange :: Time -> [EventPart a] -> (Maybe (Occ a), Maybe (Occ a), [EventPart a], [(SpanExc, EventPart a)])
+      siphonChange :: Time -> PartialEvent a -> (Maybe (Occ a), Maybe (Occ a), PartialEvent a, [(SpanExc, EventPart a)])
       siphonChange t ps' = (at, atx, ps'', (\(p',_,_) -> (tspan, p')) <$> overlaps)
             where
             (at, atx, overlaps) = case siphoned of
@@ -547,44 +521,6 @@ updatesToEvent' updates = (Event occs, errCases)
                                 ChangesPart_Change t' at' atx' | t' == t -> Left (nextP, at', atx')
                                 _ -> Right nextP
                             | nextP <- ps' ]
-
-
-
-    -- updates' = [ ks
-    --             | update <- updates
-    --             , ks <- knownSpansE update
-    --             ]
-
-    -- -- returns beh and remaining events to process
-    -- go :: Span -> [(Span, Event a)] -> (Behavior (Occ a), [(Span, Event a)])
-    -- go tspan [] = error $ "updatesToEvent: missing data for time span: " ++ show tspan
-    -- go spanOut (x@(spanIn, (Event b)):xs)
-    --     | not (spanOut `contains` spanIn)
-    --         = let (b', xs') = go spanOut xs in (b', x:xs')
-    --     | otherwise = case (spanOut `difference` spanIn) of
-    --         (Nothing, Nothing) -> (b, xs)
-    --         (Nothing, Just rspan) -> case rspan of
-    --             Span (Or (RightSpace t)) _ -> let
-    --                 (rightB, xs') = go rspan xs
-    --                 in (Split b t rightB, xs')
-    --             _ -> diffErr
-    --         (Just lspan, Nothing) -> case lspan of
-    --             Span _ (Or (LeftSpace t)) -> let
-    --                 (leftB, xs') = go lspan xs
-    --                 in (Split leftB t b, xs')
-    --             _ -> diffErr
-    --         (Just lspan, Just rspan) -> case (lspan, rspan) of
-    --             (Span _ (Or (LeftSpace tlo)), Span (Or (RightSpace thi)) _)
-    --                 -> let
-    --                 -- Let the right branch process xs first (optimize for appending to the right).
-    --                 (rightB, xs') = go rspan xs
-    --                 (leftB, xs'') = go lspan xs'
-    --                 in (Split leftB tlo (Split b thi rightB), xs'')
-    --             (_,_) -> diffErr
-    --     where
-    --     diffErr = error $ "Impossibe! After a `difference` the left span must end on Or and the right"
-    --                 ++ "span must start on an Or, but got: difference (" ++ show spanOut ++ ") ("
-    --                 ++ show spanIn ++ ") == " ++ show (difference spanOut spanIn)
 
 watchChanges :: NFData a => Changes a -> (ChangesPart a -> IO ()) -> IO ThreadId
 watchChanges changesTop callback = forkIO $ do
@@ -657,6 +593,7 @@ watchLatestBIORef b@(Behavior aInit _) = do
     return (tid, ref)
 
 type EventPart a = ChangesPart (Occ a)
+type PartialEvent a = [EventPart a]
 
 data ChangesPart a
     = ChangesPart_Change Time (Maybe a) (Maybe a)
@@ -734,4 +671,4 @@ instance Arbitrary a => Arbitrary (OrderedFullEventParts a) where
         occTimes :: [Time] <- increasingListOf arbitrary
         vals :: [a] <- infiniteListOf arbitrary
         let occs = zip occTimes vals
-        return $ OrderedFullEventParts (listToEPartsExcInc Nothing Nothing occs)
+        return $ OrderedFullEventParts (listToPartialE Nothing Nothing occs)

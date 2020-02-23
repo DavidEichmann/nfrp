@@ -34,7 +34,7 @@ import           GHC.Generics (Generic)
 import           Graphics.Gloss.Interface.IO.Game hiding (Event)
 import qualified Graphics.Gloss.Interface.IO.Game as Gloss
 
-import           GateRep
+import           FRP
 
 data Player
     = Player1

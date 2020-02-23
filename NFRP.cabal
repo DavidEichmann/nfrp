@@ -14,12 +14,8 @@ extra-source-files:
 
 library
     exposed-modules:
-          Circuit
-        , GateRep
-        , HMap
-        , LiveCircuit
+          FRP
         , NFRP
-        , Simulate
         , Time
         , TimeSpan
     other-modules:

@@ -35,7 +35,6 @@ import           Data.Maybe (isJust)
 import           Graphics.Gloss.Interface.IO.Game hiding (Event)
 import           System.Console.CmdArgs
 
-import           GateRep
 import           NFRP
 
 import           Circles.Game
