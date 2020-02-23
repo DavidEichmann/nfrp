@@ -26,10 +26,12 @@
 module Main where
 
 import           Control.DeepSeq
+import           Control.Monad (when)
 import           Data.Binary (Binary)
 import           Data.IORef
 import           Data.Map (Map)
 import qualified Data.Map as Map
+import           Data.Maybe (isJust)
 import           GHC.Generics (Generic)
 import           Graphics.Gloss.Interface.IO.Game hiding (Event)
 import           System.Console.CmdArgs
@@ -160,7 +162,9 @@ main = do
                             KeyLeft  -> Just DirLeft
                             _        -> Nothing
                     _   -> Nothing
-            fireInput $ inputsMay
+
+            -- We let the "World Update" function below fire the Nothing case.
+            when (isJust inputsMay) (fireInput inputsMay)
         )
         -- Note we need to call fireInput here to make sure we keep other nodes
         -- up to date even when no input events are occuring.
