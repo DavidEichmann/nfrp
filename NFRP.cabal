@@ -66,6 +66,8 @@ executable Circles
     hs-source-dirs: app
     default-language: Haskell2010
     ghc-options: -fprof-auto -Wall -threaded
+    other-modules:
+        Circles.Game
     build-depends:
         base ==4.11.1.0,
         async -any,
