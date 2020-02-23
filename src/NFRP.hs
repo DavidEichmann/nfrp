@@ -23,7 +23,7 @@ module NFRP
     -- * Interfacing with the real world
     , sourceEvents
     ) where
-import           Control.Concurrent (forkIO)
+import           Control.Concurrent (forkIO, threadDelay)
 import           Control.Concurrent.Chan
 import           Control.Concurrent.MVar
 import           Control.DeepSeq
@@ -39,6 +39,7 @@ import           Network.Simple.TCP
 
 import           FRP
 import           Time
+import           ClockSync
 
 
 -- | Create homogenious event input events for all nodes in a network. The event for this node
@@ -90,14 +91,14 @@ sourceEvents thisNode addresses = do
     -- TODO Clock Sync
 
     -- Initialize this node's event with no events till time 0.
-    localStartTime <- currentIntegerTime
+    localStartTime <- getLocalTime
     fireLocalRaw (listToPartialE Nothing (Just localStartTime) [])
 
     -- Create fire event function based on current time.
     lastFireTimeMVar <- newMVar localStartTime
     let fireLocal :: Maybe input -> IO ()
         fireLocal inputM = modifyMVar_ lastFireTimeMVar $ \ lastFireTime -> do
-            t <- currentIntegerTime
+            t <- getLocalTime
             fireLocalRaw $ listToPartialE
                         (Just lastFireTime)
                         (Just t)
@@ -105,15 +106,6 @@ sourceEvents thisNode addresses = do
             return t
 
     return $ (fireLocal, snd <$> sourceEs)
-
--- | Get the current system time in nanoseconds
-currentIntegerTime :: IO Time
-currentIntegerTime = do
-    MkSystemTime s ns <- getSystemTime
-    let si  = fromIntegral s
-        nsi = fromIntegral ns
-    return (si * (10^(9 :: Int)) + nsi)
-
 
 -- | Accepts connections to and from all other nodes. forwards messages in the
 -- send chans to their corresponding nodes, and writes received messages to the
@@ -160,6 +152,9 @@ connectToOtherNodes thisNode addresses sendRecvChans = do
     where
     send' :: Binary a => Socket -> a -> IO ()
     send' socket a = do
+        -- TODO if you're gonna simulate netwrk delay here with `threadDelay`,
+        -- you'll need to suround this in forkIO, else you'll clog up the
+        -- message processing thread.
         let encodedA = encode a
             size :: Int64
             size = BSL.length encodedA
