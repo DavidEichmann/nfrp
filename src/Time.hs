@@ -38,16 +38,17 @@ module Time
     , (==.)
     ) where
 
+import Data.Int
 import Test.QuickCheck
 import System.Random
 
 -- EQSimple time
-type Time = Integer -- TODO Int64? nanoseconds?
+type Time = Int64 -- TODO Int64? nanoseconds?
 
 -- | Time with possible delay.
 data TimeD
-    = D_Exactly Time
-    | D_JustAfter Time
+    = D_Exactly   {-# UNPACK #-} !Time
+    | D_JustAfter {-# UNPACK #-} !Time
     deriving (Eq)
 
 instance Show TimeD where
@@ -68,16 +69,16 @@ instance Ord TimeD where
 
 -- | Time with possible delay and possibly infinity.
 data TimeDI
-    = DI_Exactly Time
-    | DI_JustAfter Time
+    = DI_Exactly   {-# UNPACK #-} !Time
+    | DI_JustAfter {-# UNPACK #-} !Time
     | DI_Inf
     deriving (Show, Eq)
 
 data TimeX
     = X_NegInf
-    | X_JustBefore Time
-    | X_Exactly Time
-    | X_JustAfter Time
+    | X_JustBefore {-# UNPACK #-} !Time
+    | X_Exactly    {-# UNPACK #-} !Time
+    | X_JustAfter  {-# UNPACK #-} !Time
     | X_Inf
     deriving (Show, Eq)
 
@@ -269,7 +270,7 @@ instance Num TimeD where
     abs (D_JustAfter a) = (D_JustAfter (abs a))
     signum (D_Exactly a) = D_Exactly (signum a)
     signum (D_JustAfter a) = D_Exactly (signum a)
-    fromInteger = D_Exactly
+    fromInteger = D_Exactly . fromInteger
 
     negate (D_Exactly a) = (D_Exactly (negate a))
     negate justAfter = error $ "Num TimeD: Can't negate " ++ show justAfter
@@ -286,7 +287,7 @@ instance Num TimeDI where
     abs (DI_JustAfter a) = (DI_JustAfter (abs a))
     abs DI_Inf = DI_Inf
     signum = error "TODO instance Num TimeDI signum"
-    fromInteger = DI_Exactly
+    fromInteger = DI_Exactly . fromInteger
     negate = error "TODO instance Num TimeDI negate"
 
 instance Num TimeX where
@@ -324,7 +325,7 @@ instance Num TimeX where
     signum (X_JustAfter a)  = X_Exactly (signum a)
     signum X_Inf = 1
 
-    fromInteger = X_Exactly
+    fromInteger = X_Exactly . fromInteger
 
     negate X_NegInf = X_Inf
     negate (X_JustBefore a) = X_JustAfter (-a)

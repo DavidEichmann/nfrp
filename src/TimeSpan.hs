@@ -39,7 +39,7 @@ import Time
 
 data AllOr a
     = All   -- ^ All of time [-Inf, Inf]
-    | Or a  -- ^ Just that a.
+    | Or !a  -- ^ Just that a.
     deriving stock (Show, Generic) -- NOT Ord
     deriving anyclass (Binary)
 
@@ -63,8 +63,8 @@ deriving instance Eq (AllOr RightSpaceExc)
 -- Non empty
 data SpanExc
     = SpanExc
-        (AllOr RightSpaceExc) -- ^ Time span left  bound Exclusive. All == Inclusive -Inf
-        (AllOr LeftSpaceExc)  -- ^ Time span right bound Exclusive. All == !Inclusive! Inf
+        !(AllOr RightSpaceExc) -- ^ Time span left  bound Exclusive. All == Inclusive -Inf
+        !(AllOr LeftSpaceExc)  -- ^ Time span right bound Exclusive. All == !Inclusive! Inf
     deriving stock (Eq, Generic) -- NOT Ord
     deriving anyclass (Binary)
 

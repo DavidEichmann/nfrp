@@ -2,3 +2,9 @@
 dist
 dist-newstyle
 stack.yaml.lock
+*.aux
+*.hp
+*.pdf
+*.prof
+*.prof.html
+*.ps

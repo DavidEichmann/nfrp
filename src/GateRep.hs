@@ -76,9 +76,9 @@ data Changes a
     = NoChanges
     | Changes
         (Changes a)     -- ^ Values strictly before t.
-        Time             -- ^ Some t
-        (Maybe a)        -- ^ Possible change of value at (inluding) t.
-        (Maybe a)        -- ^ Possible change of value just after t.
+        {-# UNPACK #-} !Time             -- ^ Some t
+        !(Maybe a)        -- ^ Possible change of value at (inluding) t.
+        !(Maybe a)        -- ^ Possible change of value just after t.
         (Changes a)     -- ^ Value changes strictly after t.
     deriving stock (Functor, Show, Generic)
 
@@ -134,10 +134,22 @@ instance Applicative Behavior where
             fx = f x
             bcs = f <$> xcs'
             in (fx, bcs, f, xEnd, fromMaybe fx (changesFinalValue bcs))
-        -- TODO reduce xcs if possible here (i.e. if fspan is entirely to the left or right of the xcs split, then traverse xcs)
         go fspan
-            f     (Changes fl fSplitTime ft ftx fr)
+            f fcs@(Changes fl fSplitTime ft ftx fr)
             x xcs@(Changes xl xSplitTime xt xtx xr)
+
+            -- Traverse xcs if possible
+            | let xLeftSpace = LeftSpaceExc xSplitTime
+            , xLeftSpace `contains` fspan
+                = go fspan f fcs x xl
+            | let xRightSpace = RightSpaceExc xSplitTime
+            , xRightSpace `contains` fspan
+                = let
+                -- Unfortunate but true: when traversing right, we must also depend on (possibly)
+                -- xl, which may contain the latest x value.
+                x' = lookupB (X_JustAfter xSplitTime) (Behavior x xcs)
+                in go fspan f fcs x' xr
+
             | fSplitTime == xSplitTime = let
                 -- bt = fromMaybe (flEnd xlEnd) (($xlEnd) <$> ftx)
                 -- btx = ($x) <$> ftx
@@ -576,12 +588,12 @@ updatesToEvent' updates = (Event occs, errCases)
 
 watchChanges :: NFData a => Changes a -> (ChangesPart a -> IO ()) -> IO ThreadId
 watchChanges changesTop callback = forkIO $ do
-    let go tspan NoChanges = callback (ChangesPart_NoChange tspan)
-        go tspan (Changes left !t at atx right) = do
+    let go !tspan NoChanges = callback (ChangesPart_NoChange tspan)
+        go !tspan (Changes left !t at atx right) = do
             _ <- forkIO $
                 (t, at, atx) `deepseq`
                 callback (ChangesPart_Change t at atx)
-            let (lspan, rspan) = splitSpanExcAtErr tspan t
+            let (!lspan, !rspan) = splitSpanExcAtErr tspan t
             _ <- forkIO $ go lspan left
             go rspan right
     go allT changesTop

@@ -140,10 +140,9 @@ main = do
                     _   -> Nothing
             fireInput $ inputsMay
         )
-        (\ _dt () ->
-            -- TODO step world... do we need to do this?
-            return ()
-            )
+        -- Note we need to call fireInput here to make sure we keep other nodes
+        -- up to date even when no input events are occuring.
+        (\ _dt () -> fireInput Nothing)
 
 drawCharacter :: Color -> Pos -> Picture
 drawCharacter c (x, y) = Color c (translate x y (Circle 10))
