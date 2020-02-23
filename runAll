@@ -1,4 +1,7 @@
 #! /bin/bash
+
+set -e
+
 stack build
 stack exec -- Circles -n Player2 &
 sleep 1
