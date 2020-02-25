@@ -19,7 +19,7 @@
     * BONUS show projectile when you shoot
     * create a bot that very quickly flips between 2 spots
     * show that even with a lot of lag both nodes calculate the same score
-* [ ]
+* [ ] UDP!
 * [ ]
 * [ ]
 * [ ]

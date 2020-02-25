@@ -29,30 +29,20 @@
 {-# LANGUAGE UndecidableSuperClasses #-}
 
 module ClockSync
-    ( -- clockSyncServer
-    -- , clockSyncClient
-     getLocalTime
+    ( clockSyncServer
+    , clockSyncClient
+    , getLocalTime
     ) where
 
-import           Data.Binary (Binary)
-import           Control.Applicative
 import           Control.Concurrent
-import           Control.Concurrent.STM
+import           Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newEmptyMVar, putMVar)
 import qualified Control.Concurrent.Chan as C
-import           Control.DeepSeq
-import           Control.Monad (forever, forM_)
-import           Data.Either (partitionEithers)
-import           Data.IORef
-import           Data.List (group, intercalate, partition)
-import           Data.Maybe (catMaybes, fromJust, fromMaybe, mapMaybe)
-import qualified Data.Map as M
-import qualified Data.Set as S
+import           Control.Monad (forever)
+import           Data.Ratio
 import           Data.Time.Clock.System (SystemTime(..), getSystemTime)
-import           GHC.Generics (Generic)
 
 import FRP
 import Time
-import TimeSpan
 
 -- | This nodes's local system time.
 type LocalTime = Time
@@ -69,19 +59,70 @@ type Nonce = Int
 type EventT    timeDomain a = Event a
 type BehaviorT timeDomain a = Behavior a
 
--- clockSyncServer
---     :: _
---     -> IO (ThreadId, IO GlobalTime)
--- clockSyncServer = _
+-- | Approximate time in microseconds that clock sync request should be sent.
+clockSyncInterval :: Int
+clockSyncInterval = 10000000 -- 10 seconds
 
--- clockSyncClient
---     :: _
---     -> IO (ThreadId, IO GlobalTime)
---     -- ^ Return an IO action to get the current (clock synched) game time. Clock
---     -- synchronication will start immedietly, but the first call to get the game
---     -- time may block untill enough synchronization has been done. This will
---     -- continue to perform routine clock synchronization.
--- clockSyncClient = _
+clockSyncServer
+    :: Chan (LocalTime, GlobalTime)
+    -- ^ Chan used to send responses. Contains the client's local times (when
+    -- the request was sent), and this server's (global) time (when it received
+    -- the request).
+    -> Chan LocalTime
+    -- ^ Chan used to receive clock sync requests. Contains the client's local
+    -- time (when the resuest was sent).
+    -> IO (ThreadId, IO GlobalTime)
+    -- ^ ThreadId of the thread responding to clock sync requests and an IO
+    -- function to get the global time. Sine the server's local time is the
+    -- global time by definition, this is the same as getLocalTime.
+clockSyncServer send recv = do
+    threadId <- forkIO $ forever $ do
+        sendTimeLocal <- readChan recv
+        globalTime <- getLocalTime
+        writeChan send (sendTimeLocal, globalTime)
+    return (threadId, getLocalTime)
+
+clockSyncClient
+    :: Chan LocalTime
+    -- ^ Chan used to send clock sync request. Contains the client's local time
+    -- (when the resuest was sent).
+    -> Chan (LocalTime, GlobalTime)
+    -- ^ Chan used to receive responses. Contains the client's local times (when
+    -- the request was sent), and the server's (global) time (when it received
+    -- the request).
+    -> IO (ThreadId, IO GlobalTime)
+    -- ^ Return an IO action to get the current (clock synched) game time. Clock
+    -- synchronication will start immedietly, but the first call to get the game
+    -- time may block untill enough synchronization has been done. This will
+    -- continue to perform routine clock synchronization.
+clockSyncClient send recv = do
+    clockSyncMVar :: MVar ClockSynchronizer <- newEmptyMVar
+    -- TODO Swap to UDP this is particularly important for clock
+    -- synchronization! In that case we should account for dropped messages
+    -- here i.e. send more frequantly to begin with, then after a successful
+    -- sync, rever to the usual clockSyncInterval.
+    threadId <- do
+        -- Send
+        _ <- forkIO $ forever $ do
+            C.writeChan send =<< getLocalTime
+            threadDelay clockSyncInterval
+        -- Recv
+        do  -- Initial sync
+            (sendTimeLocal, timeGlobal) <- readChan recv
+            recvTimeLocal <- getLocalTime
+            let datum = SyncPoint sendTimeLocal timeGlobal recvTimeLocal
+            putMVar clockSyncMVar (mkClockSynchronizer datum)
+        forever $ do
+            (sendTimeLocal, timeGlobal) <- readChan recv
+            recvTimeLocal <- getLocalTime
+            let datum = SyncPoint sendTimeLocal timeGlobal recvTimeLocal
+            modifyMVar_ clockSyncMVar (return . updateClockSynchronizer datum)
+
+    let getGlobalTime = modifyMVar clockSyncMVar queryGlobalTime
+
+    return (threadId, getGlobalTime)
+
+
 
 -- offsetEstimatesToTimeDomainConverter :: EventT LocalTime GlobalTime -> TimeDomainConverter
 -- offsetEstimatesToTimeDomainConverter = _
@@ -98,34 +139,82 @@ getLocalTime = do
     return (si * (10^(9 :: Int)) + nsi)
 
 
--- data ClockSynchronizer
---     -- | Doing initial synchronization
---     = InitialSync
---     -- | Synchronized.
---     | Synched
---         { t0L :: LocalTime
---         -- ^ local time where we last synchronized
---         , t0GOld :: GlobalTime
---         -- ^ old estimated global time where we last synchronized
---         , t0GNew :: GlobalTime
---         -- ^ new estimated global time where we last synchronized
---         , driftRate :: (GlobalTime, LocalTime)
---         -- ^ Estimated drift rate (numerator,denominator):
---         --          localTimeDelta * driftRate = GlobalTimeDelta
---         -- driftRate > 0
---         , correctionDuration :: LocalTime
---         -- ^ Duration of time (after the last sync time) for which the clock
---         -- will be speed up / slowed down to correct for the the offset between
---         }
+data ClockSynchronizer = ClockSynchronizer
+    { latestPoint :: (LocalTime, GlobalTime)
+    -- ^ Last estimated local/global time.
+    , driftRate :: Rational
+    -- ^ Estimated drift rate (numerator,denominator):
+    --          localTimeDelta * driftRate = globalTimeDelta
+    -- driftRate > 0
+    , offset :: GlobalTime
+    -- ^ Estimated offset.
+    --          globalTime = (driftRate * localTime) + offset
+    , correctionPoint :: (GlobalTime, LocalTime)
+    -- ^ Point in time after a updateClockSynchronizer where we aim to get back
+    -- on track with the global time. Each component must be strictly greater
+    -- than latestPoint.
+    , initialPoint :: (LocalTime, GlobalTime)
+    -- ^ Initial point used for synchronization. All future corrections to
+    -- driftRate and offset will go through this point.
+    }
+
+-- | A single data point in synchronization
+data SyncPoint
+    = SyncPoint
+        LocalTime
+        -- ^ local time Sync request was sent.
+        GlobalTime
+        -- ^ global time received in response. We know the global time must
+        -- occur between the send and receive time.
+        LocalTime
+        -- ^ local time Sync request was sent.
+
+-- | Min slope during the correction phase localtime/globaltime
+minCorrectionRate :: Rational
+minCorrectionRate = 0.1
+
+correctionDuration :: Time
+correctionDuration = secondsToTime 1
+
+mkClockSynchronizer :: SyncPoint -> ClockSynchronizer
+mkClockSynchronizer (SyncPoint localTimeLo globalTimeMid localTimeHi)
+    = ClockSynchronizer
+        { latestPoint         = (estLocalTimeMid, globalTimeMid)
+        , driftRate           = 1
+        , offset              = globalTimeMid - estLocalTimeMid
+        , correctionPoint     = (estLocalTimeMid + 1, globalTimeMid + 1)
+        , initialPoint        = (estLocalTimeMid, globalTimeMid)
+        }
+    where
+    estLocalTimeMid = round $ (toRational localTimeLo + toRational localTimeHi) / 2
 
 
--- -- | A single data point in synchronization
--- data SynchPoint
---     = SyncPoint
---         LocalTime
---         -- ^ local time Sync request was sent.
---         GlobalTime
---         -- ^ global time received in response. We know the global time must
---         -- occur between the send and receive time.
---         LocalTime
---         -- ^ local time Sync request was sent.
+updateClockSynchronizer :: SyncPoint -> ClockSynchronizer -> ClockSynchronizer
+updateClockSynchronizer (SyncPoint localTimeLo globalTimeMid localTimeHi) cs
+    = ClockSynchronizer
+        { latestPoint         = latestPoint cs
+        , driftRate           = driftRate'
+        , offset              = offset'
+        , correctionPoint     = correctionPoint'
+        , initialPoint        = initialPoint cs
+        }
+    where
+    (l0, g0) = initialPoint cs
+    estLocalTimeMid = (toRational localTimeLo + toRational localTimeHi) / 2
+    driftRate' = (toRational globalTimeMid - toRational g0) / (estLocalTimeMid - toRational l0)
+    offset' = round $ toRational globalTimeMid - (driftRate' * estLocalTimeMid)
+    correctionPoint' = let
+        -- Each component must be strictly greater than latestPoint.
+        candidateG = queryGlobalTime' driftRate' offset' (fst (latestPoint cs) + correctionDuration)
+        candidateGR = toRational candidateG
+        candidateSlope = error "TODO updateClockSynchronizer"
+        in if candidateSlope < minCorrectionRate
+            then error "TODO updateClockSynchronizer"
+            else error "TODO updateClockSynchronizer"
+
+queryGlobalTime :: ClockSynchronizer -> IO (ClockSynchronizer, GlobalTime)
+queryGlobalTime = error "TODO queryGlobalTime"
+
+queryGlobalTime' :: Rational -> GlobalTime -> LocalTime -> GlobalTime
+queryGlobalTime' driftRate' offset' localTime
+    = round (driftRate' * toRational localTime) + offset'
