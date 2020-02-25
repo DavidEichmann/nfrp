@@ -41,6 +41,7 @@ import           Circles.Game
 
 data CommandLineOpts = CommandLineOpts
     { node :: Maybe Player
+    , latency :: Maybe Int
     } deriving (Show, Data, Typeable)
 
 commandLineOpts :: CommandLineOpts
@@ -48,25 +49,29 @@ commandLineOpts = CommandLineOpts
     { node = def
                 &= help ("One of " ++ show [minBound..(maxBound :: Player)])
                 &= typ  "NODE"
+    , latency = def
+                &= help ("Simulated latency in microseconds (10^-6 seconds)")
+                &= typ  "MICROSEC"
     }
 
 -- | Create source events for all players.
 createSourceEvents
     :: (Binary input, NFData input)
-    => Player
+    => NetworkSettings
+    -> Player
     -- ^ Current Player.
     -> IO ( Maybe input -> IO ()
             -- ^ Fire my input event.
           , Map Player (Event input)
             -- ^ Input events of all players (including my self).
           )
-createSourceEvents myNode = do
+createSourceEvents netSettings myNode = do
     let localhost = "127.0.0.1"
         addresses = Map.fromList
             [ (Player1, (localhost, "9001"))
             , (Player2, (localhost, "9002"))
             ]
-    sourceEvents myNode addresses
+    sourceEvents netSettings myNode addresses
 
 
 main :: IO ()
@@ -86,8 +91,11 @@ main = do
     let myNodeIx = fromEnum myNode
         windowPos = (10 + (myNodeIx * 510),10)
 
+    -- Simulated latency
+    let netSettings = maybe Default SimulateLatency (latency opts)
+
     -- Inputs
-    (fireInput, inputs) <- createSourceEvents myNode
+    (fireInput, inputs) <- createSourceEvents netSettings myNode
     let gameB = createGame inputs
 
     --

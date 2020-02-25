@@ -7,8 +7,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE RankNTypes #-}
@@ -21,6 +19,7 @@ module NFRP
     ( module FRP
 
     -- * Interfacing with the real world
+    , NetworkSettings (..)
     , sourceEvents
     ) where
 import           Control.Concurrent (forkIO, threadDelay)
@@ -34,13 +33,14 @@ import qualified Data.ByteString.Lazy as BSL
 import           Data.Int (Int64)
 import qualified Data.Map as Map
 import           Data.Map (Map, delete)
-import           Data.Time.Clock.System
 import           Network.Simple.TCP
 
 import           FRP
-import           Time
 import           ClockSync
 
+data NetworkSettings
+    = Default
+    | SimulateLatency Int -- ^ micro seconds
 
 -- | Create homogenious event input events for all nodes in a network. The event for this node
 -- can be fired with the returned function. All other nodes' events are received via broadcast.
@@ -55,7 +55,8 @@ sourceEvents
        , Binary node, Binary input
        , NFData input
        )
-    => node
+    => NetworkSettings
+    -> node
     -- ^ This node
     -> Map node (String, String)
     -- ^ (host, port) of nodes (Should be total including thisNode)
@@ -64,7 +65,7 @@ sourceEvents
           , Map node (Event input)
           -- ^ Map from node to input events.
           )
-sourceEvents thisNode addresses = do
+sourceEvents networkSettings thisNode addresses = do
     -- Create source events for all nodes including this node.
     sourceEs :: Map node ([EventPart a] -> IO (), Event a)
         <- Map.fromList <$> (forM [minBound..maxBound] $ \ node -> (node,) <$> sourceEvent)
@@ -86,7 +87,7 @@ sourceEvents thisNode addresses = do
             in forkIO $ forever (fireOther =<< readChan recvChan)
 
     -- Connect to other nodes asynchronously and hook up sendRecvChans.
-    connectToOtherNodes thisNode addresses sendRecvChans
+    connectToOtherNodes networkSettings thisNode addresses sendRecvChans
 
     -- TODO Clock Sync
 
@@ -112,14 +113,15 @@ sourceEvents thisNode addresses = do
 -- corresponding read chans.
 connectToOtherNodes
     :: (Eq node, Ord node, Bounded node, Binary node, Binary input)
-    => node
+    => NetworkSettings
+    -> node
     -- ^ This node
     -> Map node (String, String)
     -- ^ (host, port) Should be total including this node.
     -> Map node (Chan [EventPart input], Chan [EventPart input])
     -- ^ Send and receive Chans (Should be total excluding this node)
     -> IO ()
-connectToOtherNodes thisNode addresses sendRecvChans = do
+connectToOtherNodes networkSettings thisNode addresses sendRecvChans = do
 
     -- PROTOCOL:
     --
@@ -144,21 +146,23 @@ connectToOtherNodes thisNode addresses sendRecvChans = do
         return ()
 
     -- Connect to higher nodes (TCP client).
-    sequence_ $ flip Map.mapWithKey addresses $ \ otherNode (otherHost, otherPort) -> do
+    sequence_ $ flip Map.mapWithKey addresses $ \ otherNode (otherHost, otherPort) ->
         when (otherNode > thisNode) $ void $ forkIO $
             -- TODO retry (will this fail if server is not yet started?)
             connect otherHost otherPort onConnection
 
     where
+    enc a = let encodedA = encode a
+                size :: Int64
+                size = BSL.length encodedA
+            in encode size <> encodedA
     send' :: Binary a => Socket -> a -> IO ()
-    send' socket a = do
-        -- TODO if you're gonna simulate netwrk delay here with `threadDelay`,
-        -- you'll need to suround this in forkIO, else you'll clog up the
-        -- message processing thread.
-        let encodedA = encode a
-            size :: Int64
-            size = BSL.length encodedA
-        sendLazy socket (encode size <> encodedA)
+    send' = case networkSettings of
+        Default -> \socket a ->
+            sendLazy socket (enc a)
+        SimulateLatency l -> \socket a -> void $ forkIO $ do
+            threadDelay l
+            sendLazy socket (enc a)
 
     recv' :: Binary a => Socket -> IO a
     recv' socket = do

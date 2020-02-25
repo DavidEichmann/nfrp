@@ -3,6 +3,6 @@
 set -e
 
 stack build
-stack exec -- Circles -n Player2 &
+stack exec -- Circles -n Player2 $@ &
 sleep 1
-stack exec -- Circles -n Player1 &
+stack exec -- Circles -n Player1 $@ &
