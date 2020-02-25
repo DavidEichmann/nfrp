@@ -42,6 +42,7 @@ import           Circles.Game
 data CommandLineOpts = CommandLineOpts
     { node :: Maybe Player
     , latency :: Maybe Int
+    , bot :: Maybe Int
     } deriving (Show, Data, Typeable)
 
 commandLineOpts :: CommandLineOpts
@@ -51,6 +52,9 @@ commandLineOpts = CommandLineOpts
                 &= typ  "NODE"
     , latency = def
                 &= help ("Simulated latency in microseconds (10^-6 seconds)")
+                &= typ  "MICROSEC"
+    , bot = def
+                &= help ("Use a bot that moves every given microseconds")
                 &= typ  "MICROSEC"
     }
 
@@ -97,6 +101,13 @@ main = do
     -- Inputs
     (fireInput, inputs) <- createSourceEvents netSettings myNode
     let gameB = createGame inputs
+
+    -- Bot
+    case bot opts of
+        Nothing -> return ()
+        Just l -> do
+            _ <- runBot l fireInput
+            return ()
 
     --
     -- FRP -> IORef

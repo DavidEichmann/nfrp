@@ -1,0 +1,8 @@
+#! /bin/bash
+
+set -e
+
+stack build
+stack exec -- Circles -n Player2 -l 2000000 &
+sleep 1
+stack exec -- Circles -n Player1 -l 2000000 -b 10000 $@ &

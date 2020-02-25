@@ -25,7 +25,9 @@
 
 module Circles.Game where
 
+import           Control.Concurrent (ThreadId, forkIO, threadDelay)
 import           Control.DeepSeq
+import           Control.Monad (forever)
 import           Data.Binary (Binary)
 import           Data.Data
 import           Data.Map (Map)
@@ -97,3 +99,10 @@ drawGame (Game player1Pos' player2Pos')
     where
     drawCharacter :: Color -> Float -> Pos -> Picture
     drawCharacter c size (x, y) = Color c (translate x y (thickCircle size 6))
+
+runBot :: Int -> (Maybe Inputs -> IO ()) -> IO ThreadId
+runBot timeBetweenInputs fire = forkIO $ forever $ do
+    threadDelay timeBetweenInputs
+    fire (Just DirUp)
+    threadDelay timeBetweenInputs
+    fire (Just DirRight)
