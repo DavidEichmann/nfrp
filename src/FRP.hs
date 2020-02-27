@@ -59,6 +59,7 @@ module FRP (
     , ChangesPart (..)
     , EventPart
     , BehaviorPart (..)
+    , PartialEvent
     , updatesToEvent
     , updatesToEvent'
     , lookupB
