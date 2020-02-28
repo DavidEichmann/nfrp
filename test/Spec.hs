@@ -71,11 +71,14 @@ tests = testGroup "lcTransaction"
     , testCase "listToB" $ do
         let b = listToB "0" [(0,"a"), (10, "b"), (20, "c")]
         lookupB (-1) b @=? "0"
-        lookupB 0 b @=? "0"
+        lookupB (X_JustBefore 0) b @=? "0"
+        lookupB 0 b @=? "a"
         lookupB 1 b @=? "a"
-        lookupB 10 b @=? "a"
+        lookupB (X_JustBefore 10) b @=? "a"
+        lookupB 10 b @=? "b"
         lookupB 15 b @=? "b"
-        lookupB 20 b @=? "b"
+        lookupB (X_JustBefore 20) b @=? "b"
+        lookupB 20 b @=? "c"
         lookupB 21 b @=? "c"
     ]
 
@@ -84,13 +87,17 @@ tests = testGroup "lcTransaction"
             b = listToB "a"     [            (2,"b"),            (4,"c")]
             c = a <*> b
         lookupB (-1)      c @?= "0a"
-        lookupB 1         c @?= "0a"
+        lookupB (X_JustBefore 1) c @?= "0a"
+        lookupB 1         c @?= "1a"
         lookupB (delay 1) c @?= "1a"
-        lookupB 2         c @?= "1a"
+        lookupB (X_JustBefore 2) c @?= "1a"
+        lookupB 2         c @?= "1b"
         lookupB (delay 2) c @?= "1b"
-        lookupB 3         c @?= "1b"
+        lookupB (X_JustBefore 3) c @?= "1b"
+        lookupB 3         c @?= "3b"
         lookupB (delay 3) c @?= "3b"
-        lookupB 4         c @?= "3b"
+        lookupB (X_JustBefore 4) c @?= "3b"
+        lookupB 4         c @?= "3c"
         lookupB (delay 4) c @?= "3c"
         lookupB 5         c @?= "3c"
 
@@ -164,7 +171,7 @@ tests = testGroup "lcTransaction"
         , testProperty "Full history random, ordered by time." $ \ (OrderedFullEventParts (ups :: [EventPart Int])) -> ioProperty . timeout $ do
             (fire, e) <- sourceEvent
             mapM_ (\up -> fire [up]) ups
-            eventToList e @?= [(t, a) | ChangesPart_Change t (Just (Occ a)) (Just NoOcc) <- ups]
+            eventToList e @?= [(t, a) | EventPart_Event t (Just a) <- ups]
         ]
     ]
 

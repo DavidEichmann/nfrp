@@ -54,7 +54,6 @@ module DataFRP where
 -- we don't allow for delays or anything, we just always specify prev/current time.
 -- data changes when events happen
 
-
 {-
 
 type Event f a = Behaviour f (Occ a)

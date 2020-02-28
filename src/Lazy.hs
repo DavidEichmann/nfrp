@@ -98,6 +98,7 @@ tryEvaluate' (Lazy val eval canReEval) = do
                 return (Left checkCanReEval)
             Right finalVal -> do
                 putTMVar val finalVal
+                -- TODO clear lazyEval and lazyCanReEval for garbage collection
                 return (Right finalVal)
 
 hasValue :: Lazy a -> STM Bool
