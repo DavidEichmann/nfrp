@@ -15,8 +15,10 @@ extra-source-files:
 library
     exposed-modules:
           ClockSync
+        , DataFRP
         , FRP
         , NFRP
+        , Lazy
         , Time
         , TimeSpan
     hs-source-dirs: src
