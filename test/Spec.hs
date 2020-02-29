@@ -130,12 +130,13 @@ tests = testGroup "lcTransaction"
 
             fire1 (listToPartialE  Nothing   (Just 0)  [])
             fire2 (listToPartialE  Nothing   (Just 0)  [])
+            lookupB (X_JustBefore 0)  b @?= "a1"
             lookupB        0  b @?= "a1"
-            lookupB (delay 0) b @?= "a1"
 
             fire1 (listToPartialE  (Just 0)  (Just 5)  [(1,"b")])
             fire2 (listToPartialE  (Just 0)  (Just 5)  [(1,"2")])
-            lookupB        1  b @?= "a1"
+            lookupB (X_JustBefore 1)  b @?= "a1"
+            lookupB        1  b @?= "b2"
             lookupB (delay 1) b @?= "b2"
 
             fire1 (listToPartialE  (Just 12) (Just 15) [(13,"d")])
@@ -146,25 +147,27 @@ tests = testGroup "lcTransaction"
             fire2 (listToPartialE  (Just 5)  (Just 9)  [(8,"3")])
             fire1 (listToPartialE  (Just 7)  (Just 12) [(11,"c")])
             fire2 (listToPartialE  (Just 9)  (Just 12) [])
-            lookupB        8   b @?= "b2"
+            lookupB (X_JustBefore 8)  b @?= "b2"
+            lookupB        8   b @?= "b3"
             lookupB (delay 8)  b @?= "b3"
-            lookupB        11  b @?= "b3"
+            lookupB (X_JustBefore 11)  b @?= "b3"
+            lookupB        11  b @?= "c3"
             lookupB (delay 11) b @?= "c3"
-            lookupB (delay 13) b @?= "d4"
+            lookupB 13 b @?= "d4"
 
-        , testCase "step gives delayed knowlage lazy" $ timeout $ do
-            (fire, e) <- sourceEvent
-            let b = step "0" e
-            fire (listToPartialE Nothing (Just 4) [(0,"a"), (3,"b")])
-            lookupB 0 b @?= "0"
-            lookupB (X_JustAfter 0) b @?= "a"
-            lookupB 3 b @?= "a"
-            lookupB (X_JustAfter 3) b @?= "b"
-            lookupB 4 b @?= "b"
-            fire (listToPartialE (Just 4) (Just 5) [(5,"c")])
-            lookupB (X_JustAfter 4) b @?= "b"
-            lookupB 5 b @?= "b"
-            lookupB (X_JustAfter 5) b @?= "c"
+        -- , testCase "step gives delayed knowlage lazy" $ timeout $ do
+        --     (fire, e) <- sourceEvent
+        --     let b = step "0" e
+        --     fire (listToPartialE Nothing (Just 4) [(0,"a"), (3,"b")])
+        --     lookupB 0 b @?= "0"
+        --     lookupB (X_JustAfter 0) b @?= "a"
+        --     lookupB 3 b @?= "a"
+        --     lookupB (X_JustAfter 3) b @?= "b"
+        --     lookupB 4 b @?= "b"
+        --     fire (listToPartialE (Just 4) (Just 5) [(5,"c")])
+        --     lookupB (X_JustAfter 4) b @?= "b"
+        --     lookupB 5 b @?= "b"
+        --     lookupB (X_JustAfter 5) b @?= "c"
 
 
         -- This isn't terminating :-(
