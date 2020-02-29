@@ -19,6 +19,7 @@ library
         , FRP
         , NFRP
         , Lazy
+        , PureLazy
         , Time
         , TimeSpan
     hs-source-dirs: src
