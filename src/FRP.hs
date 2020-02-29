@@ -14,6 +14,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -73,6 +74,7 @@ import           Control.DeepSeq
 import           Control.Monad (forever, forM_)
 import           Data.Either (partitionEithers)
 import           Data.IORef
+import           Data.Int (Int64)
 import           Data.List (group, intercalate, partition)
 import           Data.Maybe (catMaybes, fromJust, fromMaybe, mapMaybe)
 import qualified Data.Map as M
@@ -83,27 +85,7 @@ import           Test.QuickCheck hiding (once)
 import Time
 import TimeSpan
 
--- data Event a
---     = CLazy (Lazy (B a))
---     | Change
---         (B a)   -- ^ changes before t
---         Time    -- ^ t
---         (Lazy (Maybe a))
---                 -- ^ new value
---         (B a)   -- ^ changes after t
---     | NoChange
-
--- data B a = B (Lazy a) (Event a)
--- newtype E a = E (Event a)
-
-
--- REFACTOR The problem is that you can represent things just after a ajust
--- after
---
---   Split (Value "a") (X_JustAfter 2) (Split (Value "b") (X_Exactly 2) (Value
---   "c"))
---
--- You can't represent the range of time that pplies to "b"! (X_JustAfter 2) is
+-- You can't represent the range of time that applies to "b"! (X_JustAfter 2) is
 -- NOT the correct start time if considered inclusive. It is the *exclusive*
 -- start time of "c", but that what is the value at (X_JustAfter 2)? It is it
 -- "a" or is it "b"? Both in a way!
@@ -115,8 +97,8 @@ import TimeSpan
 -- inclusive-inclusive min-max range of a value.
 
 -- | Represents values at all times from -Inf to Inf
--- A tree structure, but semanticaly is a list of `Time`s with possible changes happening at and just after that time.
--- Note on lazyness: the depth corresponds to order of knowlage, so parent nodes can always be evaluated before the child nodes.
+-- A tree structure, but semantically is a list of `Time`s with possible changes happening at and just after that time.
+-- Note on lazyness: the depth corresponds to order of knowledge, so parent nodes can always be evaluated before the child nodes.
 data Behavior a = Step a (Event a) -- ^ initial value and value changes
     deriving (Functor, Show)
 data Event a
@@ -307,11 +289,11 @@ step aInit cs = Step aInit cs
 listToPartialE
     :: forall a
     .  Maybe Time
-    -- ^ Start time of knowlage span (excluive). Nothing means -Infinity.
+    -- ^ Start time of knowledge span (excluive). Nothing means -Infinity.
     -> Maybe Time
-    -- ^ Start time of knowlage span (inclusive). Nothing means Infinity.
+    -- ^ Start time of knowledge span (inclusive). Nothing means Infinity.
     -> [(Time, a)]
-    -- ^ Event occurences within the knowlage span (times must be strictly increasing).
+    -- ^ Event occurences within the knowledge span (times must be strictly increasing).
     -> PartialEvent a
 listToPartialE loMTop hiM xsTop
     | not (all (uncurry (<)) (zip occTs (tail occTs)))
@@ -370,7 +352,7 @@ sourceEvent = do
     let updater :: PartialEvent a -> IO ()
         updater parts = do
             -- TODO can we use updatesToEvent' and observe the returned overlapping values instead of tracking them here?
-            -- Check for overlap with knowlage
+            -- Check for overlap with knowledge
             hasOverlapMay <- atomically $ do
                 (knownSpans, knownTimes) <- readTVar knowlageCoverTVar
                 let findOverlap (EventPart_NoEvent tspan) =
@@ -395,7 +377,7 @@ sourceEvent = do
                             EventPart_Event t _ ->
                                 modifyTVar knowlageCoverTVar (\(m, s) -> (m, S.insert t s))
                         return Nothing
-                    xs -> return . Just $ "Source Event: update overlaps existing knowlage: " ++ intercalate " AND " xs
+                    xs -> return . Just $ "Source Event: update overlaps existing knowledge: " ++ intercalate " AND " xs
 
             case hasOverlapMay of
                 Just err -> fail err
