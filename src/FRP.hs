@@ -154,10 +154,10 @@ instance Applicative Behavior where
         = let (bInit, bcs, _, _, _) = go allT fInitTop ftop aInitTop atop
            in Step bInit bcs
         where
-        go :: SpanExc               -- ^ Span of f
+        go :: SpanExc               -- ^ SpanIncExc of f
            -> (a -> b)              -- ^ `f` at the start of this span
            -> Event (a -> b)      -- ^ `f` changes within the span of f.
-        --    -> SpanExc               -- ^ Span of the `a` changes. Contains the span of f
+        --    -> SpanExc               -- ^ SpanIncExc of the `a` changes. Contains the span of f
            -> a                     -- ^ `a` at the start of the `a` span
            -> Event a             -- ^ `a` changes within the span of a.
            -> (b, Event b, (a->b), a, b)
@@ -229,8 +229,8 @@ listToB initA events = step initA (listToE events)
 
 {-
 
--- | Crop values, leaving the value at the edges of the Span to expand to infinity.
-cropOpen :: Span -> Behavior a -> Behavior a
+-- | Crop values, leaving the value at the edges of the SpanIncExc to expand to infinity.
+cropOpen :: SpanIncExc -> Behavior a -> Behavior a
 cropOpen _ v@(Value _) = v
 cropOpen tspan (Split left t right) = case splitSpanAt tspan t of
     (Nothing, Nothing) -> error "Impossible!"

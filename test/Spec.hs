@@ -33,20 +33,20 @@ tests = testGroup "lcTransaction"
     , testProperty "DI_JustAfter t == delay (DI_JustAfter t)"
       (\ t -> DI_JustAfter t == delay (DI_JustAfter t))
     ]
-  , testGroup "Span"
+  , testGroup "SpanIncExc"
     [ testProperty "spanIncExc"
         (\ loMay hiMay ->  let s = spanIncExc loMay hiMay in case (loMay, hiMay) of
               (Just lo, Just hi) -> lo < hi ==> s == s
               _ -> property (s == s)
         )
-    , testProperty "LeftSpace intersect with allT LeftSpace is self"
-        (\ (l :: LeftSpace) -> (All :: AllOr LeftSpace) `intersect` l == l)
-    , testProperty "RightSpace intersect with allT RightSpace is self"
-        (\ (l :: RightSpace) -> (All :: AllOr RightSpace) `intersect` l == l)
+    , testProperty "LeftSpaceExc intersect with allT LeftSpaceExc is self"
+        (\ (l :: LeftSpaceExc) -> (All :: AllOr LeftSpaceExc) `intersect` l == l)
+    , testProperty "RightSpaceExc intersect with allT RightSpaceExc is self"
+        (\ (l :: RightSpaceExc) -> (All :: AllOr RightSpaceExc) `intersect` l == l)
     , testProperty "span intersect self is self"
-        (\ (s :: Span) -> s `intersect` s == Just s)
+        (\ (s :: SpanIncExc) -> s `intersect` s == Just s)
     , testProperty "span diff span -> all endsOn eachother"
-        (\ (s1 :: Span) (s2 :: Span) -> case s1 `difference` s2 of
+        (\ (s1 :: SpanIncExc) (s2 :: SpanIncExc) -> case s1 `difference` s2 of
             (Just l, Just r) -> property (isJust (l `endsOn` s2) && isJust (s2 `endsOn` r))
             _ -> property Discard
         )

@@ -59,12 +59,35 @@ instance Show RightSpaceExc where
 deriving instance Eq (AllOr LeftSpaceExc)
 deriving instance Eq (AllOr RightSpaceExc)
 
--- [[ Span l r ]] = l `intersect` r
+
+-- Half spaces
+newtype LeftSpaceInc  = LeftSpaceInc  Time   -- ^ [[ LeftSpaceInc  t' ]] = { t | t <= t' }
+    deriving stock (Eq, Ord, Generic)
+    deriving anyclass (Binary)
+newtype RightSpaceInc = RightSpaceInc Time   -- ^ [[ RightSpaceInc t' ]] = { t | t >= t' }
+    deriving stock (Eq, Ord, Generic)
+    deriving anyclass (Binary)
+
+instance Show LeftSpaceInc where
+    show (LeftSpaceInc t) = "←" ++ show t ++ "●"
+instance Show RightSpaceInc where
+    show (RightSpaceInc t) = "●" ++ show t ++ "→"
+
+deriving instance Eq (AllOr LeftSpaceInc)
+deriving instance Eq (AllOr RightSpaceInc)
+
+-- [[ SpanIncExc l r ]] = l `intersect` r
 -- Non empty
 data SpanExc
     = SpanExc
         !(AllOr RightSpaceExc) -- ^ Time span left  bound Exclusive. All == Inclusive -Inf
         !(AllOr LeftSpaceExc)  -- ^ Time span right bound Exclusive. All == !Inclusive! Inf
+    deriving stock (Eq, Generic) -- NOT Ord
+    deriving anyclass (Binary)
+data SpanInc
+    = SpanInc
+        !(AllOr RightSpaceInc) -- ^ Time span left  bound Exclusive. All == Inclusive -Inf
+        !(AllOr LeftSpaceInc)  -- ^ Time span right bound Exclusive. All == !Inclusive! Inf
     deriving stock (Eq, Generic) -- NOT Ord
     deriving anyclass (Binary)
 
@@ -113,6 +136,8 @@ class Difference a b c | a b -> c where
 class NeverAll a
 instance NeverAll LeftSpaceExc
 instance NeverAll RightSpaceExc
+instance NeverAll LeftSpaceInc
+instance NeverAll RightSpaceInc
 
 class Contains a b where
     contains :: a -> b -> Bool
@@ -124,6 +149,8 @@ instance AllT SpanExc where allT = SpanExc All All
 class IsAllT a where isAllT :: a -> Bool
 instance IsAllT LeftSpaceExc where isAllT _ = False
 instance IsAllT RightSpaceExc where isAllT _ = False
+instance IsAllT LeftSpaceInc where isAllT _ = False
+instance IsAllT RightSpaceInc where isAllT _ = False
 
 instance Intersect LeftSpaceExc RightSpaceExc (Maybe SpanExc) where intersect = flip intersect
 instance Intersect RightSpaceExc LeftSpaceExc (Maybe SpanExc) where
@@ -144,8 +171,6 @@ instance Intersect (AllOr RightSpaceExc) SpanExc       (Maybe SpanExc) where int
 instance Intersect (AllOr LeftSpaceExc ) SpanExc       (Maybe SpanExc) where intersect = allOrIntersectMaybe
 instance Intersect RightSpaceExc RightSpaceExc RightSpaceExc where
     intersect (RightSpaceExc a) (RightSpaceExc b) = RightSpaceExc (max a b)
-instance Intersect LeftSpaceExc LeftSpaceExc LeftSpaceExc where
-    intersect (LeftSpaceExc a) (LeftSpaceExc b) = LeftSpaceExc (min a b)
 instance Intersect (AllOr LeftSpaceExc ) (AllOr RightSpaceExc) (Maybe SpanExc) where intersect = flip intersect
 instance Intersect (AllOr RightSpaceExc) (AllOr LeftSpaceExc)  (Maybe SpanExc) where
     intersect (Or rs) (Or ls) = rs `intersect` ls
@@ -254,32 +279,18 @@ spanExcBoundaries (SpanExc r l) = (lo, hi)
 
 
 --
--- Time Span stuff
+-- Time SpanIncExc stuff
 --
 
--- Half spaces
-newtype LeftSpace  = LeftSpace  TimeD   -- ^ [[ LeftSpace  t' ]] = { t | t <  t' }
-    deriving (Eq,Ord)
-newtype RightSpace = RightSpace TimeD   -- ^ [[ RightSpace t' ]] = { t | t >= t' }
-    deriving (Eq,Ord)
-
-instance Show LeftSpace where
-    show (LeftSpace t) = "←" ++ show t ++ "○"
-instance Show RightSpace where
-    show (RightSpace t) = "●" ++ show t ++ "→"
-
-deriving instance Eq (AllOr LeftSpace)
-deriving instance Eq (AllOr RightSpace)
-
--- [[ Span l r ]] = l `intersect` r
-data Span
-    = Span
-        (AllOr RightSpace) -- ^ Time span left  bound Inclusive. All == Inclusive -Inf
-        (AllOr LeftSpace)  -- ^ Time span right bound Exclusive. All == !Inclusive! Inf
+-- [[ SpanIncExc l r ]] = l `intersect` r
+data SpanIncExc
+    = SpanIncExc
+        (AllOr RightSpaceInc) -- ^ Time span left  bound Inclusive. All == Inclusive -Inf
+        (AllOr LeftSpaceExc)  -- ^ Time span right bound Exclusive. All == !Inclusive! Inf
     deriving (Eq) -- NOT Ord
 
-instance Show Span where
-    show (Span allOrR allOrL) = "Span [" ++ rt  ++ " " ++ lt ++ "]"
+instance Show SpanIncExc where
+    show (SpanIncExc allOrR allOrL) = "SpanIncExc [" ++ rt  ++ " " ++ lt ++ "]"
         where
         rt = case allOrR of
             All -> "←"
@@ -289,7 +300,7 @@ instance Show Span where
             Or l -> show l
 
 -- Inclusive start Exclusive end span.
-spanIncExc :: Maybe TimeD -> Maybe TimeD -> Span
+spanIncExc :: Maybe Time -> Maybe Time -> SpanIncExc
 spanIncExc lo hi
     = case spanIncExcMaybe lo hi of
         Nothing -> error "spanIncExc: lo >= hi"
@@ -297,61 +308,60 @@ spanIncExc lo hi
 
 -- Inclusive start Exclusive end span.
 -- Nothing if the input times are not strictly increasing.
-spanIncExcMaybe :: Maybe TimeD -> Maybe TimeD -> Maybe Span
-spanIncExcMaybe lo hi = (maybe All (Or . RightSpace) lo) `intersect`
-                        (maybe All (Or . LeftSpace) hi)
+spanIncExcMaybe :: Maybe Time -> Maybe Time -> Maybe SpanIncExc
+spanIncExcMaybe lo hi = (maybe All (Or . RightSpaceInc) lo) `intersect`
+                        (maybe All (Or . LeftSpaceExc) hi)
 
--- More convenient span creating functions
-spanToInc :: Time -> Span
-spanToInc hi= spanIncExc Nothing (Just $ delay $ toTime hi)
-spanToExc :: Time -> Span
-spanToExc hi= spanIncExc Nothing (Just $ toTime hi)
-spanFromInc :: Time -> Span
-spanFromInc lo = spanIncExc (Just $ toTime lo) Nothing
-spanFromExc :: Time -> Span
-spanFromExc lo = spanIncExc (Just $ delay $ toTime lo) Nothing
-spanFromIncToExc :: Time -> Time -> Span
-spanFromIncToExc lo hi = spanIncExc (Just $ toTime lo) (Just $ toTime hi)
-spanFromIncToInc :: Time -> Time -> Span
-spanFromIncToInc lo hi = spanIncExc (Just $ toTime lo) (Just $ delay $ toTime hi)
-spanFromExcToExc :: Time -> Time -> Span
-spanFromExcToExc lo hi = spanIncExc (Just $ delay $ toTime lo) (Just $ toTime hi)
-spanFromExcToInc :: Time -> Time -> Span
-spanFromExcToInc lo hi = spanIncExc (Just $ delay $ toTime lo) (Just $ delay $ toTime hi)
+-- -- More convenient span creating functions
+-- spanToInc :: Time -> SpanIncExc
+-- spanToInc hi= spanIncExc Nothing (Just $ delay $ toTime hi)
+-- spanToExc :: Time -> SpanIncExc
+-- spanToExc hi= spanIncExc Nothing (Just $ toTime hi)
+-- spanFromInc :: Time -> SpanIncExc
+-- spanFromInc lo = spanIncExc (Just $ toTime lo) Nothing
+-- spanFromExc :: Time -> SpanIncExc
+-- spanFromExc lo = spanIncExc (Just $ delay $ toTime lo) Nothing
+-- spanFromIncToExc :: Time -> Time -> SpanIncExc
+-- spanFromIncToExc lo hi = spanIncExc (Just $ toTime lo) (Just $ toTime hi)
+-- spanFromIncToInc :: Time -> Time -> SpanIncExc
+-- spanFromIncToInc lo hi = spanIncExc (Just $ toTime lo) (Just $ delay $ toTime hi)
+-- spanFromExcToExc :: Time -> Time -> SpanIncExc
+-- spanFromExcToExc lo hi = spanIncExc (Just $ delay $ toTime lo) (Just $ toTime hi)
+-- spanFromExcToInc :: Time -> Time -> SpanIncExc
+-- spanFromExcToInc lo hi = spanIncExc (Just $ delay $ toTime lo) (Just $ delay $ toTime hi)
 
-instance Intersect LeftSpace RightSpace (Maybe Span) where intersect = flip intersect
-instance Intersect RightSpace LeftSpace (Maybe Span) where
-    intersect r@(RightSpace lo) l@(LeftSpace hi)
-        | lo < hi = Just (Span (Or r) (Or l))
+instance Intersect LeftSpaceExc RightSpaceInc (Maybe SpanIncExc) where intersect = flip intersect
+instance Intersect RightSpaceInc LeftSpaceExc (Maybe SpanIncExc) where
+    intersect r@(RightSpaceInc lo) l@(LeftSpaceExc hi)
+        | lo < hi = Just (SpanIncExc (Or r) (Or l))
         | otherwise = Nothing
-instance Intersect Span LeftSpace (Maybe Span) where intersect = flip intersect
-instance Intersect LeftSpace Span (Maybe Span) where
-    intersect ls (Span r l) = r `intersect` (l `intersect` ls)
-instance Intersect Span RightSpace (Maybe Span) where intersect = flip intersect
-instance Intersect RightSpace Span (Maybe Span) where
-    intersect rs (Span r l) = l `intersect` (r `intersect` rs)
-instance Intersect Span Span (Maybe Span) where
-    intersect s (Span r l) = intersect l =<< (r `intersect` s)
-instance Intersect (AllOr LeftSpace ) LeftSpace  LeftSpace    where intersect = allOrIntersect
-instance Intersect (AllOr RightSpace) RightSpace RightSpace   where intersect = allOrIntersect
-instance Intersect (AllOr RightSpace) Span       (Maybe Span) where intersect = allOrIntersectMaybe
-instance Intersect (AllOr LeftSpace ) Span       (Maybe Span) where intersect = allOrIntersectMaybe
-instance Intersect RightSpace RightSpace RightSpace where
-    intersect (RightSpace a) (RightSpace b) = RightSpace (max a b)
-instance Intersect LeftSpace LeftSpace LeftSpace where
-    intersect (LeftSpace a) (LeftSpace b) = LeftSpace (min a b)
-instance Intersect (AllOr LeftSpace ) (AllOr RightSpace) (Maybe Span) where intersect = flip intersect
-instance Intersect (AllOr RightSpace) (AllOr LeftSpace)  (Maybe Span) where
+instance Intersect SpanIncExc LeftSpaceExc (Maybe SpanIncExc) where intersect = flip intersect
+instance Intersect LeftSpaceExc SpanIncExc (Maybe SpanIncExc) where
+    intersect ls (SpanIncExc r l) = r `intersect` (l `intersect` ls)
+instance Intersect SpanIncExc RightSpaceInc (Maybe SpanIncExc) where intersect = flip intersect
+instance Intersect RightSpaceInc SpanIncExc (Maybe SpanIncExc) where
+    intersect rs (SpanIncExc r l) = l `intersect` (r `intersect` rs)
+instance Intersect SpanIncExc SpanIncExc (Maybe SpanIncExc) where
+    intersect s (SpanIncExc r l) = intersect l =<< (r `intersect` s)
+instance Intersect (AllOr RightSpaceInc) RightSpaceInc RightSpaceInc   where intersect = allOrIntersect
+instance Intersect (AllOr RightSpaceInc) SpanIncExc       (Maybe SpanIncExc) where intersect = allOrIntersectMaybe
+instance Intersect (AllOr LeftSpaceExc ) SpanIncExc       (Maybe SpanIncExc) where intersect = allOrIntersectMaybe
+instance Intersect RightSpaceInc RightSpaceInc RightSpaceInc where
+    intersect (RightSpaceInc a) (RightSpaceInc b) = RightSpaceInc (max a b)
+instance Intersect LeftSpaceExc LeftSpaceExc LeftSpaceExc where
+    intersect (LeftSpaceExc a) (LeftSpaceExc b) = LeftSpaceExc (min a b)
+instance Intersect (AllOr LeftSpaceExc ) (AllOr RightSpaceInc) (Maybe SpanIncExc) where intersect = flip intersect
+instance Intersect (AllOr RightSpaceInc) (AllOr LeftSpaceExc)  (Maybe SpanIncExc) where
     intersect (Or rs) (Or ls) = rs `intersect` ls
-    intersect allOrRs allOrLs = Just (Span allOrRs allOrLs)
-instance Intersect (AllOr LeftSpace) RightSpace (Maybe Span) where intersect = flip intersect
-instance Intersect RightSpace (AllOr LeftSpace) (Maybe Span) where
+    intersect allOrRs allOrLs = Just (SpanIncExc allOrRs allOrLs)
+instance Intersect (AllOr LeftSpaceExc) RightSpaceInc (Maybe SpanIncExc) where intersect = flip intersect
+instance Intersect RightSpaceInc (AllOr LeftSpaceExc) (Maybe SpanIncExc) where
     intersect rs (Or ls) = rs `intersect` ls
-    intersect rs All = Just (Span (Or rs) All)
-instance Intersect LeftSpace (AllOr RightSpace) (Maybe Span) where intersect = flip intersect
-instance Intersect (AllOr RightSpace) LeftSpace (Maybe Span) where
+    intersect rs All = Just (SpanIncExc (Or rs) All)
+instance Intersect LeftSpaceExc (AllOr RightSpaceInc) (Maybe SpanIncExc) where intersect = flip intersect
+instance Intersect (AllOr RightSpaceInc) LeftSpaceExc (Maybe SpanIncExc) where
     intersect (Or rs) ls = rs `intersect` ls
-    intersect All ls = Just (Span All (Or ls))
+    intersect All ls = Just (SpanIncExc All (Or ls))
 
 allOrIntersectMaybe :: Intersect a b (Maybe b) => AllOr a -> b -> Maybe b
 allOrIntersectMaybe All b = Just b
@@ -367,43 +377,34 @@ allOrIntersect (Or a) b = a `intersect` b
 
 
 -- a `difference` b == a `intersect` (invert b)
-instance Difference LeftSpace LeftSpace (Maybe Span) where
-    difference lsa (LeftSpace b) = lsa `intersect` RightSpace b
-instance Difference RightSpace RightSpace (Maybe Span) where
-    difference rsa (RightSpace b) = rsa `intersect` LeftSpace b
-instance Difference Span Span (Maybe Span, Maybe Span) where
-    difference a (Span rs ls) = (a `difference` rs, a `difference` ls)
-instance Difference Span LeftSpace (Maybe Span) where
-    difference s (LeftSpace b) = s `intersect` (RightSpace b)
-instance Difference Span RightSpace (Maybe Span) where
-    difference s (RightSpace b) = s `intersect` (LeftSpace b)
+instance Difference RightSpaceInc RightSpaceInc (Maybe SpanIncExc) where
+    difference rsa (RightSpaceInc b) = rsa `intersect` LeftSpaceExc b
+instance Difference SpanIncExc SpanIncExc (Maybe SpanIncExc, Maybe SpanIncExc) where
+    difference a (SpanIncExc rs ls) = (a `difference` rs, a `difference` ls)
+instance Difference SpanIncExc LeftSpaceExc (Maybe SpanIncExc) where
+    difference s (LeftSpaceExc b) = s `intersect` (RightSpaceInc b)
+instance Difference SpanIncExc RightSpaceInc (Maybe SpanIncExc) where
+    difference s (RightSpaceInc b) = s `intersect` (LeftSpaceExc b)
 instance Difference a b (Maybe c) => Difference a (AllOr b) (Maybe c) where
     difference _ All = Nothing
     difference a (Or b) = a `difference` b
 
-instance NeverAll LeftSpace
-instance NeverAll RightSpace
-
-instance Contains LeftSpace TimeD where
-    contains (LeftSpace a) t = t < a
-instance Contains RightSpace TimeD where
-    contains (RightSpace a) t = t >= a
-instance Contains LeftSpace Time where
-    contains ls t = ls `contains` D_Exactly t
-instance Contains RightSpace Time where
+instance Contains LeftSpaceExc TimeD where
+    contains (LeftSpaceExc a) t = t < toTime a
+instance Contains RightSpaceInc TimeD where
+    contains (RightSpaceInc a) t = t >= toTime a
+instance Contains RightSpaceInc Time where
     contains rs t = rs `contains` D_Exactly t
-instance Contains Span Time where
-    contains (Span rs ls) t = ls `contains` t && rs `contains` t
-instance Contains LeftSpace LeftSpace where
-    contains (LeftSpace a) (LeftSpace b) = a >= b
-instance Contains RightSpace RightSpace where
-    contains (RightSpace a) (RightSpace b) = a <= b
-instance Contains LeftSpace Span where
-    contains ls (Span _ allOrLs) = ls `contains` allOrLs
-instance Contains RightSpace Span where
-    contains rs (Span allOrRs _) = rs `contains` allOrRs
-instance Contains Span Span where
-    contains (Span r l) s = r `contains` s && l `contains` s
+instance Contains SpanIncExc Time where
+    contains (SpanIncExc rs ls) t = ls `contains` t && rs `contains` t
+instance Contains RightSpaceInc RightSpaceInc where
+    contains (RightSpaceInc a) (RightSpaceInc b) = a <= b
+instance Contains LeftSpaceExc SpanIncExc where
+    contains ls (SpanIncExc _ allOrLs) = ls `contains` allOrLs
+instance Contains RightSpaceInc SpanIncExc where
+    contains rs (SpanIncExc allOrRs _) = rs `contains` allOrRs
+instance Contains SpanIncExc SpanIncExc where
+    contains (SpanIncExc r l) s = r `contains` s && l `contains` s
 instance (Contains a b, IsAllT a) => Contains a (AllOr b) where
     contains a All    = isAllT a
     contains a (Or b) = a `contains` b
@@ -415,56 +416,50 @@ intersects :: Intersect a b (Maybe c) => a -> b -> Bool
 intersects a b = isJust (a `intersect` b)
 
 -- | Covering all of time
-instance AllT Span where allT = Span All All
+instance AllT SpanIncExc where allT = SpanIncExc All All
 instance AllT (AllOr a) where allT = All
-
-instance IsAllT LeftSpace where isAllT _ = False
-instance IsAllT RightSpace where isAllT _ = False
-
 
 -- | If the left arg ends exactly on the start of the right arg, return the
 -- joined span and the time at which they are joined (such that splitting on
 -- that time will give the original spans).
-endsOn :: Span -> Span -> Maybe (Span, TimeD)
-endsOn (Span allOrRs (Or (LeftSpace hi))) (Span (Or (RightSpace lo)) allOrLs)
-    | hi == lo  = Just (Span allOrRs allOrLs, lo)
+endsOn :: SpanIncExc -> SpanIncExc -> Maybe (SpanIncExc, Time)
+endsOn (SpanIncExc allOrRs (Or (LeftSpaceExc hi))) (SpanIncExc (Or (RightSpaceInc lo)) allOrLs)
+    | hi == lo  = Just (SpanIncExc allOrRs allOrLs, lo)
 endsOn _ _ = Nothing
 
-instantaneous :: Span -> Maybe Time
-instantaneous (Span (Or (RightSpace (D_Exactly t))) (Or (LeftSpace (D_JustAfter t'))))
+instantaneous :: SpanIncExc -> Maybe Time
+instantaneous (SpanIncExc (Or (RightSpaceInc t)) (Or (LeftSpaceExc t')))
     | t == t' = Just t
 instantaneous _ = Nothing
 
-splitSpanAt :: Span -> TimeD -> (Maybe Span, Maybe Span)
-splitSpanAt tspan t = (tspan `intersect` LeftSpace t, tspan `intersect` RightSpace t)
+splitSpanAt :: SpanIncExc -> Time -> (Maybe SpanIncExc, Maybe SpanIncExc)
+splitSpanAt tspan t = (tspan `intersect` LeftSpaceExc t, tspan `intersect` RightSpaceInc t)
 
-splitSpanAtErr :: Span -> TimeD -> String -> (Span, Span)
+splitSpanAtErr :: SpanIncExc -> Time -> String -> (SpanIncExc, SpanIncExc)
 splitSpanAtErr tspan t err = case splitSpanAt tspan t of
     (Just lspan, Just rspan) -> (lspan, rspan)
     _ -> error $ err ++ ": splitSpanAtErr: Found a (Split _ (" ++ show t ++ ") _) but are in span: " ++ show tspan
 
-spanToIncInc :: Span -> (TimeX, TimeX)
-spanToIncInc (Span r l) = (lo, hi)
+spanToIncInc :: SpanIncExc -> (TimeX, TimeX)
+spanToIncInc (SpanIncExc r l) = (lo, hi)
     where
     lo = case r of
             All -> X_NegInf
-            (Or (RightSpace loD)) -> toTime loD
+            (Or (RightSpaceInc loD)) -> toTime loD
     hi = case l of
             All -> X_Inf
-            (Or (LeftSpace hiD)) -> case hiD of
-                D_Exactly t -> X_JustBefore t
-                D_JustAfter t -> X_Exactly t
+            (Or (LeftSpaceExc hiD)) -> X_JustBefore hiD
 
-instance Arbitrary Span where
+instance Arbitrary SpanIncExc where
     arbitrary = arbitrary `suchThatMap` (uncurry spanIncExcMaybe)
 
-instance Arbitrary LeftSpace where arbitrary = LeftSpace <$> arbitrary
-instance Arbitrary RightSpace where arbitrary = RightSpace <$> arbitrary
+instance Arbitrary LeftSpaceExc where arbitrary = LeftSpaceExc <$> arbitrary
+instance Arbitrary RightSpaceInc where arbitrary = RightSpaceInc <$> arbitrary
 instance Arbitrary a => Arbitrary (AllOr a) where
     arbitrary = frequency [(1, return All), (15, Or <$> arbitrary)]
-
+{-}
 -- | Spans that cover all time.
-newtype OrderedFullSpans = OrderedFullSpans [Span]
+newtype OrderedFullSpans = OrderedFullSpans [SpanIncExc]
 instance Arbitrary OrderedFullSpans where
     arbitrary = do
         spanTimeEdgesT :: [Time] <- fmap head . group <$> orderedList
@@ -482,24 +477,25 @@ instance Arbitrary OrderedFullSpans where
                             (tail spanTimeEdges)
                           ) ++ [let (t, loInc) = last spanTimeEdges in spanIncExc (Just (if loInc then D_Exactly t else D_JustAfter t)) Nothing]
 
-arbitraryTimeDInSpan :: Span -> Gen TimeD
-arbitraryTimeDInSpan (Span All All) = arbitrary
-arbitraryTimeDInSpan (Span (Or (RightSpace t)) All)
+arbitraryTimeDInSpan :: SpanIncExc -> Gen TimeD
+arbitraryTimeDInSpan (SpanIncExc All All) = arbitrary
+arbitraryTimeDInSpan (SpanIncExc (Or (RightSpaceInc t)) All)
     = frequency [ (1, return t)
                 , (5, sized $ \n -> choose (t, t+(fromIntegral n)))
                 ]
-arbitraryTimeDInSpan (Span All (Or (LeftSpace t)))
+arbitraryTimeDInSpan (SpanIncExc All (Or (LeftSpaceExc t)))
     = sized $ \n -> choose (t-(fromIntegral n), t)
-arbitraryTimeDInSpan (Span (Or (RightSpace lo)) (Or (LeftSpace hi)))
+arbitraryTimeDInSpan (SpanIncExc (Or (RightSpaceInc lo)) (Or (LeftSpaceExc hi)))
     = frequency [ (1, return lo)
                 , (5, choose (lo,hi))
                 ]
 
-arbitraryTimeInSpan :: Span -> Gen Time
+arbitraryTimeInSpan :: SpanIncExc -> Gen Time
 arbitraryTimeInSpan s = arbitraryTimeDInSpan s `suchThatMap` (\td -> let
     t = closestTime td
     in if s `contains` t then Just t else Nothing)
 
+-}
 
 increasingListOf :: Ord a => Gen a -> Gen [a]
 increasingListOf xs = fmap head . group . sort <$> listOf xs
