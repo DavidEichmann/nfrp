@@ -95,6 +95,10 @@ spanExcMaxT :: SpanExc -> TimeX
 spanExcMaxT (SpanExc _ All) = X_Inf
 spanExcMaxT (SpanExc _ (Or (LeftSpaceExc t))) = X_JustBefore t
 
+spanExcJustBefore :: SpanExc -> Maybe Time
+spanExcJustBefore (SpanExc _ All) = Nothing
+spanExcJustBefore (SpanExc _ (Or (LeftSpaceExc t))) = Just t
+
 class Intersect a b c | a b -> c where
     intersect :: a -> b -> c
 
@@ -164,15 +168,17 @@ instance Difference SpanExc RightSpaceExc (Maybe (SpanExc, Time)) where
     difference s (RightSpaceExc b) = (,b) <$> s `intersect` (LeftSpaceExc b)
 
 
--- instance Contains LeftSpaceExc TimeD where
---     contains (LeftSpaceExc a) t = t < a
--- instance Contains RightSpaceExc TimeD where
---     contains (RightSpaceExc a) t = t > a
+instance Contains LeftSpaceExc TimeX where
+    contains (LeftSpaceExc a) t = t < toTime a
+instance Contains RightSpaceExc TimeX where
+    contains (RightSpaceExc a) t = t > toTime a
 instance Contains LeftSpaceExc Time where
     contains (LeftSpaceExc ls) t = t < ls
 instance Contains RightSpaceExc Time where
     contains (RightSpaceExc rs) t = t > rs
 instance Contains SpanExc Time where
+    contains (SpanExc rs ls) t = ls `contains` t && rs `contains` t
+instance Contains SpanExc TimeX where
     contains (SpanExc rs ls) t = ls `contains` t && rs `contains` t
 instance Contains LeftSpaceExc LeftSpaceExc where
     contains (LeftSpaceExc a) (LeftSpaceExc b) = a >= b
