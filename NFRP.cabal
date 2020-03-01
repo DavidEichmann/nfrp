@@ -18,8 +18,8 @@ library
         , DataFRP
         , FRP
         , NFRP
+        , KnowledgeBase
         , Lazy
-        , PureLazy
         , Time
         , TimeSpan
     hs-source-dirs: src

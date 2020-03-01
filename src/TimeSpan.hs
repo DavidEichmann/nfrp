@@ -91,6 +91,10 @@ spanExcMaybe :: Maybe Time -> Maybe Time -> Maybe SpanExc
 spanExcMaybe lo hi = (maybe All (Or . RightSpaceExc) lo) `intersect`
                         (maybe All (Or . LeftSpaceExc) hi)
 
+spanExcMinT :: SpanExc -> TimeX
+spanExcMinT (SpanExc All _) = X_NegInf
+spanExcMinT (SpanExc (Or (RightSpaceExc t)) _) = X_JustAfter t
+
 spanExcMaxT :: SpanExc -> TimeX
 spanExcMaxT (SpanExc _ All) = X_Inf
 spanExcMaxT (SpanExc _ (Or (LeftSpaceExc t))) = X_JustBefore t
