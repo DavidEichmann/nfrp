@@ -33,6 +33,7 @@ library
         bytestring -any,
         containers >=0.5.9,
         deepseq -any,
+        dependent-map -any,
         gtk3 -any,
         mtl,
         network-simple -any,
