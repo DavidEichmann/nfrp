@@ -278,6 +278,9 @@ spanExcBoundaries (SpanExc r l) = (lo, hi)
             (Or (LeftSpaceExc hiT)) -> X_Exactly hiT
 
 
+
+data SpanIncX = SpanIncX TimeX TimeX -- Lo hi inclusive.
+
 --
 -- Time SpanIncExc stuff
 --

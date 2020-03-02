@@ -192,7 +192,7 @@ data KnowledgeBase game = KnowledgeBase
     { kbFactsE :: FMap EIx KBFactsE
     , kbFactsB :: FMap BIx KBFactsB
     -- ^ All known facts.
-    , kbValues :: FMap BIx KBValuesB
+    , kbValuesB :: FMap BIx KBValuesB
     -- ^ The actual values for each time (no NoChange nonsense). Must reflect
     -- kbFactsB, but other than that, no invariants. Note that we don't need an
     -- equivalent field for Events, as that is exactly kbFactsE.
@@ -210,9 +210,10 @@ data KnowledgeBase game = KnowledgeBase
 newtype KBFactsE a = KBFactsE           (Map TimeX (FactTCE a))
 data    KBFactsB a = KBFactsB (Maybe a) (Map TimeX (FactTCB a))
 
-data    KBValuesB a = KBValuesB (Maybe a) (Map TimeX (SpanIncX, a)) -- TODO SpanIncX: How will we represent this? do behaviors only change after events?
-
-data SpanIncX = TODO
+data    KBValuesB a = KBValuesB
+    { kbValuesB_aInit :: Maybe a
+    , kbValuesB_map   :: Map TimeX (SpanIncX, a)
+    }
 
 newtype KbActiveRules game a = KbActiveRulesE (Map TimeX [ActiveRule game a])
 data ActiveRule game a
@@ -252,16 +253,33 @@ insertFact :: forall game . FieldIx game
        , [Fact game]
        -- ^ New derived facts (excluding the passed in new fact)
        )
-insertFact fact kb@(KnowledgeBase kbFactsE kbFactsB _ _)
+insertFact fact kb@(KnowledgeBase kbFactsE kbFactsB kbValuesB _)
     | overlaps = error $ "insertFacts: new fact overlaps existing facts" -- TODO better output
-    | otherwise = _
-    where
+
     -- 1. Directly insert the fact into the knowledge base.
 
-    (kbFactsE', kbFactsB') = case fact of
-        FactB keyB factTCB ->
-            (kbFactsE
-            , fmAlter
+    -- 2. If we've learned more about the actual value (due to step 1), update
+    --    kbValuesB. There are only 2 cases where this happens (Init a) / (Change t
+    --    Just _) is learned, or NoChanges is learned which neighbors known
+    --    values in kbValuesB on the left (and possibly more NoChange values in
+    --    kbFacts on the right)
+
+    -- 3. With at most 1 possible update to either kbValuesB or to kbFactsE,
+    --    look for overlapping active rules, split and evaluate them (actually
+    --    removed and reinsert). This may lead to more active rules (you must
+    --    insert recursively), and more facts that you must queue up to
+    --    recursively insert.
+
+
+    | otherwise = case fact of
+        FactB (keyB :: KeyB game a) (factTCB :: FactTCB a) -> let
+
+            ix :: BIx a
+            ix = bIx keyB
+
+            -- 1 Insert fact
+
+            kbFactsB' = fmAlter
                 (\mayFacts -> let
                     KBFactsB initVal cs = fromMaybe (KBFactsB Nothing Map.empty) mayFacts
                     in Just $ case factTCB of
@@ -269,41 +287,72 @@ insertFact fact kb@(KnowledgeBase kbFactsE kbFactsB _ _)
                         Change t _ -> KBFactsB initVal (Map.insert (toTime t) factTCB cs)
                         NoChange tspan -> KBFactsB initVal (Map.insert (spanExcMinT tspan) factTCB cs)
                 )
-                (bIx keyB)
-                (kbFactsB)
-            )
-        FactE keyE factTCE ->
-            (fmAlter
+                ix
+                kbFactsB
+
+            -- 2 update kbValuesB
+
+            -- Possible new value for a time or time span.
+            kbValuesBNewMay :: Maybe (KBValuesB a)
+            kbValuesBNewMay = case factTCB of
+                Init a -> Just $ KBValuesB (Just a) (maybe Map.empty kbValuesB_map oldKBValuesB)
+                -- TODO here we need to get right NoChange neighbors. Knowlage
+                -- spans this and all right NoChange neighbors
+                Change t _ -> Just _
+                -- TODO here we need to get left and right NoChange neighbors
+                -- plus an initial change neighbor. if a Change neighbor is
+                -- found, then we know the value spanning over all right and
+                -- left NoChange neighbors (including this).
+                NoChange tspan -> _
+
+            oldKBValuesB :: Maybe (KBValuesB a)
+            oldKBValuesB = fmLookup ix kbValuesB
+
+            kbValuesB' = case kbValuesBNewMay of
+                Nothing -> kbValuesB -- Keep it the same
+                Just kbValuesBNew -> fmAlter (\_ -> Just kbValuesBNew) ix kbValuesB -- use the updated kbValuesB
+
+            -- 3 Check `fact` against `kbActiveRules`, evaluate rules and recurs.
+
+            in _
+
+        FactE keyE factTCE -> let
+
+            ix = eIx keyE
+
+            -- 1 Insert fact
+
+            kbFactsB = fmAlter
                 (\mayFacts -> let
                     KBFactsE cs = fromMaybe (KBFactsE Map.empty) mayFacts
                     in Just $ case factTCE of
                         FactOcc t _ -> KBFactsE (Map.insert (toTime t) factTCE cs)
                         FactNoOcc tspan -> KBFactsE (Map.insert (spanExcMinT tspan) factTCE cs)
                 )
-                (eIx keyE)
-                (kbFactsE)
-            , kbFactsB
-            )
+                ix
+                kbFactsE
 
-    -- 2. If we've learned more about the actual value (due to step 1), update
-    --    kbValues. There are only 2 cases where this happens (Change t Just _)
-    --    is learned, or NoChanges is learned which neighbors known values in
-    --    kbValues on the left (and possibly more NoChange values in kbFacts on
-    --    the right)
+            -- 3 Check `fact` against `kbActiveRules`, evaluate rules and recurs.
 
-    -- 3. With at most 1 possible update to kbValues, look for overlapping
-    --    active rules, split and evaluate them (actually removed and reinsert).
-    --    This may lead to more active rules (you must insert recursively), and
-    --    more facts that you must queue up to recursively insert.
+            in _
 
+    where
 
-
-    -- kbFactsInsertDirect
-    --     :: Fact game
-    --     -> game KBFactsE KBFactsE KBFactsB
-    --     -> game KBFactsE KBFactsE KBFactsB
-    -- kbFactsInsertDirect (Fact field fact)
-    --     =
+    -- lookupKBValuesB :: forall a . BIx a -> TimeX -> FMap BIx KBValuesB -> Maybe a
+    -- lookupKBValuesB ix tx fm = do
+    --     KBValuesB aInitMay m <- fmLookup ix fm
+    --     case tx of
+    --         -- Look for initial valuel
+    --         X_NegInf -> do
+    --             _ <- Map.lookupMin m
+    --             guard _
+    --             aInitMay
+    --         X_JustAfter t -> do
+    --             -- The awkward thing is we need to look for the (X_Exactly t)
+    --             -- fact as behaviors implicitly change just after the `Change`
+    --             -- time.
+    --             _
+    --         _ -> _
 
     overlaps :: Bool
     overlaps = _
@@ -321,3 +370,9 @@ fmAlter f ix (FMap m)
             . (unsafeCoerce :: Maybe () -> Maybe (v a)))
         (coerce ix)
         m
+
+fmLookup :: Coercible (ix a) Int
+    => ix a
+    -> FMap ix v
+    -> Maybe (v a)
+fmLookup ix (FMap m) = unsafeCoerce $ Map.lookup (coerce ix) m
