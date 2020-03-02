@@ -14,6 +14,7 @@
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeInType #-}
 {-# LANGUAGE TypeOperators #-}
@@ -23,6 +24,10 @@
 module KnowledgeBase where
 
 import Control.Monad
+import Data.Coerce
+import Unsafe.Coerce
+import Data.Dynamic
+import Data.Kind
 import qualified Data.Map as Map
 import Data.Map (Map, (!?))
 import Data.Maybe (fromMaybe)
@@ -77,9 +82,12 @@ gameLogic = Game
             return (p1 == p2)
     }
 
--- TODO use generics to do this
-data EIx a = EIx Int deriving (Eq, Ord, Show)
-data BIx a = BIx Int deriving (Eq, Ord, Show)
+-- TODO use generics to do this. Why do this like this? Well we'll need to send
+-- facts over the network eventually, and we'll need a way to index those facts
+-- on their corresponding field, so something like this seems inherently
+-- necessary.
+newtype EIx a = EIx Int deriving (Eq, Ord, Show)
+newtype BIx a = BIx Int deriving (Eq, Ord, Show)
 data Ix a = Ix_B (BIx a) | Ix_E (EIx a)
 gameFields :: Game EIx EIx BIx
 gameFields = Game
@@ -181,14 +189,14 @@ bot change.
 
 -- | All knowledge about all fields and meta-knowledge.
 data KnowledgeBase game = KnowledgeBase
-    { kbFactsE :: DMap EIx KBFactsE
-    , kbFactsB :: DMap BIx KBFactsB
+    { kbFactsE :: FMap EIx KBFactsE
+    , kbFactsB :: FMap BIx KBFactsB
     -- ^ All known facts.
-    , kbValues :: DMap BIx KBValuesB
+    , kbValues :: FMap BIx KBValuesB
     -- ^ The actual values for each time (no NoChange nonsense). Must reflect
     -- kbFactsB, but other than that, no invariants. Note that we don't need an
     -- equivalent field for Events, as that is exactly kbFactsE.
-    , kbActiveRules :: DMap Ix (KbActiveRules game)
+    , kbActiveRules :: FMap Ix (KbActiveRules game)
     -- ^ For each Field, f, a map from rule span start to rule spans and rule
     -- continuations. f is the rule's current dependency
     --
@@ -199,8 +207,8 @@ data KnowledgeBase game = KnowledgeBase
     }
 
 -- Facts contain either Change/NoChange facts, or solid values
-newtype KBFactsE a = KBFactsE           (Map TimeX (Either (SpanExc, a, a) (FactTCE a)))
-data    KBFactsB a = KBFactsB (Maybe a) (Map TimeX (Either (SpanExc, a, a) (FactTCB a)))
+newtype KBFactsE a = KBFactsE           (Map TimeX (FactTCE a))
+data    KBFactsB a = KBFactsB (Maybe a) (Map TimeX (FactTCB a))
 
 data    KBValuesB a = KBValuesB (Maybe a) (Map TimeX (SpanIncX, a)) -- TODO SpanIncX: How will we represent this? do behaviors only change after events?
 
@@ -219,8 +227,8 @@ data ActiveRule game a
         -- ^ Continuation
 
 
-insertFacts
-    :: KnowledgeBase game
+insertFacts :: FieldIx game
+    => KnowledgeBase game
     -- ^ Current KnowledgeBase.
     -> [Fact game]
     -- ^ New Facts
@@ -234,9 +242,8 @@ insertFacts knowledgeBaseTop
         (\(kb, fs) f -> let (kb', fs') = insertFact f kb in (kb', fs' ++ fs))
         (knowledgeBaseTop, [])
 
-insertFact
-    :: forall game
-    .  Fact game
+insertFact :: forall game . FieldIx game
+    => Fact game
     -- ^ A single fact to insert.
     -> KnowledgeBase game
     -- ^ Current KnowledgeBase.
@@ -245,17 +252,43 @@ insertFact
        , [Fact game]
        -- ^ New derived facts (excluding the passed in new fact)
        )
-insertFact fact kb
+insertFact fact kb@(KnowledgeBase kbFactsE kbFactsB _ _)
     | overlaps = error $ "insertFacts: new fact overlaps existing facts" -- TODO better output
     | otherwise = _
     where
     -- 1. Directly insert the fact into the knowledge base.
-    -- kbFacts' = kbFactsInsertDirect fact (kbFacts kb)
+
+    (kbFactsE', kbFactsB') = case fact of
+        FactB keyB factTCB ->
+            (kbFactsE
+            , fmAlter
+                (\mayFacts -> let
+                    KBFactsB initVal cs = fromMaybe (KBFactsB Nothing Map.empty) mayFacts
+                    in Just $ case factTCB of
+                        Init a -> KBFactsB (Just a) cs
+                        Change t _ -> KBFactsB initVal (Map.insert (toTime t) factTCB cs)
+                        NoChange tspan -> KBFactsB initVal (Map.insert (spanExcMinT tspan) factTCB cs)
+                )
+                (bIx keyB)
+                (kbFactsB)
+            )
+        FactE keyE factTCE ->
+            (fmAlter
+                (\mayFacts -> let
+                    KBFactsE cs = fromMaybe (KBFactsE Map.empty) mayFacts
+                    in Just $ case factTCE of
+                        FactOcc t _ -> KBFactsE (Map.insert (toTime t) factTCE cs)
+                        FactNoOcc tspan -> KBFactsE (Map.insert (spanExcMinT tspan) factTCE cs)
+                )
+                (eIx keyE)
+                (kbFactsE)
+            , kbFactsB
+            )
 
     -- 2. If we've learned more about the actual value (due to step 1), update
     --    kbValues. There are only 2 cases where this happens (Change t Just _)
     --    is learned, or NoChanges is learned which neighbors known values in
-    --    kbValues on the left (and possible more NoChange values in kbFacts on
+    --    kbValues on the left (and possibly more NoChange values in kbFacts on
     --    the right)
 
     -- 3. With at most 1 possible update to kbValues, look for overlapping
@@ -270,21 +303,21 @@ insertFact fact kb
     --     -> game KBFactsE KBFactsE KBFactsB
     --     -> game KBFactsE KBFactsE KBFactsB
     -- kbFactsInsertDirect (Fact field fact)
-    --     = Map.alter
-    --         (\filedFactsMay -> do
-    --             let (initMay, fieldValsMap) = fromMaybe (Nothing, Map.empty) filedFactsMay
-    --             Just $ case fact of
-    --                 FactTCB (Init a) -> (Just a, fieldValsMap)
-    --                 _ -> ( initMay
-    --                      , Map.insert
-    --                         (fromMaybe (error "kbFactsInsertDirect: Impossible! fact has no low time but isn't behavior init value")
-    --                             (factLoTime fact)
-    --                         )
-    --                         fact
-    --                         fieldValsMap
-    --                      )
-    --         )
-    --         field
+    --     =
 
     overlaps :: Bool
     overlaps = _
+
+newtype FMap (ix :: Type -> Type) (v :: Type -> Type) = FMap (Map Int ())
+fmAlter :: Coercible (ix a) Int
+    => (Maybe (v a) -> Maybe (v a))
+    -> ix a
+    -> FMap ix v
+    -> FMap ix v
+fmAlter f ix (FMap m)
+    = FMap $ Map.alter
+        ((unsafeCoerce :: Maybe (v a) -> Maybe ())
+            . f
+            . (unsafeCoerce :: Maybe () -> Maybe (v a)))
+        (coerce ix)
+        m
