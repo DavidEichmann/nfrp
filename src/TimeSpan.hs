@@ -123,8 +123,12 @@ spanExcMaxT (SpanExc _ All) = X_Inf
 spanExcMaxT (SpanExc _ (Or (LeftSpaceExc t))) = X_JustBefore t
 
 spanExcJustBefore :: SpanExc -> Maybe Time
-spanExcJustBefore (SpanExc _ All) = Nothing
-spanExcJustBefore (SpanExc _ (Or (LeftSpaceExc t))) = Just t
+spanExcJustBefore (SpanExc All _) = Nothing
+spanExcJustBefore (SpanExc (Or (RightSpaceExc t)) _) = Just t
+
+spanExcJustAfter :: SpanExc -> Maybe Time
+spanExcJustAfter (SpanExc _ All) = Nothing
+spanExcJustAfter (SpanExc _ (Or (LeftSpaceExc t))) = Just t
 
 class Intersect a b c | a b -> c where
     intersect :: a -> b -> c
