@@ -178,6 +178,10 @@ data FactE a
     = FactOcc Time (Occ a)
     | FactNoOcc SpanExc
 
+getFactBValSpan :: FactBCVal a -> Either Time SpanExc
+getFactBValSpan (ValueBChange t _) = Left t
+getFactBValSpan (ValueBNoChange tspan _) = Right tspan
+
 --
 -- Combinators
 --
@@ -206,9 +210,12 @@ data KnowledgeBase game = KnowledgeBase
     -- ^ All known facts.
     , kbValuesB :: FMap BIx KBValuesB
     -- ^ The actual values for each time (no NoChange nonsense). Must reflect
-    -- kbFactsB, but other than that, no invariants. Note that we don't need an
-    -- equivalent field for Events, as that is exactly kbFactsE.
-    , kbActiveRules :: FMap Ix (KbActiveRules game)
+    -- kbFactsB (though it may transitivelly omit some entries internally when
+    -- updating the KnowledgeBase), but other than that, no invariants. Note
+    -- that we don't need an equivalent field for Events, as that is exactly
+    -- kbFactsE.
+    , kbActiveRulesE :: FMap EIx (KbActiveRulesE game)
+    , kbActiveRulesB :: FMap BIx (KbActiveRulesB game)
     -- ^ For each Field, f, a map from rule span start to rule spans and rule
     -- continuations. f is the rule's current dependency
     --
@@ -224,7 +231,8 @@ data    KBFactsB a = KBFactsB (Maybe a) (Map TimeX (FactBC a))
 
 data    KBValuesB a = KBValuesB (Maybe a) (Map TimeX (FactBCVal a))
 
-newtype KbActiveRules game a = KbActiveRulesE (Map TimeX [ActiveRule game a])
+newtype KbActiveRulesE game a = KbActiveRulesE                             (Map TimeX [ActiveRule game a])
+data    KbActiveRulesB game a = KbActiveRulesB (Maybe (ActiveRule game a)) (Map TimeX [ActiveRule game a])
 data ActiveRule game a
     = forall b . ActiveRule
         Bool
@@ -262,7 +270,7 @@ insertFact :: forall game . FieldIx game
        , [Fact game]
        -- ^ New derived facts (excluding the passed in new fact)
        )
-insertFact fact kb@(KnowledgeBase kbFactsE kbFactsB kbValuesB _)
+insertFact fact kb@(KnowledgeBase currkbFactsE currkbFactsB currkbValuesB _ _)
     | overlaps = error $ "insertFacts: new fact overlaps existing facts" -- TODO better output
 
     -- 1. Directly insert the fact into the knowledge base.
@@ -300,7 +308,7 @@ insertFact fact kb@(KnowledgeBase kbFactsE kbFactsB kbValuesB _)
                             -> KBFactsB initVal (Map.insert (spanExcMinT tspan) factBC cs)
                 )
                 ix
-                kbFactsB
+                currkbFactsB
 
             -- Is a concrete value known for this new fact's time (span)?
             knownValueMay :: Maybe a
@@ -308,8 +316,8 @@ insertFact fact kb@(KnowledgeBase kbFactsE kbFactsB kbValuesB _)
                 Init a -> Just a
                 FactB_Change (Change _ (Just a)) -> Just a
                 -- If value is known just before t/tspan then insert that value at fact t/tspan and all right NoChange neighbors
-                FactB_Change (Change t Nothing) -> lookupValueBJustBeforeTime    ix t     kbValuesB
-                FactB_Change (NoChange tspan)   -> lookupValueBJustBeforeSpanExc ix tspan kbValuesB
+                FactB_Change (Change t Nothing) -> lookupValueBJustBeforeTime    ix t     currkbValuesB
+                FactB_Change (NoChange tspan)   -> lookupValueBJustBeforeSpanExc ix tspan currkbValuesB
 
             right = rightNoChangeNeighborsExc (kbFactsB' `fmGet` ix) factB
             newValueFacts = maybe [] (\ a -> setValueForallFactB a <$> (factB : right)) knownValueMay
@@ -355,7 +363,52 @@ insertFact fact kb@(KnowledgeBase kbFactsE kbFactsB kbValuesB _)
             , [Fact game]
             -- ^ New derived facts (excluding the passed in new fact)
             )
-    insertValueFact = _
+    insertValueFact bix factBVal kb = let
+        -- directly insert the value fact.
+        KBValuesB oldAInit oldMap = fromMaybe (KBValuesB Nothing Map.empty)
+                                              (fmLookup bix (kbValuesB kb))
+        kbValuesB' = case factBVal of
+            InitVal a -> KBValuesB (Just a) oldMap
+            FactBVal_Change f@(ValueBChange t a)
+                -> KBValuesB
+                    oldAInit
+                    (Map.insertWith
+                        (error "insertValueFact: overlapping knowledge")
+                        (toTime t)
+                        f
+                        oldMap
+                    )
+            FactBVal_Change f@(ValueBNoChange tSpan a)
+                -> KBValuesB
+                    oldAInit
+                    (Map.insertWith
+                        (error "insertValueFact: overlapping knowledge")
+                        (spanExcMinT tSpan)
+                        f
+                        oldMap
+                    )
+        -- Find/remove all active rules who's time (span) intersects the value fact.
+
+        -- Nothing means initial value
+        factBValSpan = _
+            -- case factBVal of
+            -- getFactBValSpan factBVal
+
+        -- Reinsert the active rules.
+        in _
+
+    -- | insert an active rule. The rule will be split into smaller spans and
+    -- evaluated as far as possible.
+    insertActiveRule
+        :: Ix a
+        -> ActiveRule game a
+        -> KnowledgeBase game
+        -> ( KnowledgeBase game
+            -- ^ New KnowledgeBase.
+            , [Fact game]
+            -- ^ New derived facts.
+            )
+    insertActiveRule = _
 
     -- | Lookup the known value just before (i.e. neighboring) the given time.
     lookupValueBJustBeforeTime :: forall a . BIx a -> Time -> FMap BIx KBValuesB -> Maybe a
