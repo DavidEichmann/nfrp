@@ -21,7 +21,8 @@ library
         , KnowledgeBase
         , KnowledgeBaseGame
         , KnowledgeBase.DMap
-        , KnowledgeBase.FactMap
+        , KnowledgeBase.Timeline
+        , KnowledgeBase.Ix
         , Lazy
         , Time
         , TimeSpan

@@ -29,7 +29,7 @@ import Data.Maybe (fromMaybe)
 
 import KnowledgeBase.DMap (DMap)
 import qualified KnowledgeBase.DMap as DMap
-import KnowledgeBase.FactMap
+import KnowledgeBase.Timeline
 import Time
 import TimeSpan
 
@@ -40,6 +40,12 @@ data EventDef    game a = EventDef    [FactE a] (Rule game a)
 newtype EIx a = EIx Int deriving (Eq, Ord, Show)
 newtype BIx a = BIx Int deriving (Eq, Ord, Show)
 data Ix a = Ix_B (BIx a) | Ix_E (EIx a)
+
+type KeyB game a = forall e b . game e e b -> b a
+type KeyE game a = forall e b . game e e b -> e a
+data Key game a
+    = KeyB (KeyB game a)
+    | KeyE (KeyE game a)
 
 class FieldIx game where
     fieldIxs :: game EIx EIx BIx
@@ -89,7 +95,7 @@ instance Monad (Rule game) where
 
 -- | For a single field, some initial facts (if any) and the corresponding rule.
 foldB :: a -> Rule game a -> BehaviorDef game a
-foldB aInit = BehaviorDef [(Init aInit)]
+foldB aInit = BehaviorDef [(FB_Init aInit)]
 
 behavior :: Rule game a -> BehaviorDef game a
 behavior = BehaviorDef []
@@ -106,10 +112,10 @@ bot change.
 
 -- | All knowledge about all fields and meta-knowledge.
 data KnowledgeBase game = KnowledgeBase
-    { kbFactsE :: DMap EIx KBFactsE
-    , kbFactsB :: DMap BIx KBFactsB
+    { kbFactsE :: DMap EIx TimelineE
+    , kbFactsB :: DMap BIx TimelineB
     -- ^ All known facts.
-    , kbValuesB :: DMap BIx KBValuesB
+    , kbValuesB :: DMap BIx TimelineBVal
     -- ^ The actual values for each time (no NoChange nonsense). Must reflect
     -- kbFactsB (though it may transitivelly omit some entries internally when
     -- updating the KnowledgeBase), but other than that, no invariants. Note
@@ -126,23 +132,18 @@ data KnowledgeBase game = KnowledgeBase
     -- as facts are inserted.
     }
 
--- Facts contain either Change/NoChange facts, or solid values
-
-data    KBValuesB a = KBValuesB (Maybe a) (Map TimeX (FactBCVal a))
-
 newtype KbActiveRulesE game a = KbActiveRulesE                     (Map TimeX [ActiveRule game a])
 data    KbActiveRulesB game a = KbActiveRulesB [ActiveRule game a] (Map TimeX [ActiveRule game a])
-data ActiveRule game a
-    = forall b . ActiveRule
-        Bool
-        -- ^ Has any of the deps so far actually indicated a change?
-        (Either Time SpanExc)
-        -- ^ result and dependencies span this time exactly.
-        (Ix b)
-        -- ^ result is for this field
-        (a -> Rule game b)
-        -- ^ Continuation
-
+data ActiveRule game a = forall b . ActiveRule
+    { ar_changeDetected :: Bool
+    -- ^ Has any of the deps so far actually indicated a change?
+    , ar_factSpan :: FactSpan
+    -- ^ result and dependencies span this time exactly.
+    , ar_finalFieldIx :: Ix b
+    -- ^ result is for this field
+    , ar_Continuation :: a -> Rule game b
+    -- ^ Continuation
+    }
 
 insertFacts :: FieldIx game
     => KnowledgeBase game
@@ -175,7 +176,7 @@ insertFact fact kb@(KnowledgeBase currkbFactsE currkbFactsB currkbValuesB _ _)
     -- 1. Directly insert the fact into the knowledge base.
 
     -- 2. If we've learned more about the actual value (due to step 1), update
-    --    kbValuesB. There are only 2 cases where this happens (Init a) / (Change t
+    --    kbValuesB. There are only 2 cases where this happens (FB_Init a) / (FBC_Change t
     --    Just _) is learned, or NoChanges is learned which neighbors known
     --    values in kbValuesB on the left (and possibly more NoChange values in
     --    kbFacts on the right)
@@ -195,28 +196,17 @@ insertFact fact kb@(KnowledgeBase currkbFactsE currkbFactsB currkbValuesB _ _)
 
             -- 1 Insert fact
 
-            kbFactsB' :: DMap BIx KBFactsB
-            kbFactsB' = DMap.alter
-                (\mayFacts -> let
-                    KBFactsB initVal cs = fromMaybe (KBFactsB Nothing Map.empty) mayFacts
-                    in Just $ case factB of
-                        Init a -> KBFactsB (Just a) cs
-                        FactB_Change factBC@(Change t _)
-                            -> KBFactsB initVal (Map.insert (toTime t) factBC cs)
-                        FactB_Change factBC@(NoChange tspan)
-                            -> KBFactsB initVal (Map.insert (spanExcMinT tspan) factBC cs)
-                )
-                ix
-                currkbFactsB
+            kbFactsB' :: DMap BIx TimelineB
+            kbFactsB' = DMap.update (insertFactB factB) ix currkbFactsB
 
             -- Is a concrete value known for this new fact's time (span)?
             knownValueMay :: Maybe a
             knownValueMay = case factB of
-                Init a -> Just a
-                FactB_Change (Change _ (Just a)) -> Just a
+                FB_Init a -> Just a
+                FB_Change (FBC_Change _ (Just a)) -> Just a
                 -- If value is known just before t/tspan then insert that value at fact t/tspan and all right NoChange neighbors
-                FactB_Change (Change t Nothing) -> lookupValueBJustBeforeTime    ix t     currkbValuesB
-                FactB_Change (NoChange tspan)   -> lookupValueBJustBeforeSpanExc ix tspan currkbValuesB
+                FB_Change (FBC_Change t Nothing) -> lookupValueBJustBeforeTime    ix t     currkbValuesB
+                FB_Change (FBC_NoChange tspan)   -> lookupValueBJustBeforeSpanExc ix tspan currkbValuesB
 
             right = rightNoChangeNeighborsExc (kbFactsB' DMap.! ix) factB
             newValueFacts = maybe [] (\ a -> setValueForallFactB a <$> (factB : right)) knownValueMay
@@ -237,10 +227,10 @@ insertFact fact kb@(KnowledgeBase currkbFactsE currkbFactsB currkbValuesB _ _)
 
             -- kbFactsB = DMap.alter
             --     (\mayFacts -> let
-            --         KBFactsE cs = fromMaybe (KBFactsE Map.empty) mayFacts
+            --         TimelineE cs = fromMaybe (TimelineE Map.empty) mayFacts
             --         in Just $ case factCE of
-            --             FactOcc t _ -> KBFactsE (Map.insert (toTime t) factCE cs)
-            --             FactNoOcc tspan -> KBFactsE (Map.insert (spanExcMinT tspan) factCE cs)
+            --             FE_Occ t _ -> TimelineE (Map.insert (toTime t) factCE cs)
+            --             FE_NoOcc tspan -> TimelineE (Map.insert (spanExcMinT tspan) factCE cs)
             --     )
             --     ix
             --     kbFactsE
@@ -264,51 +254,16 @@ insertFact fact kb@(KnowledgeBase currkbFactsE currkbFactsB currkbValuesB _ _)
             )
     insertValueFact bix factBVal kb = let
         -- directly insert the value fact.
-        KBValuesB oldAInit oldMap = fromMaybe (KBValuesB Nothing Map.empty)
-                                              (DMap.lookup bix (kbValuesB kb))
-        kbValuesB' = case factBVal of
-            InitVal a -> KBValuesB (Just a) oldMap
-            FactBVal_Change f@(ValueBChange t a)
-                -> KBValuesB
-                    oldAInit
-                    (Map.insertWith
-                        (error "insertValueFact: overlapping knowledge")
-                        (toTime t)
-                        f
-                        oldMap
-                    )
-            FactBVal_Change f@(ValueBNoChange tSpan a)
-                -> KBValuesB
-                    oldAInit
-                    (Map.insertWith
-                        (error "insertValueFact: overlapping knowledge")
-                        (spanExcMinT tSpan)
-                        f
-                        oldMap
-                    )
+        kbValuesB' = DMap.update (insertFactBVal factBVal) bix (kbValuesB kb)
+
         -- Find/remove all active rules who's time (span) intersects the value fact.
+        (intersectingActiveRules, remainingRulesTimeline)
+            = viewIntersectingBOf
+                ar_factSpan
+                (kbActiveRulesB DMap.! bix)
+                (toFactSpan factBVal)
 
-        -- Time span of the factBVal. Nothing means initial value.
-        factBValSpan :: Maybe (Either Time SpanExc)
-        factBValSpan = case factBVal of
-            InitVal _ -> Nothing
-            FactBVal_Change (ValueBChange t _)
-                -> Just (Left t)
-            FactBVal_Change (ValueBNoChange tSpan _)
-                -> Just (Right tSpan)
-
-        KbActiveRulesB oldARsInit oldARsMap
-            = fromMaybe
-                (KbActiveRulesB [] Map.empty)
-                (DMap.lookup bix (kbActiveRulesB kb))
-
-        (kbActiveRulesB', removedRules) = case factBValSpan of
-            Nothing -> (KbActiveRulesB [] oldARsMap, oldARsInit)
-            Just (Left t) -> case _ of
-                _ -> _
-            Just (Right tspan) -> _
-
-        kb' = kb { kbActiveRulesB = DMap.alter (const (Just kbActiveRulesB')) bix (kbActiveRulesB kb) }
+        kb' = kb { kbActiveRulesB = DMap.update (const (Just remainingRulesTimeline)) bix (kbActiveRulesB kb) }
 
         -- Reinsert the active rules.
         in _
@@ -329,55 +284,55 @@ insertFact fact kb@(KnowledgeBase currkbFactsE currkbFactsB currkbValuesB _ _)
     -- | Lookup the known value just before (i.e. neighboring) the given time.
     lookupValueBJustBeforeTime :: forall a . BIx a -> Time -> DMap BIx KBValuesB -> Maybe a
     lookupValueBJustBeforeTime ix t fm = do
-        KBValuesB _ m <- DMap.lookup ix fm
+        KBValuesB _ m <- fm DMap.! ix
         (_, factBCVal) <- Map.lookupLT (X_Exactly t) m
         case factBCVal of
             -- There is a unknown gap between current time, t, and the last
-            -- ValueBChange, so return Nothing.
-            ValueBChange _ _ -> Nothing
-            ValueBNoChange tspan a -> if tspan `contains` X_JustBefore t
+            -- FBCV_Change, so return Nothing.
+            FBCV_Change _ _ -> Nothing
+            FBCV_NoChange tspan a -> if tspan `contains` X_JustBefore t
                 then Just a
                 else Nothing
 
     lookupValueBJustBeforeSpanExc :: forall a . BIx a -> SpanExc -> DMap BIx KBValuesB -> Maybe a
     lookupValueBJustBeforeSpanExc ix tspan fm = do
-        KBValuesB initAMay m <- DMap.lookup ix fm
+        KBValuesB initAMay m <- fm DMap.! ix
         case spanExcJustBefore tspan of
             Nothing -> initAMay
             Just tJustBefore -> do
                 factBCVal <- Map.lookup (X_Exactly tJustBefore) m
                 case factBCVal of
-                    ValueBChange _ a -> Just a
-                    -- We looked up an exact time, but ValueBNoChange's key must
+                    FBCV_Change _ a -> Just a
+                    -- We looked up an exact time, but FBCV_NoChange's key must
                     -- be a X_JustAfter.
-                    ValueBNoChange _ _ -> error "lookupValueBJustBeforeSpanExc: expected ValueBChange but found ValueBNoChange"
+                    FBCV_NoChange _ _ -> error "lookupValueBJustBeforeSpanExc: expected FBCV_Change but found FBCV_NoChange"
 
     -- Replace all facts with the given value.
     setValueForallFactB :: a -> FactB a -> FactBVal a
-    setValueForallFactB a (Init _) = InitVal a
-    setValueForallFactB a (FactB_Change (Change t _)) = FactBVal_Change (ValueBChange t a)
-    setValueForallFactB a (FactB_Change (NoChange tspan)) = FactBVal_Change (ValueBNoChange tspan a)
+    setValueForallFactB a (FB_Init _) = FBV_InitVal a
+    setValueForallFactB a (FB_Change (FBC_Change t _)) = FBV_Change (FBCV_Change t a)
+    setValueForallFactB a (FB_Change (FBC_NoChange tspan)) = FBV_Change (FBCV_NoChange tspan a)
 
     -- | Get all right NoChange neighbors (excludes input fact)
     rightNoChangeNeighborsExc
-        :: KBFactsB a
+        :: TimelineB a
         -> FactB a
         -- ^ Current fact. First neighbor start just after this fact.
         -> [FactB a]
-    rightNoChangeNeighborsExc kBFactsB@(KBFactsB _ m) currFactB = case nextFactMay of
+    rightNoChangeNeighborsExc kBFactsB@(TimelineB _ m) currFactB = case nextFactMay of
         Nothing -> []
         Just nextFact -> nextFact : rightNoChangeNeighborsExc kBFactsB nextFact
         where
         nextFactMay = case currFactB of
-            Init a -> FactB_Change <$> Map.lookup X_NegInf m
-            FactB_Change (Change t _)
-                -> FactB_Change <$> Map.lookup (X_JustAfter t) m
-            FactB_Change (NoChange tspan)
+            FB_Init a -> FB_Change <$> Map.lookup X_NegInf m
+            FB_Change (FBC_Change t _)
+                -> FB_Change <$> Map.lookup (X_JustAfter t) m
+            FB_Change (FBC_NoChange tspan)
                 -> do
                     -- If spanExcJustAfter gives Nothing then we've reached the
                     -- end of time, so can stop.
                     nextTx <- spanExcJustAfter tspan
-                    FactB_Change <$> Map.lookup (X_Exactly nextTx) m
+                    FB_Change <$> Map.lookup (X_Exactly nextTx) m
 
 
 

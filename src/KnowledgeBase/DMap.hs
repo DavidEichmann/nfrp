@@ -27,29 +27,36 @@ import Unsafe.Coerce
 import Data.Kind
 import qualified Data.Map as Map
 import Data.Map (Map)
+import Data.Maybe (fromMaybe)
 
-newtype DMap (ix :: Type -> Type) (v :: Type -> Type) = DMap (Map Int ())
-alter :: Coercible (ix a) Int
-    => (Maybe (v a) -> Maybe (v a))
+-- | A total dependant map
+data DMap (ix :: Type -> Type) (v :: Type -> Type)
+    = DMap
+        (forall a . v a)
+        -- ^ Default value
+        (Map Int ())
+        -- ^ Map. Key must be coerced and values must be unsafeCoerced.
+
+update :: Coercible (ix a) Int
+    => (v a -> Maybe (v a))
+    -- ^ Nothing means use the default value
     -> ix a
     -> DMap ix v
     -> DMap ix v
-alter f ix (DMap m)
-    = DMap $ Map.alter
+update f ix (DMap def m)
+    = DMap def $ Map.alter
         ((unsafeCoerce :: Maybe (v a) -> Maybe ())
             . f
+            . fromMaybe def
             . (unsafeCoerce :: Maybe () -> Maybe (v a)))
         (coerce ix)
         m
 
-lookup :: Coercible (ix a) Int
+(!) :: Coercible (ix a) Int
     => ix a
     -> DMap ix v
-    -> Maybe (v a)
-lookup ix (DMap m) = unsafeCoerce $ Map.lookup (coerce ix) m
-
-(!) :: Coercible (ix a) Int
-    => DMap ix v
-    -> ix a
     -> v a
-(!) (DMap m) ix = unsafeCoerce (m Map.! coerce ix)
+(!) ix (DMap def m)
+    = fromMaybe def
+    $ (unsafeCoerce :: Maybe () -> Maybe (v a))
+    $ Map.lookup (coerce ix) m
