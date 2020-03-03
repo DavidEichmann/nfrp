@@ -19,6 +19,9 @@ library
         , FRP
         , NFRP
         , KnowledgeBase
+        , KnowledgeBaseGame
+        , KnowledgeBase.DMap
+        , KnowledgeBase.FactMap
         , Lazy
         , Time
         , TimeSpan

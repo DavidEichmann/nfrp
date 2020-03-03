@@ -14,7 +14,6 @@
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeInType #-}
 {-# LANGUAGE TypeOperators #-}
@@ -23,83 +22,25 @@
 
 module KnowledgeBase where
 
-import Control.Monad
-import Data.Coerce
-import Unsafe.Coerce
-import Data.Dynamic
-import Data.Kind
 import Data.List (foldl')
 import qualified Data.Map as Map
-import Data.Map (Map, (!?))
+import Data.Map (Map)
 import Data.Maybe (fromMaybe)
-import Data.Dependent.Map (DMap)
-import qualified Data.Dependent.Map as DMap
 
+import KnowledgeBase.DMap (DMap)
+import qualified KnowledgeBase.DMap as DMap
+import KnowledgeBase.FactMap
 import Time
 import TimeSpan
-
--- Describes all the data E/Bs of the game (and inputs)
-data Game sourceEvent event behavior = Game
-    { player1InputA :: sourceEvent ()
-    , player1InputB :: sourceEvent ()
-    , player2InputA :: sourceEvent ()
-    , player2InputB :: sourceEvent ()
-    , player1Pos :: behavior Pos
-    , player2Pos :: behavior Pos
-    , arePlayersOverlapping :: behavior Bool
-    }
-type Pos = (Int, Int)
 
 data SourceEventDef a   = SourceEvent
 data BehaviorDef game a = BehaviorDef [FactB a] (Rule game a)
 data EventDef    game a = EventDef    [FactE a] (Rule game a)
 
-gameLogic :: Game SourceEventDef (EventDef Game) (BehaviorDef Game)
-gameLogic = Game
-    { player1InputA = SourceEvent
-    , player1InputB = SourceEvent
-    , player2InputA = SourceEvent
-    , player2InputB = SourceEvent
-    , player1Pos
-        = foldB (0,0) $ do
-            occA <- getE player1InputA
-            occB <- getE player1InputB
-            case (occA, occB) of
-                (Just (), _) -> return (1,0)
-                (_, Just ()) -> return (0,1)
-                (Nothing, Nothing) -> getB player1Pos
-    , player2Pos
-        = foldB (0,0) $ do
-            occA <- getE player2InputA
-            occB <- getE player2InputB
-            case (occA, occB) of
-                (Just (), _) -> return (1,0)
-                (_, Just ()) -> return (0,1)
-                (Nothing, Nothing) -> getB player2Pos
-    , arePlayersOverlapping
-        = behavior $ do
-            p1 <- getB player1Pos
-            p2 <- getB player2Pos
-            return (p1 == p2)
-    }
-
--- TODO use generics to do this. Why do this like this? Well we'll need to send
--- facts over the network eventually, and we'll need a way to index those facts
--- on their corresponding field, so something like this seems inherently
--- necessary.
 newtype EIx a = EIx Int deriving (Eq, Ord, Show)
 newtype BIx a = BIx Int deriving (Eq, Ord, Show)
 data Ix a = Ix_B (BIx a) | Ix_E (EIx a)
-gameFields :: Game EIx EIx BIx
-gameFields = Game
-    { player1InputA         = EIx 0
-    , player1InputB         = EIx 1
-    , player2InputA         = EIx 2
-    , player2InputB         = EIx 3
-    , player1Pos            = BIx 4
-    , player2Pos            = BIx 5
-    , arePlayersOverlapping = BIx 6
-    }
+
 class FieldIx game where
     fieldIxs :: game EIx EIx BIx
 
@@ -108,10 +49,6 @@ class FieldIx game where
 
     bIx :: KeyB game a -> BIx a
     bIx k = k fieldIxs
-
--- TODO make Rules return maybe a change
-
-type Any = String -- TODO to avoid type stuff I'm just using Any everywhere
 
 data CurrOrNext = Curr | Next
 data Rule game a where
@@ -125,12 +62,6 @@ data Rule game a where
 -- it as a behaviour of (Occ a), sampled at all changes of the behaviour. So
 -- this exposes the descrete nature of behaviours, but also alows us to express
 -- things like "if your behaviour of Health == 0 then fire the Die event".
-
-type KeyB game a = forall e b . game e e b -> b a
-type KeyE game a = forall e b . game e e b -> e a
-data Key game a
-    = KeyB (KeyB game a)
-    | KeyE (KeyE game a)
 
 getB :: KeyB game a -> Rule game a
 getB = DependencyB Curr
@@ -151,36 +82,6 @@ instance Applicative (Rule game) where
         return (a2b a)
 instance Monad (Rule game) where
     (>>=) = Bind
-
-data Fact game
-    = forall a . FactB (KeyB game a) (FactB a)
-    | forall a . FactE (KeyE game a) (FactE a)
-
-data FactB a
-    = Init a
-    | FactB_Change (FactBC a)
-
-data FactBC a
-    = Change Time (Maybe a)
-    | NoChange SpanExc
-
-data FactBVal a
-    = InitVal a
-    | FactBVal_Change (FactBCVal a)
-
-data FactBCVal a
-    = ValueBChange Time a
-    | ValueBNoChange SpanExc a
-
-data Occ a = Occ a | NoOcc
-
-data FactE a
-    = FactOcc Time (Occ a)
-    | FactNoOcc SpanExc
-
-getFactBValSpan :: FactBCVal a -> Either Time SpanExc
-getFactBValSpan (ValueBChange t _) = Left t
-getFactBValSpan (ValueBNoChange tspan _) = Right tspan
 
 --
 -- Combinators
@@ -205,17 +106,17 @@ bot change.
 
 -- | All knowledge about all fields and meta-knowledge.
 data KnowledgeBase game = KnowledgeBase
-    { kbFactsE :: FMap EIx KBFactsE
-    , kbFactsB :: FMap BIx KBFactsB
+    { kbFactsE :: DMap EIx KBFactsE
+    , kbFactsB :: DMap BIx KBFactsB
     -- ^ All known facts.
-    , kbValuesB :: FMap BIx KBValuesB
+    , kbValuesB :: DMap BIx KBValuesB
     -- ^ The actual values for each time (no NoChange nonsense). Must reflect
     -- kbFactsB (though it may transitivelly omit some entries internally when
     -- updating the KnowledgeBase), but other than that, no invariants. Note
     -- that we don't need an equivalent field for Events, as that is exactly
     -- kbFactsE.
-    , kbActiveRulesE :: FMap EIx (KbActiveRulesE game)
-    , kbActiveRulesB :: FMap BIx (KbActiveRulesB game)
+    , kbActiveRulesE :: DMap EIx (KbActiveRulesE game)
+    , kbActiveRulesB :: DMap BIx (KbActiveRulesB game)
     -- ^ For each Field, f, a map from rule span start to rule spans and rule
     -- continuations. f is the rule's current dependency
     --
@@ -226,13 +127,11 @@ data KnowledgeBase game = KnowledgeBase
     }
 
 -- Facts contain either Change/NoChange facts, or solid values
-newtype KBFactsE a = KBFactsE           (Map TimeX (FactE a))
-data    KBFactsB a = KBFactsB (Maybe a) (Map TimeX (FactBC a))
 
 data    KBValuesB a = KBValuesB (Maybe a) (Map TimeX (FactBCVal a))
 
-newtype KbActiveRulesE game a = KbActiveRulesE                             (Map TimeX [ActiveRule game a])
-data    KbActiveRulesB game a = KbActiveRulesB (Maybe (ActiveRule game a)) (Map TimeX [ActiveRule game a])
+newtype KbActiveRulesE game a = KbActiveRulesE                     (Map TimeX [ActiveRule game a])
+data    KbActiveRulesB game a = KbActiveRulesB [ActiveRule game a] (Map TimeX [ActiveRule game a])
 data ActiveRule game a
     = forall b . ActiveRule
         Bool
@@ -296,8 +195,8 @@ insertFact fact kb@(KnowledgeBase currkbFactsE currkbFactsB currkbValuesB _ _)
 
             -- 1 Insert fact
 
-            kbFactsB' :: FMap BIx KBFactsB
-            kbFactsB' = fmAlter
+            kbFactsB' :: DMap BIx KBFactsB
+            kbFactsB' = DMap.alter
                 (\mayFacts -> let
                     KBFactsB initVal cs = fromMaybe (KBFactsB Nothing Map.empty) mayFacts
                     in Just $ case factB of
@@ -319,7 +218,7 @@ insertFact fact kb@(KnowledgeBase currkbFactsE currkbFactsB currkbValuesB _ _)
                 FactB_Change (Change t Nothing) -> lookupValueBJustBeforeTime    ix t     currkbValuesB
                 FactB_Change (NoChange tspan)   -> lookupValueBJustBeforeSpanExc ix tspan currkbValuesB
 
-            right = rightNoChangeNeighborsExc (kbFactsB' `fmGet` ix) factB
+            right = rightNoChangeNeighborsExc (kbFactsB' DMap.! ix) factB
             newValueFacts = maybe [] (\ a -> setValueForallFactB a <$> (factB : right)) knownValueMay
 
             -- 2 update kbValuesB
@@ -336,7 +235,7 @@ insertFact fact kb@(KnowledgeBase currkbFactsE currkbFactsB currkbValuesB _ _)
 
             -- -- 1 Insert fact
 
-            -- kbFactsB = fmAlter
+            -- kbFactsB = DMap.alter
             --     (\mayFacts -> let
             --         KBFactsE cs = fromMaybe (KBFactsE Map.empty) mayFacts
             --         in Just $ case factCE of
@@ -366,7 +265,7 @@ insertFact fact kb@(KnowledgeBase currkbFactsE currkbFactsB currkbValuesB _ _)
     insertValueFact bix factBVal kb = let
         -- directly insert the value fact.
         KBValuesB oldAInit oldMap = fromMaybe (KBValuesB Nothing Map.empty)
-                                              (fmLookup bix (kbValuesB kb))
+                                              (DMap.lookup bix (kbValuesB kb))
         kbValuesB' = case factBVal of
             InitVal a -> KBValuesB (Just a) oldMap
             FactBVal_Change f@(ValueBChange t a)
@@ -389,10 +288,27 @@ insertFact fact kb@(KnowledgeBase currkbFactsE currkbFactsB currkbValuesB _ _)
                     )
         -- Find/remove all active rules who's time (span) intersects the value fact.
 
-        -- Nothing means initial value
-        factBValSpan = _
-            -- case factBVal of
-            -- getFactBValSpan factBVal
+        -- Time span of the factBVal. Nothing means initial value.
+        factBValSpan :: Maybe (Either Time SpanExc)
+        factBValSpan = case factBVal of
+            InitVal _ -> Nothing
+            FactBVal_Change (ValueBChange t _)
+                -> Just (Left t)
+            FactBVal_Change (ValueBNoChange tSpan _)
+                -> Just (Right tSpan)
+
+        KbActiveRulesB oldARsInit oldARsMap
+            = fromMaybe
+                (KbActiveRulesB [] Map.empty)
+                (DMap.lookup bix (kbActiveRulesB kb))
+
+        (kbActiveRulesB', removedRules) = case factBValSpan of
+            Nothing -> (KbActiveRulesB [] oldARsMap, oldARsInit)
+            Just (Left t) -> case _ of
+                _ -> _
+            Just (Right tspan) -> _
+
+        kb' = kb { kbActiveRulesB = DMap.alter (const (Just kbActiveRulesB')) bix (kbActiveRulesB kb) }
 
         -- Reinsert the active rules.
         in _
@@ -411,9 +327,9 @@ insertFact fact kb@(KnowledgeBase currkbFactsE currkbFactsB currkbValuesB _ _)
     insertActiveRule = _
 
     -- | Lookup the known value just before (i.e. neighboring) the given time.
-    lookupValueBJustBeforeTime :: forall a . BIx a -> Time -> FMap BIx KBValuesB -> Maybe a
+    lookupValueBJustBeforeTime :: forall a . BIx a -> Time -> DMap BIx KBValuesB -> Maybe a
     lookupValueBJustBeforeTime ix t fm = do
-        KBValuesB _ m <- fmLookup ix fm
+        KBValuesB _ m <- DMap.lookup ix fm
         (_, factBCVal) <- Map.lookupLT (X_Exactly t) m
         case factBCVal of
             -- There is a unknown gap between current time, t, and the last
@@ -423,9 +339,9 @@ insertFact fact kb@(KnowledgeBase currkbFactsE currkbFactsB currkbValuesB _ _)
                 then Just a
                 else Nothing
 
-    lookupValueBJustBeforeSpanExc :: forall a . BIx a -> SpanExc -> FMap BIx KBValuesB -> Maybe a
+    lookupValueBJustBeforeSpanExc :: forall a . BIx a -> SpanExc -> DMap BIx KBValuesB -> Maybe a
     lookupValueBJustBeforeSpanExc ix tspan fm = do
-        KBValuesB initAMay m <- fmLookup ix fm
+        KBValuesB initAMay m <- DMap.lookup ix fm
         case spanExcJustBefore tspan of
             Nothing -> initAMay
             Just tJustBefore -> do
@@ -469,33 +385,3 @@ insertFact fact kb@(KnowledgeBase currkbFactsE currkbFactsB currkbValuesB _ _)
     overlaps :: Bool
     overlaps = _
 
-
---
--- FMap
---
-
-newtype FMap (ix :: Type -> Type) (v :: Type -> Type) = FMap (Map Int ())
-fmAlter :: Coercible (ix a) Int
-    => (Maybe (v a) -> Maybe (v a))
-    -> ix a
-    -> FMap ix v
-    -> FMap ix v
-fmAlter f ix (FMap m)
-    = FMap $ Map.alter
-        ((unsafeCoerce :: Maybe (v a) -> Maybe ())
-            . f
-            . (unsafeCoerce :: Maybe () -> Maybe (v a)))
-        (coerce ix)
-        m
-
-fmLookup :: Coercible (ix a) Int
-    => ix a
-    -> FMap ix v
-    -> Maybe (v a)
-fmLookup ix (FMap m) = unsafeCoerce $ Map.lookup (coerce ix) m
-
-fmGet :: Coercible (ix a) Int
-    => FMap ix v
-    -> ix a
-    -> v a
-fmGet (FMap m) ix = unsafeCoerce (m Map.! coerce ix)
