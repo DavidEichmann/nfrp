@@ -37,7 +37,10 @@ module KnowledgeBase.Timeline
     , FactBCVal (..)
     , FactE (..)
 
+    , ToFactSpan (..)
     , LookupIntersectingE (..)
+    , leftNeighbors
+    , rightNeighbors
     , lookupIntersectingB
     , lookupIntersectingBVal
     , lookupIntersectingBOf
@@ -49,6 +52,7 @@ module KnowledgeBase.Timeline
     , insertFactBVal
     ) where
 
+import Control.Monad (guard)
 import qualified Data.Map as Map
 import Data.Map (Map)
 
@@ -78,6 +82,7 @@ data    TimelineBVal a = TimelineBVal (Maybe a) (Map TimeX (FactBCVal a))
 data    TimelineBOf init item
                        = TimelineTimelineBOf init (Map TimeX [item])
 
+
 data Fact game
     = forall a . FactB (KeyB game a) (FactB a)
     | forall a . FactE (KeyE game a) (FactE a)
@@ -100,7 +105,27 @@ data FactBCVal a
 
 data FactE a
     = FE_Occ Time a
-    | FE_NoOcc SpanExc
+    | FE_NoOcc Time
+    | FE_NoOccSpan SpanExc
+
+-- | Does a fact indicate a change in value?
+class IsChange a where
+    isChange :: a -> Bool
+    isChange = not . isNoChange
+    isNoChange :: a -> Bool
+    isNoChange = not . isChange
+instance IsChange (Fact game) where
+    isChange (FactB _ f) = isChange f
+    isChange (FactE _ f) = isChange f
+instance IsChange (FactB a) where
+    isChange (FB_Init _) = True
+    isChange (FB_Change f) = isChange f
+instance IsChange (FactBC a) where
+    isChange (FBC_Change _ (Just _)) = True
+    isChange _ = False
+instance IsChange (FactE a) where
+    isChange (FE_Occ _ _) = True
+    isChange _ = False
 
 -- | Removes the initial value if spanning it.
 cropFactSpanBToE :: FactSpanB -> FactSpanE
@@ -110,7 +135,8 @@ class ToFactSpanE fact where
     toFactSpanE :: fact -> FactSpanE
 instance ToFactSpanE (FactE a) where
     toFactSpanE (FE_Occ t _) = FSE_Point t
-    toFactSpanE (FE_NoOcc tspan) = FSE_Span tspan
+    toFactSpanE (FE_NoOcc t) = FSE_Point t
+    toFactSpanE (FE_NoOccSpan tspan) = FSE_Span tspan
 
 class ToFactSpan fact where
     toFactSpan :: fact -> FactSpan
@@ -131,7 +157,8 @@ instance ToFactSpan (FactBCVal a) where
     toFactSpan (FBCV_NoChange tspan _) = FS_Span tspan
 instance ToFactSpan (FactE a) where
     toFactSpan (FE_Occ t _) = FS_Point t
-    toFactSpan (FE_NoOcc tspan) = FS_Span tspan
+    toFactSpan (FE_NoOcc t) = FS_Point t
+    toFactSpan (FE_NoOccSpan tspan) = FS_Span tspan
 toFactSpanB :: ToFactSpan fact => fact -> FactSpanB
 toFactSpanB = toFactSpan
 
@@ -179,3 +206,57 @@ instance LookupIntersectingE FactSpan where
     lookupIntersectingE = _
 instance LookupIntersectingE FactSpanE where
     lookupIntersectingE = _
+
+
+-- | Get all right neighbors starting just after the end of the given FactSpan.
+rightNeighbors
+    :: TimelineB a
+    -> FactSpan
+    -- ^ Current fact span. First neighbor start is just after the start of this fact span.
+    -> [FactB a]
+rightNeighbors kBFactsB@(TimelineB _ m) currFactSpan = case nextFactMay of
+    Nothing -> []
+    Just nextFact -> nextFact : rightNeighbors kBFactsB (toFactSpan nextFact)
+    where
+    nextFactMay = case currFactSpan of
+        FS_Init -> FB_Change <$> Map.lookup X_NegInf m
+        FS_Point t
+            -> FB_Change <$> Map.lookup (X_JustAfter t) m
+        FS_Span tspan
+            -> do
+                -- If spanExcJustAfter gives Nothing then we've reached the
+                -- end of time, so can stop.
+                nextTx <- spanExcJustAfter tspan
+                FB_Change <$> Map.lookup (X_Exactly nextTx) m
+        FS_All -> Nothing
+
+leftNeighbors
+    :: TimelineB a
+    -> FactSpan
+    -- ^ Current fact span. First neighbor end is just before the start of this fact span.
+    -> [FactB a]
+leftNeighbors kBFactsB@(TimelineB initA m) currFactSpan = case prevFactMay of
+    Nothing -> []
+    Just nextFact -> nextFact : rightNeighbors kBFactsB (toFactSpan nextFact)
+    where
+    prevFactMay = case currFactSpan of
+        FS_Init -> Nothing
+        FS_Point t
+            -> do
+                (_, prev) <- Map.lookupLT (X_Exactly t) m
+                guard $ toFactSpan prev `isLeftNeighborOf` currFactSpan
+                return (FB_Change prev)
+        FS_Span tspan
+            -> case spanExcJustBefore tspan of
+                Nothing ->  FB_Init <$> initA
+                Just prevT -> do
+                    (_, prev) <- Map.lookupLE (X_Exactly prevT) m
+                    guard $ toFactSpan prev `isLeftNeighborOf` currFactSpan
+                    return (FB_Change prev)
+        FS_All -> Nothing
+
+lookupBValJustBefore :: FactSpan -> TimelineBVal a -> Maybe a
+lookupBValJustBefore = _ leftNeighbors
+
+isLeftNeighborOf :: FactSpan -> FactSpan -> Bool
+isLeftNeighborOf left right = _

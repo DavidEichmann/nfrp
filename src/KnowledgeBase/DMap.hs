@@ -53,10 +53,10 @@ update f ix (DMap def m)
         m
 
 (!) :: Coercible (ix a) Int
-    => ix a
-    -> DMap ix v
+    => DMap ix v
+    -> ix a
     -> v a
-(!) ix (DMap def m)
+(!) (DMap def m) ix
     = fromMaybe def
     $ (unsafeCoerce :: Maybe () -> Maybe (v a))
     $ Map.lookup (coerce ix) m

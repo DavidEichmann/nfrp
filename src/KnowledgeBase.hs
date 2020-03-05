@@ -197,16 +197,13 @@ insertFact fact kb@(KnowledgeBase currkbFactsE currkbFactsB currkbValuesB _ _)
             -- 1 Insert fact
 
             kbFactsB' :: DMap BIx TimelineB
-            kbFactsB' = DMap.update (insertFactB factB) ix currkbFactsB
+            kbFactsB' = DMap.update (Just . insertFactB factB) ix currkbFactsB
 
             -- Is a concrete value known for this new fact's time (span)?
             knownValueMay :: Maybe a
-            knownValueMay = case factB of
-                FB_Init a -> Just a
-                FB_Change (FBC_Change _ (Just a)) -> Just a
-                -- If value is known just before t/tspan then insert that value at fact t/tspan and all right NoChange neighbors
-                FB_Change (FBC_Change t Nothing) -> lookupValueBJustBeforeTime    ix t     currkbValuesB
-                FB_Change (FBC_NoChange tspan)   -> lookupValueBJustBeforeSpanExc ix tspan currkbValuesB
+            knownValueMay = case leftNeighbors (currkbValuesB DMap.! ix) (toFactSpan factB) of
+                [] -> Nothing
+                a -> _
 
             right = rightNoChangeNeighborsExc (kbFactsB' DMap.! ix) factB
             newValueFacts = maybe [] (\ a -> setValueForallFactB a <$> (factB : right)) knownValueMay
@@ -281,31 +278,31 @@ insertFact fact kb@(KnowledgeBase currkbFactsE currkbFactsB currkbValuesB _ _)
             )
     insertActiveRule = _
 
-    -- | Lookup the known value just before (i.e. neighboring) the given time.
-    lookupValueBJustBeforeTime :: forall a . BIx a -> Time -> DMap BIx KBValuesB -> Maybe a
-    lookupValueBJustBeforeTime ix t fm = do
-        KBValuesB _ m <- fm DMap.! ix
-        (_, factBCVal) <- Map.lookupLT (X_Exactly t) m
-        case factBCVal of
-            -- There is a unknown gap between current time, t, and the last
-            -- FBCV_Change, so return Nothing.
-            FBCV_Change _ _ -> Nothing
-            FBCV_NoChange tspan a -> if tspan `contains` X_JustBefore t
-                then Just a
-                else Nothing
+    -- -- | Lookup the known value just before (i.e. neighboring) the given time.
+    -- lookupValueBJustBeforeTime :: forall a . BIx a -> Time -> DMap BIx TimelineBVal -> Maybe a
+    -- lookupValueBJustBeforeTime ix t fm = case leftNeighbors t () do
+    --     TimelineBVal _ m <- fm DMap.! ix
+    --     (_, factBCVal) <- Map.lookupLT (X_Exactly t) m
+    --     case factBCVal of
+    --         -- There is a unknown gap between current time, t, and the last
+    --         -- FBCV_Change, so return Nothing.
+    --         FBCV_Change _ _ -> Nothing
+    --         FBCV_NoChange tspan a -> if tspan `contains` X_JustBefore t
+    --             then Just a
+    --             else Nothing
 
-    lookupValueBJustBeforeSpanExc :: forall a . BIx a -> SpanExc -> DMap BIx KBValuesB -> Maybe a
-    lookupValueBJustBeforeSpanExc ix tspan fm = do
-        KBValuesB initAMay m <- fm DMap.! ix
-        case spanExcJustBefore tspan of
-            Nothing -> initAMay
-            Just tJustBefore -> do
-                factBCVal <- Map.lookup (X_Exactly tJustBefore) m
-                case factBCVal of
-                    FBCV_Change _ a -> Just a
-                    -- We looked up an exact time, but FBCV_NoChange's key must
-                    -- be a X_JustAfter.
-                    FBCV_NoChange _ _ -> error "lookupValueBJustBeforeSpanExc: expected FBCV_Change but found FBCV_NoChange"
+    -- lookupValueBJustBeforeSpanExc :: forall a . BIx a -> SpanExc -> DMap BIx TimelineBVal -> Maybe a
+    -- lookupValueBJustBeforeSpanExc ix tspan fm = do
+    --     TimelineBVal initAMay m <- fm DMap.! ix
+    --     case spanExcJustBefore tspan of
+    --         Nothing -> initAMay
+    --         Just tJustBefore -> do
+    --             factBCVal <- Map.lookup (X_Exactly tJustBefore) m
+    --             case factBCVal of
+    --                 FBCV_Change _ a -> Just a
+    --                 -- We looked up an exact time, but FBCV_NoChange's key must
+    --                 -- be a X_JustAfter.
+    --                 FBCV_NoChange _ _ -> error "lookupValueBJustBeforeSpanExc: expected FBCV_Change but found FBCV_NoChange"
 
     -- Replace all facts with the given value.
     setValueForallFactB :: a -> FactB a -> FactBVal a
@@ -313,26 +310,26 @@ insertFact fact kb@(KnowledgeBase currkbFactsE currkbFactsB currkbValuesB _ _)
     setValueForallFactB a (FB_Change (FBC_Change t _)) = FBV_Change (FBCV_Change t a)
     setValueForallFactB a (FB_Change (FBC_NoChange tspan)) = FBV_Change (FBCV_NoChange tspan a)
 
-    -- | Get all right NoChange neighbors (excludes input fact)
-    rightNoChangeNeighborsExc
-        :: TimelineB a
-        -> FactB a
-        -- ^ Current fact. First neighbor start just after this fact.
-        -> [FactB a]
-    rightNoChangeNeighborsExc kBFactsB@(TimelineB _ m) currFactB = case nextFactMay of
-        Nothing -> []
-        Just nextFact -> nextFact : rightNoChangeNeighborsExc kBFactsB nextFact
-        where
-        nextFactMay = case currFactB of
-            FB_Init a -> FB_Change <$> Map.lookup X_NegInf m
-            FB_Change (FBC_Change t _)
-                -> FB_Change <$> Map.lookup (X_JustAfter t) m
-            FB_Change (FBC_NoChange tspan)
-                -> do
-                    -- If spanExcJustAfter gives Nothing then we've reached the
-                    -- end of time, so can stop.
-                    nextTx <- spanExcJustAfter tspan
-                    FB_Change <$> Map.lookup (X_Exactly nextTx) m
+    -- -- | Get all right NoChange neighbors (excludes input fact)
+    -- rightNoChangeNeighborsExc
+    --     :: TimelineB a
+    --     -> FactB a
+    --     -- ^ Current fact. First neighbor start just after this fact.
+    --     -> [FactB a]
+    -- rightNoChangeNeighborsExc kBFactsB@(TimelineB _ m) currFactB = case nextFactMay of
+    --     Nothing -> []
+    --     Just nextFact -> nextFact : rightNoChangeNeighborsExc kBFactsB nextFact
+    --     where
+    --     nextFactMay = case currFactB of
+    --         FB_Init a -> FB_Change <$> Map.lookup X_NegInf m
+    --         FB_Change (FBC_Change t _)
+    --             -> FB_Change <$> Map.lookup (X_JustAfter t) m
+    --         FB_Change (FBC_NoChange tspan)
+    --             -> do
+    --                 -- If spanExcJustAfter gives Nothing then we've reached the
+    --                 -- end of time, so can stop.
+    --                 nextTx <- spanExcJustAfter tspan
+    --                 FB_Change <$> Map.lookup (X_Exactly nextTx) m
 
 
 
