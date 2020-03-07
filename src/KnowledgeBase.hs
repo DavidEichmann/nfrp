@@ -23,15 +23,17 @@
 module KnowledgeBase where
 
 import Control.Applicative ((<|>))
-import Control.Monad (forM, forM_, when)
+import Control.Monad (forM, forM_, mapM_, when)
 import Control.Monad.Trans.State.Lazy
-import Data.List (foldl', takeWhile)
+import Data.List (find, foldl', group, takeWhile)
 import Data.Maybe (fromMaybe)
 
 import KnowledgeBase.DMap (DMap)
 import qualified KnowledgeBase.DMap as DMap
 import KnowledgeBase.Timeline hiding (insertFact)
 import qualified KnowledgeBase.Timeline as T
+
+import Time
 
 data SourceEventDef a   = SourceEvent
 data BehaviorDef game a = BehaviorDef [FactB a] (Rule game a)
@@ -122,13 +124,6 @@ data KnowledgeBase game = KnowledgeBase
     { kbFactsE :: DMap EIx TimelineE
     , kbFactsB :: DMap BIx TimelineB
     -- ^ All known facts.
-    , kbValuesBCurr :: DMap BIx TimelineBVal
-    , kbValuesBNext :: DMap BIx TimelineBVal
-    -- ^ The actual values for each time (no NoChange nonsense). Must reflect
-    -- kbFactsB (though it may transitivelly omit some entries internally when
-    -- updating the KnowledgeBase), but other than that, no invariants. Note
-    -- that we don't need an equivalent field for Events, as that is exactly
-    -- kbFactsE.
     , kbActiveRulesE     :: DMap EIx (ActiveRules game)
     , kbActiveRulesBCurr :: DMap BIx (ActiveRules game)
     , kbActiveRulesBNext :: DMap BIx (ActiveRules game)
@@ -140,6 +135,14 @@ data KnowledgeBase game = KnowledgeBase
     -- though will usually be split (potentially many times) into smaller spans.
     -- as facts are inserted.
     }
+
+kbLookupB :: BIx a -> TimeX -> KnowledgeBase game -> Maybe a
+kbLookupB bix tx kb = do
+    let TimelineB timeline = kbFactsB kb DMap.! bix
+    factBTx <- tlLookup tx timeline
+    let leftNs = leftNeighbors timeline (toFactSpan factBTx)
+    foldr (\fact valMay -> factBToMayVal fact <|> valMay) Nothing (factBTx : leftNs)
+
 
 newtype ActiveRules game a = ActiveRules { unActiveRules :: MultiTimeline (ActiveRule game a) }
 data ActiveRule game a
@@ -232,27 +235,44 @@ insertFact factTop = do
                 }
             kbFactsB' <- asksKB kbFactsB
 
-            -- From this this we've learned possibly new facts about kbValuesBCurr / kbValuesBNext
+            -- From this we extrapolate forward what the curr/next values are
+            -- in order to fire any active rules.
 
-            -- kbValuesBNext
-            do
-                -- The (next) value known for the current fact's time span.
-                nextValBAtfactB :: Maybe a <- asksKB $ \kb ->
-                    -- Either get the next value directly from the factB, else from the left neighbor.
-                    factBToMayVal factB <|>
-                        case leftNeighbors (unTimelineBVal $ kbValuesBNext kb DMap.! ix) (toFactSpan factB) of
-                            [] -> Nothing
-                            (a:_) -> Just (factBValToVal a)
+            -- The (current) value known just before the current fact's
+            -- time span.
+            currAMay :: Maybe a <- asksKB $
+                kbLookupB ix (factSpanJustBeforeMinT (toFactSpan factB))
 
-                let right = takeWhile (not . isChange) (rightNeighbors (unTimelineB $ kbFactsB' DMap.! ix) (toFactSpan factB))
-                    newValueFacts = maybe [] (\ a -> setValueForallFactB a <$> (factB : right)) nextValBAtfactB
+            -- The (next) value known for the current fact's time span.
+            nextAMay :: Maybe a <- asksKB $
+                kbLookupB ix (factSpanMinT (toFactSpan factB))
 
-                forM_ newValueFacts (insertValueFact ix)
-                return ()
+            let factBSpan = toFactSpan factB
+                rightNs
+                    = rightNeighbors
+                        (unTimelineB $ kbFactsB' DMap.! ix)
+                        (toFactSpan factB)
+                fstRightChangeSpanMay = toFactSpan <$> find isChange rightNs
+                rightNoChangeSpans
+                    = fmap toFactSpan
+                    $ takeWhile (not . isChange) rightNs
 
-            -- kbValuesBCurr
-            _
+            forM_ currAMay $ \currA -> do
+                -- For the current fact span we've learned the curr/next value.
+                insertCurrValueFact ix currA factBSpan
 
+                -- When factB is non-Change, the curr value is current value for
+                -- right non-change neighbors.
+                when (not (isChange factB)) $
+                    mapM_ (insertCurrValueFact ix currA) rightNoChangeSpans
+            forM_ nextAMay $ \nextA -> do
+                -- For the current fact span we've learned the curr/next value.
+                insertNextValueFact ix nextA factBSpan
+
+                -- The next value is current value for right neighbors up to and
+                -- including the first right value-change neighbor.
+                mapM_ (insertCurrValueFact ix nextA) fstRightChangeSpanMay
+                mapM_ (insertCurrValueFact ix nextA) rightNoChangeSpans
 
         FactE ix factE -> do _
             -- -- -- 1 Insert fact
@@ -273,12 +293,36 @@ insertFact factTop = do
             -- in _ kbFactsE' intersectingActiveRules activeRulesMT'-- TODO will be similar to insertValueFact
 
     where
+    insertCurrValueFact
+        :: BIx a
+        -> a
+        -> FactSpan
+        -> KnowledgeBaseM game ()
+    insertCurrValueFact
+        = insertValueFact
+            kbActiveRulesBCurr
+            (\kb activeRules -> kb { kbActiveRulesBCurr = activeRules })
 
     -- | insert a value fact into the knowlege base. This will handle poking any
     -- active rules.
-    insertValueFact
+    insertNextValueFact
         :: BIx a
-        -> FactBVal a
+        -> a
+        -> FactSpan
+        -> KnowledgeBaseM game ()
+    insertNextValueFact
+        = insertValueFact
+            kbActiveRulesBNext
+            (\kb activeRules -> kb { kbActiveRulesBNext = activeRules })
+
+    insertValueFact
+        :: (KnowledgeBase game -> DMap BIx (ActiveRules game))
+        -- ^ Get current or next active rules.
+        -> (KnowledgeBase game -> DMap BIx (ActiveRules game) -> KnowledgeBase game)
+        -- ^ Set current or next active rules.
+        -> BIx a
+        -> a
+        -> FactSpan
         -> KnowledgeBaseM game ()
     insertValueFact bix factBVal = _
     -- insertValueFact bix factBVal kb = let

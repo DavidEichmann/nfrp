@@ -41,7 +41,10 @@ module KnowledgeBase.Timeline
     , CropView (..)
 
     , toFactSpan
+    , factSpanMinT
+    , factSpanJustBeforeMinT
     -- , LookupIntersectingE (..)
+    , tlLookup
     , leftNeighbors
     , rightNeighbors
     , tUnion
@@ -62,7 +65,6 @@ module KnowledgeBase.Timeline
     ) where
 
 import Control.Monad (guard)
-import Data.List (partition)
 import qualified Data.Map as Map
 import Data.Map (Map)
 import qualified Data.Set as Set
@@ -92,6 +94,11 @@ instance Contains FactSpan Time where
         FS_Init -> False
         FS_Point t' -> t == t'
         FS_Span tspan -> tspan `contains` t
+instance Contains FactSpan TimeX where
+    contains f t = case f of
+        FS_Init -> t == X_NegInf
+        FS_Point t' -> t == toTime t'
+        FS_Span tspan -> tspan `contains` t
 
 instance Intersect FactSpan SpanExc (Maybe FactSpan) where
     intersect = flip intersect
@@ -108,6 +115,20 @@ instance Intersect Time FactSpan (Maybe Time) where
         FS_Init -> Nothing
         FS_Point t' -> if t == t' then Just t else Nothing
         FS_Span tspan -> if tspan `contains` t then Just t else Nothing
+
+factSpanMinT :: FactSpan -> TimeX
+factSpanMinT fs = case fs of
+    FS_Init -> X_NegInf
+    FS_Point t -> X_Exactly t
+    FS_Span tspan -> spanExcMinT tspan
+
+factSpanJustBeforeMinT :: FactSpan -> TimeX
+factSpanJustBeforeMinT fs = case fs of
+    FS_Init -> X_NegInf
+    FS_Point t -> X_JustBefore t
+    FS_Span tspan -> case spanExcJustBefore tspan of
+        Nothing -> X_NegInf
+        Just t -> toTime t
 
 --
 -- Fact
@@ -176,6 +197,14 @@ data Timeline initT pointT spanT = Timeline (Maybe initT) (Map TimeX (Fact' init
 newtype TimelineB     a = TimelineB    { unTimelineB    :: Timeline a    (MaybeChange a) NoChange        }
 newtype TimelineBVal  a = TimelineBVal { unTimelineBVal :: Timeline a    a               (NoChangeVal a) }
 newtype TimelineE     a = TimelineE    { unTimelineE    :: Timeline Void (Maybe a)       NoChange        }
+
+tlLookup :: TimeX -> Timeline initT pointT spanT -> Maybe (Fact' initT pointT spanT)
+tlLookup tx (Timeline initAMay m) = case tx of
+    X_NegInf -> Init <$> initAMay
+    _ -> do
+        (_, candidateFact) <- Map.lookupLE tx m
+        guard (toFactSpan candidateFact `contains` tx)
+        return candidateFact
 
 -- Timeline with overlapping FactSpans
 -- Map ix is lo time inclusive then hi time inclusive
