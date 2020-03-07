@@ -25,8 +25,7 @@ module KnowledgeBase where
 import Control.Applicative ((<|>))
 import Control.Monad (forM, forM_, mapM_, when)
 import Control.Monad.Trans.State.Lazy
-import Data.List (find, foldl', group, takeWhile)
-import Data.Maybe (fromMaybe)
+import Data.List (find, takeWhile)
 
 import KnowledgeBase.DMap (DMap)
 import qualified KnowledgeBase.DMap as DMap
@@ -124,9 +123,9 @@ data KnowledgeBase game = KnowledgeBase
     { kbFactsE :: DMap EIx TimelineE
     , kbFactsB :: DMap BIx TimelineB
     -- ^ All known facts.
-    , kbActiveRulesE     :: DMap EIx (ActiveRules game)
-    , kbActiveRulesBCurr :: DMap BIx (ActiveRules game)
-    , kbActiveRulesBNext :: DMap BIx (ActiveRules game)
+    , kbActiveRulesE     :: DMap EIx (ActiveRulesE game)
+    , kbActiveRulesBCurr :: DMap BIx (ActiveRulesB game)
+    , kbActiveRulesBNext :: DMap BIx (ActiveRulesB game)
     -- ^ For each Field, f, a map from rule span start to rule spans and rule
     -- continuations. f is the rule's current dependency
     --
@@ -144,7 +143,8 @@ kbLookupB bix tx kb = do
     foldr (\fact valMay -> factBToMayVal fact <|> valMay) Nothing (factBTx : leftNs)
 
 
-newtype ActiveRules game a = ActiveRules { unActiveRules :: MultiTimeline (ActiveRule game a) }
+newtype ActiveRulesB game a = ActiveRulesB { unActiveRulesB :: MultiTimeline (ActiveRule game a) }
+newtype ActiveRulesE game a = ActiveRulesE { unActiveRulesE :: MultiTimeline (ActiveRule game (Maybe a)) }
 data ActiveRule game a
     = forall b . ActiveRuleB
         { ar_changeDetected :: Bool
@@ -227,19 +227,16 @@ insertFact factTop = do
 
     case factTop of
         FactB (ix :: BIx a) (factB :: FactB a) -> do
-
             -- 1 Directly insert fact.
-
             modifyKB $ \ kb -> kb
                 { kbFactsB = DMap.update
                     (Just . TimelineB . T.insertFact factB . unTimelineB)
                     ix
                     (kbFactsB kb)
                 }
-            kbFactsB' <- asksKB kbFactsB
 
-            -- From this we extrapolate forward what the curr/next values are
-            -- in order to fire any active rules.
+            -- Extrapolate forward what the curr/next values are in order to
+            -- fire any active rules.
 
             -- The (current) value known just before the current fact's
             -- time span.
@@ -250,6 +247,7 @@ insertFact factTop = do
             nextAMay :: Maybe a <- asksKB $
                 kbLookupB ix (factSpanMinT (toFactSpan factB))
 
+            kbFactsB' <- asksKB kbFactsB
             let factBSpan = toFactSpan factB
                 rightNs
                     = rightNeighbors
@@ -278,32 +276,25 @@ insertFact factTop = do
                 mapM_ (insertCurrValueFact ix nextA) rightNoChangeSpans
 
         FactE ix factE -> do
-
             -- 1 Directly insert fact.
-
             modifyKB $ \ kb -> kb
                 { kbFactsE = DMap.update
                     (Just . TimelineE . T.insertFact factE . unTimelineE)
                     ix
                     (kbFactsE kb)
                 }
-            kbFactsB' <- asksKB kbFactsB
 
-            -- kbFactsE'
-            --     = DMap.update
-            --         (Just . TimelineE . T.insertFact factE . unTimelineE)
-            --         ix
-            --         currkbFactsE
+            -- Extract dependent rules.
+            ActiveRulesE activeRulesMT <- asksKB $ \kb -> kbActiveRulesE kb DMap.! ix
+            let (extractedActiveRules, activeRulesMT') = cropView activeRulesMT (toFactSpan factE)
+            modifyKB $ \kb -> kb { kbActiveRulesE = DMap.update (const $ Just $ ActiveRulesE activeRulesMT') ix (kbActiveRulesE kb) }
 
-            -- (intersectingActiveRules, activeRulesMT')
-            --     = cropView
-            --         (unActiveRules $ kbActiveRulesE kbTop DMap.! ix)
-            --         (toFactSpan factE)
-
-            -- -- -- 3 Check `fact` against `kbActiveRules`, evaluate rules and recurs.
-
-            -- in _ kbFactsE' intersectingActiveRules activeRulesMT'-- TODO will be similar to insertValueFact
-            _
+            -- Step and
+            let eventOcc = case factE of
+                    Init _ -> error "Impossible! found an event with an initial value."
+                    ChangePoint _ occMay -> occMay
+                    ChangeSpan _ _ -> Nothing
+            mapM_ (continueRule eventOcc) extractedActiveRules
 
     where
     insertCurrValueFact
@@ -329,9 +320,9 @@ insertFact factTop = do
             (\kb activeRules -> kb { kbActiveRulesBNext = activeRules })
 
     insertValueFact
-        :: (KnowledgeBase game -> DMap BIx (ActiveRules game))
+        :: (KnowledgeBase game -> DMap BIx (ActiveRulesB game))
         -- ^ Get current or next active rules.
-        -> (KnowledgeBase game -> DMap BIx (ActiveRules game) -> KnowledgeBase game)
+        -> (KnowledgeBase game -> DMap BIx (ActiveRulesB game) -> KnowledgeBase game)
         -- ^ Set current or next active rules.
         -> BIx a
         -> a
@@ -339,13 +330,15 @@ insertFact factTop = do
         -> KnowledgeBaseM game ()
     insertValueFact getActiveRules setActiveRules bix a valueFactSpan = do
         -- Find/remove all active rules who's time (span) intersects the value fact.
-        ActiveRules activeRulesMT <- asksKB $ \kb -> (getActiveRules kb) DMap.! bix
+        ActiveRulesB activeRulesMT <- asksKB $ \kb -> (getActiveRules kb) DMap.! bix
         let (extractedActiveRules, activeRulesMT') = cropView activeRulesMT valueFactSpan
-        modifyKB $ \kb -> setActiveRules kb (DMap.update (const $ Just $ ActiveRules activeRulesMT') bix (getActiveRules kb))
+        modifyKB $ \kb -> setActiveRules kb (DMap.update (const $ Just $ ActiveRulesB activeRulesMT') bix (getActiveRules kb))
+        mapM_ (continueRule a) extractedActiveRules
 
+    continueRule a activeRule
         -- Step all the extracted active rules and reinsert them either as new
         -- active rules, or as facts (if the rule terminates).
-        forM_ extractedActiveRules $ \activeRule -> case activeRule of
+        = case activeRule of
             ActiveRuleB _changeDetected factSpan finalFieldBIx continuationB ->
                 -- TODO use changeDetected
                 case continuationB a of
