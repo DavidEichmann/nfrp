@@ -74,7 +74,6 @@ import           Control.DeepSeq
 import           Control.Monad (forever, forM_)
 import           Data.Either (partitionEithers)
 import           Data.IORef
-import           Data.Int (Int64)
 import           Data.List (group, intercalate, partition)
 import           Data.Maybe (catMaybes, fromJust, fromMaybe, mapMaybe)
 import qualified Data.Map as M

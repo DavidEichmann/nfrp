@@ -161,6 +161,9 @@ instance Intersect RightSpaceExc LeftSpaceExc (Maybe SpanExc) where
     intersect r@(RightSpaceExc lo) l@(LeftSpaceExc hi)
         | lo < hi = Just (SpanExc (Or r) (Or l))
         | otherwise = Nothing
+instance Intersect Time SpanExc (Maybe Time) where intersect = flip intersect
+instance Intersect SpanExc Time (Maybe Time) where
+    intersect tspan t = if tspan `contains` t then Just t else Nothing
 instance Intersect SpanExc LeftSpaceExc (Maybe SpanExc) where intersect = flip intersect
 instance Intersect LeftSpaceExc SpanExc (Maybe SpanExc) where
     intersect ls (SpanExc r l) = r `intersect` (l `intersect` ls)

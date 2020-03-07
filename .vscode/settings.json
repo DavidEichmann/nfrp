@@ -4,6 +4,9 @@
     "languageServerHaskell.hieExecutablePath": "/home/david/.local/bin/hie-8.4.3",
     "languageServerHaskell.useCustomHieWrapper": false,
     "cSpell.words": [
+        "lspan",
+        "rspan",
         "tspan"
-    ]
+    ],
+    "languageServerHaskell.hlintOn": false
 }

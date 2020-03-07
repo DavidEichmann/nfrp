@@ -8,6 +8,7 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -27,18 +28,24 @@ module KnowledgeBase.Timeline
     , TimelineBVal (..)
     , MultiTimeline
 
-    , FactSpan
+    , FactSpan (..)
 
     , Fact' (..)
     , FactB
     , FactBVal
     , FactE
+    , MaybeChange (..)
+    , NoChange (..)
+    , NoChangeVal (..)
     , IsChange (..)
+    , CropView (..)
 
     , toFactSpan
     -- , LookupIntersectingE (..)
     , leftNeighbors
     , rightNeighbors
+    , tUnion
+    , mtUnion
     -- , lookupIntersecting
     -- , lookupIntersectingBVal
     -- , lookupIntersectingBOf
@@ -50,11 +57,14 @@ module KnowledgeBase.Timeline
     -- , viewIntersectingBOf
     , insertFact
     , setValueForallFactB
+    , factBValToVal
     ) where
 
 import Control.Monad (guard)
+import Data.List (partition)
 import qualified Data.Map as Map
 import Data.Map (Map)
+import qualified Data.Set as Set
 import Data.Maybe (isJust)
 import Data.Void
 
@@ -74,9 +84,29 @@ data FactSpan
     -- ^ single point in time
     | FS_Span SpanExc
     -- ^ Span of time. `allT` does NOT include the (Behavior) initial value.
-    | FS_All
-    -- ^ All time including the (Behavior) initial value.
 
+
+instance Contains FactSpan Time where
+    contains f t = case f of
+        FS_Init -> False
+        FS_Point t' -> t == t'
+        FS_Span tspan -> tspan `contains` t
+
+instance Intersect FactSpan SpanExc (Maybe FactSpan) where
+    intersect = flip intersect
+instance Intersect SpanExc FactSpan (Maybe FactSpan) where
+    intersect tspan fspan = case fspan of
+        FS_Init -> Nothing
+        FS_Point t -> if t `intersects` tspan then Just fspan else Nothing
+        FS_Span tspan' -> FS_Span <$> intersect tspan tspan'
+
+instance Intersect FactSpan Time (Maybe Time) where
+    intersect = flip intersect
+instance Intersect Time FactSpan (Maybe Time) where
+    intersect t fspan = case fspan of
+        FS_Init -> Nothing
+        FS_Point t' -> if t == t' then Just t else Nothing
+        FS_Span tspan -> if tspan `contains` t then Just t else Nothing
 
 --
 -- Fact
@@ -125,6 +155,11 @@ setValueForallFactB a (Init _) = Init a
 setValueForallFactB a (ChangePoint t _) = ChangePoint t a
 setValueForallFactB a (ChangeSpan tspan _) = ChangeSpan tspan (NoChangeVal a)
 
+factBValToVal :: FactBVal a -> a
+factBValToVal f = case f of
+    Init a -> a
+    ChangePoint _ a -> a
+    ChangeSpan _ (NoChangeVal a) -> a
 
 --
 -- Timeline
@@ -136,7 +171,8 @@ newtype TimelineBVal  a = TimelineBVal { unTimelineBVal :: Timeline a    a      
 newtype TimelineE     a = TimelineE    { unTimelineE    :: Timeline Void (Maybe a)       NoChange        }
 
 -- Timeline with overlapping FactSpans
-data MultiTimeline a = MultiTimeline [a] (Map TimeX [a])
+-- Map ix is lo time inclusive then hi time inclusive
+data MultiTimeline a = MultiTimeline [a] (Map TimeX (Map TimeX [a]))
 
 insertFact :: Fact' id pd sd -> Timeline id pd sd -> Timeline id pd sd
 insertFact f timelineB@(Timeline initAMay factMap)
@@ -151,14 +187,52 @@ lookupIntersecting :: Timeline id pd sd -> FactSpan -> [Fact' id pd sd]
 lookupIntersecting timeline factSpan = fst (viewIntersecting timeline factSpan)
 
 viewIntersecting :: Timeline id pd sd -> FactSpan -> ([Fact' id pd sd], Timeline id pd sd)
-viewIntersecting timeline factSpan = _
+viewIntersecting (Timeline initAMay m) factSpan = case factSpan of
+    FS_Init -> ([Init a | Just a <- [initAMay]], Timeline Nothing m)
+    _ -> let
+        (tspanLo, intersectsFact) = case factSpan of
+            FS_Init -> error "Impossible!"
+            FS_Point t -> (X_Exactly t, intersects t)
+            FS_Span tspan -> (spanExcMinT tspan, intersects tspan)
+        prevFact = [ (k, f)
+                | Just (k, f) <- [Map.lookupLT tspanLo m]
+                , intersectsFact (toFactSpan f)
+                ]
+        rightFacts
+            = takeWhile (\(_,f) -> intersectsFact (toFactSpan f))
+            $ Map.assocs
+            $ Map.dropWhileAntitone (< tspanLo) m
+        intersectingFacts = prevFact ++ rightFacts
+        m' = m `Map.withoutKeys` (Set.fromAscList (fst <$> intersectingFacts))
+        in ( snd <$> intersectingFacts
+            , Timeline initAMay m'
+            )
 
 mtLookupIntersecting :: (a -> FactSpan) -> MultiTimeline a -> FactSpan -> [a]
 mtLookupIntersecting aToFactSpan multiTimeline factSpan = fst (mtViewIntersecting aToFactSpan multiTimeline factSpan)
 
 mtViewIntersecting :: (a -> FactSpan) -> MultiTimeline a -> FactSpan -> ([a], MultiTimeline a)
-mtViewIntersecting aToFactSpan (MultiTimeline inits m) fs = case fs of
-    _ -> _
+mtViewIntersecting aToFactSpan (MultiTimeline initAs m) factSpan =  _
+-- case factSpan of
+--     FS_Init -> (initAs, MultiTimeline [] m)
+--     _ -> let
+--         (tspanLo, intersectsFact) = case factSpan of
+--             FS_Init -> error "Impossible!"
+--             FS_Point t -> (X_Exactly t, intersects t)
+--             FS_Span tspan -> (spanExcMinT tspan, intersects tspan)
+--         prevFacts =
+--                 [ (k, partition (intersectsFact . aToFactSpan) fs)
+--                 | Just (k, fs) <- [Map.lookupLT tspanLo m]
+--                 ]
+--         rightFacts
+--             = takeWhile (\(_,f) -> intersectsFact (toFactSpan f))
+--             $ Map.assocs
+--             $ Map.dropWhileAntitone (< tspanLo) m
+--         intersectingFacts = prevFact ++ rightFacts
+--         m' = m `Map.withoutKeys` (Set.fromAscList (fst <$> intersectingFacts))
+--         in ( snd <$> intersectingFacts
+--             , Timeline initAMay m'
+--             )
 
 -- | Get all right neighbors starting just after the end of the given FactSpan.
 rightNeighbors :: forall id pd sd
@@ -181,7 +255,6 @@ rightNeighbors kBFactsB@(Timeline _ m) currFactSpan = case nextFactMay of
                 -- end of time, so can stop.
                 nextTx <- spanExcJustAfter tspan
                 Map.lookup (X_Exactly nextTx) m
-        FS_All -> Nothing
 leftNeighbors :: forall id pd sd
     .  Timeline id pd sd
     -> FactSpan
@@ -206,7 +279,6 @@ leftNeighbors timeline@(Timeline initA m) currFactSpan = case prevCFactMay of
                     (_, prev) <- Map.lookupLE (X_Exactly prevT) m
                     guard $ toFactSpan prev `isLeftNeighborOf` currFactSpan
                     return prev
-        FS_All -> Nothing
 
 {-}
 lookupBValJustBefore :: FactSpan -> TimelineBVal a -> Maybe a
@@ -215,3 +287,22 @@ lookupBValJustBefore = _ -- leftNeighbors
 
 isLeftNeighborOf :: FactSpan -> FactSpan -> Bool
 isLeftNeighborOf left right = _
+
+
+mtUnion :: MultiTimeline a -> MultiTimeline a -> MultiTimeline a
+mtUnion = _
+
+tUnion :: Timeline initT pointT spanT -> Timeline initT pointT spanT -> Timeline initT pointT spanT
+tUnion = _
+
+--
+-- Crop i.e. removing exactly a span of time from the timeline
+--
+
+class CropView a span out | a span -> out where
+    cropView :: a -> span -> (out, a)
+    crop :: a -> span -> out
+    crop a s = fst (cropView a s)
+
+instance CropView (MultiTimeline a) FactSpan [a] where
+    cropView = _
