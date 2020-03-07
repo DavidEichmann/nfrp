@@ -151,7 +151,7 @@ data ActiveRule game a
         -- ^ Has any of the deps so far actually indicated a change?
         , ar_factSpan :: FactSpan
         -- ^ result and dependencies span this time exactly.
-        , ar_finalFieldEIx :: BIx b
+        , ar_finalFieldBIx :: BIx b
         -- ^ result is for this field
         , ar_continuationB :: a -> Rule game b
         -- ^ Continuation. Takes current dependencies value. Current dep is implicit.
@@ -161,7 +161,7 @@ data ActiveRule game a
         -- ^ Has any of the deps so far actually indicated a change?
         , ar_factSpan :: FactSpan
         -- ^ result and dependencies span this time exactly.
-        , ar_finalFieldBIx :: EIx b
+        , ar_finalFieldEIx :: EIx b
         -- ^ result is for this event
         , ar_continuationE :: a -> Rule game (Maybe b)
         -- ^ Continuation. Takes current dependencies value. Current dep is implicit.
@@ -172,10 +172,11 @@ data Fact game
     = forall a . FactB (BIx a) (FactB a)
     | forall a . FactE (EIx a) (FactE a)
 
+-- | State is the KnowledgeBase and the facts learned (including initial facts).
 type KnowledgeBaseM game = State (KnowledgeBase game, [Fact game])
 
-writeFacts :: [Fact game] -> KnowledgeBaseM game ()
-writeFacts fs' = modify (\(kb,fs) -> (kb, fs'++fs))
+writeFact :: Fact game -> KnowledgeBaseM game ()
+writeFact fs' = modify (\(kb,fs) -> (kb, fs' : fs))
 
 modifyKB :: (KnowledgeBase game -> KnowledgeBase game) -> KnowledgeBaseM game ()
 modifyKB f = modify (\(kb,fs) -> (f kb, fs))
@@ -194,7 +195,7 @@ insertFacts :: (FieldIx game)
     -> ( KnowledgeBase game
        -- ^ New KnowledgeBase.
        , [Fact game]
-       -- ^ New derived facts (excluding the passed in new facts)
+       -- ^ New facts including the input facts.
        )
 insertFacts knowledgeBaseTop fs
     = runKnowledgeBaseM_ (forM fs $ insertFact) knowledgeBaseTop
@@ -206,6 +207,9 @@ insertFact :: forall game . FieldIx game
 insertFact factTop = do
     overlaps <- _checkOverlap
     when overlaps $ error "insertFacts: new fact overlaps existing facts" -- TODO better output
+
+    -- Store the new fact.
+    writeFact factTop
 
     -- 1. Directly insert the fact into the knowledge base.
 
@@ -220,7 +224,6 @@ insertFact factTop = do
     --    removed and reinsert). This may lead to more active rules (you must
     --    insert recursively), and more facts that you must queue up to
     --    recursively insert.
-
 
     case factTop of
         FactB (ix :: BIx a) (factB :: FactB a) -> do
@@ -274,8 +277,17 @@ insertFact factTop = do
                 mapM_ (insertCurrValueFact ix nextA) fstRightChangeSpanMay
                 mapM_ (insertCurrValueFact ix nextA) rightNoChangeSpans
 
-        FactE ix factE -> do _
-            -- -- -- 1 Insert fact
+        FactE ix factE -> do
+
+            -- 1 Directly insert fact.
+
+            modifyKB $ \ kb -> kb
+                { kbFactsE = DMap.update
+                    (Just . TimelineE . T.insertFact factE . unTimelineE)
+                    ix
+                    (kbFactsE kb)
+                }
+            kbFactsB' <- asksKB kbFactsB
 
             -- kbFactsE'
             --     = DMap.update
@@ -291,6 +303,7 @@ insertFact factTop = do
             -- -- -- 3 Check `fact` against `kbActiveRules`, evaluate rules and recurs.
 
             -- in _ kbFactsE' intersectingActiveRules activeRulesMT'-- TODO will be similar to insertValueFact
+            _
 
     where
     insertCurrValueFact
@@ -324,47 +337,52 @@ insertFact factTop = do
         -> a
         -> FactSpan
         -> KnowledgeBaseM game ()
-    insertValueFact bix factBVal = _
-    -- insertValueFact bix factBVal kb = let
-    --     -- directly insert the value fact.
-    --     kbValuesB'
-    --         = DMap.update
-    --             (Just . TimelineBVal . T.insertFact factBVal . unTimelineBVal)
-    --             bix
-    --             (kbValuesBNext kb)
+    insertValueFact getActiveRules setActiveRules bix a valueFactSpan = do
+        -- Find/remove all active rules who's time (span) intersects the value fact.
+        ActiveRules activeRulesMT <- asksKB $ \kb -> (getActiveRules kb) DMap.! bix
+        let (extractedActiveRules, activeRulesMT') = cropView activeRulesMT valueFactSpan
+        modifyKB $ \kb -> setActiveRules kb (DMap.update (const $ Just $ ActiveRules activeRulesMT') bix (getActiveRules kb))
 
-    --     -- Find/remove all active rules who's time (span) intersects the value fact.
-    --     (ActiveRules activeRulesMT) = kbActiveRulesB kb DMap.! bix
-    --     (intersectingActiveRules, activeRulesMT')
-    --         = cropView activeRulesMT (toFactSpan factBVal)
+        -- Step all the extracted active rules and reinsert them either as new
+        -- active rules, or as facts (if the rule terminates).
+        forM_ extractedActiveRules $ \activeRule -> case activeRule of
+            ActiveRuleB _changeDetected factSpan finalFieldBIx continuationB ->
+                -- TODO use changeDetected
+                case continuationB a of
+                    Result r -> insertFact (FactB finalFieldBIx (case factSpan of
+                        FS_Init -> Init r
+                        FS_Point t -> ChangePoint t (MaybeChange (Just r))   -- TODO allow Rule to return "NoChange" for behaviours
+                        FS_Span tspan -> ChangeSpan tspan NoChange
+                        ))
+                    DependencyE keyE cont -> _insertActiveRuleE (eIx keyE)
+                        -- TODO detect change correctly instead of using False.
+                        (ActiveRuleB False factSpan finalFieldBIx cont)
+                    DependencyB con keyB cont -> _insertActiveRuleB con (bIx keyB)
+                        -- TODO detect change correctly instead of using False.
+                        (ActiveRuleB False factSpan finalFieldBIx cont)
+            ActiveRuleE _changeDetected factSpan finalFieldEIx continuationE ->
+                case continuationE a of
+                    Result r -> insertFact (FactE finalFieldEIx (case factSpan of
+                        FS_Init -> error "Trying to set Init value of an Event but events don't have initial values. Did you accidentally insert a Rule for an event that spans all of time including the initial value?"
+                        FS_Point t -> ChangePoint t r
+                        FS_Span tspan -> ChangeSpan tspan NoChange
+                        ))
+                    DependencyE keyE cont -> _insertActiveRuleE (eIx keyE)
+                        -- TODO detect change correctly instead of using False.
+                        (ActiveRuleE False factSpan finalFieldEIx cont)
+                    DependencyB con keyB cont -> _insertE con (bIx keyB)
+                        -- TODO detect change correctly instead of using False.
+                        (ActiveRuleE False factSpan finalFieldEIx cont)
 
-    --     kb' = _
-    --         -- kb { kbValuesB = kbValuesB'
-    --         --      , kbActiveRulesB = DMap.update
-    --         --         (Just . ActiveRules . const activeRulesMT')
-    --         --         bix
-    --         --         (kbActiveRulesB kb)
-    --         --      }
-
-    --     -- Reinsert the active rules.
-    --     in foldl'
-    --             (\(kb'2, fs) f -> let (kb'3,fs') = insertActiveRule (Ix_B bix) f kb'2 in (kb'3, fs' ++ fs))
-    --             (kb', [])
-    --             intersectingActiveRules
+        -- mapM_ (insertActiveRuleB getActiveRules setActiveRules bix a) extractedActiveRules
 
     -- | insert an active rule. The rule will be split into smaller spans and
     -- evaluated as far as possible.
-    insertActiveRule
-        :: Ix a
-        -- ^ Ix of active rule's next dependency
-        -> ActiveRule game a
-        -> KnowledgeBase game
-        -> ( KnowledgeBase game
-            -- ^ New KnowledgeBase.
-            , [Fact game]
-            -- ^ New derived facts.
-            )
-    insertActiveRule = _
+    -- insertActiveRule
+    --     :: ActiveRule game a
+    --     -> KnowledgeBaseM game ()
+    -- insertActiveRule getActiveRules setActiveRules bix activeRule = _
+        -- TODO check for overlapping insertion
     -- insertActiveRule
     --   ix
     --   activeRule
