@@ -58,6 +58,7 @@ module KnowledgeBase.Timeline
     , insertFact
     , setValueForallFactB
     , factBValToVal
+    , factBToMayVal
     ) where
 
 import Control.Monad (guard)
@@ -160,6 +161,12 @@ factBValToVal f = case f of
     Init a -> a
     ChangePoint _ a -> a
     ChangeSpan _ (NoChangeVal a) -> a
+
+factBToMayVal :: FactB a -> Maybe a
+factBToMayVal f = case f of
+    Init a -> Just a
+    ChangePoint _ (MaybeChange aMay) -> aMay
+    ChangeSpan _ _ -> Nothing
 
 --
 -- Timeline

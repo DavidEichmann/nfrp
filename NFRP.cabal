@@ -39,7 +39,7 @@ library
         deepseq -any,
         dependent-map -any,
         gtk3 -any,
-        mtl,
+        mtl -any,
         network-simple -any,
         QuickCheck -any,
         random -any,
@@ -47,6 +47,7 @@ library
         -- singletons -any,
         stm -any,
         time == 1.8.0.2,
+        transformers -any,
         vector -any
 
 
