@@ -334,7 +334,7 @@ insertFact factTop = do
                         ))
                     DependencyE keyE cont -> insertActiveRuleE (eIx keyE)
                         (ActiveRuleB factSpan finalFieldBIx cont)
-                    DependencyB con keyB cont -> _insertActiveRuleB con (bIx keyB)
+                    DependencyB con keyB cont -> insertActiveRuleB con (bIx keyB)
                         (ActiveRuleB factSpan finalFieldBIx cont)
             ActiveRuleE factSpan finalFieldEIx continuationE ->
                 case continuationE a of
@@ -345,7 +345,7 @@ insertFact factTop = do
                         ))
                     DependencyE keyE cont -> insertActiveRuleE (eIx keyE)
                         (ActiveRuleE factSpan finalFieldEIx cont)
-                    DependencyB con keyB cont -> _insertActiveRuleB con (bIx keyB)
+                    DependencyB con keyB cont -> insertActiveRuleB con (bIx keyB)
                         (ActiveRuleE factSpan finalFieldEIx cont)
 
     insertActiveRuleE :: forall b
@@ -362,8 +362,41 @@ insertFact factTop = do
                         (kbActiveRulesE kb)
                     }
             )
-            (\f _kb -> factEToOcc f)
+            (\f _kb -> Just (factEToOcc f))
             eix
+            activeRule
+
+    insertActiveRuleB :: forall b
+        .  CurrOrNext
+        -> BIx b                -- ^ Active rule's current dependency
+        -> ActiveRule game b    -- ^ Active rule
+        -> KnowledgeBaseM game ()
+    insertActiveRuleB con bix activeRule
+        = insertActiveRule'
+            (\kb -> unTimelineB $ kbFactsB kb DMap.! bix)
+            (case con of
+                Curr -> \ar kb -> kb
+                    { kbActiveRulesBCurr = DMap.update
+                        (\(ActiveRulesB mt) -> Just $ ActiveRulesB $ mtFromList ar_factSpan [ar] `mtUnion` mt)
+                        bix
+                        (kbActiveRulesBCurr kb)
+                    }
+                Next -> \ar kb -> kb
+                    { kbActiveRulesBNext = DMap.update
+                        (\(ActiveRulesB mt) -> Just $ ActiveRulesB $ mtFromList ar_factSpan [ar] `mtUnion` mt)
+                        bix
+                        (kbActiveRulesBNext kb)
+                    }
+            )
+            (case con of
+                Curr -> \f kb -> kbLookupB bix (factSpanMinT $ toFactSpan f) kb
+                Next -> \f kb -> case f of
+                    -- The only time Next is different from current is if the
+                    -- fact is a change in the behavior value.
+                    ChangePoint _ (MaybeChange (Just b)) -> Just b
+                    _ -> kbLookupB bix (factSpanMinT $ toFactSpan f) kb
+            )
+            bix
             activeRule
 
     insertActiveRule'
@@ -372,10 +405,12 @@ insertFact factTop = do
         -- ^ Get active rule's dependency's timeline
         -> (ActiveRule game b -> KnowledgeBase game -> KnowledgeBase game)
         -- ^ Directly insert an active rule (assuming the dependency is `ix`).
-        -> (Fact' id pd sd -> KnowledgeBase game -> b)
+        -> (Fact' id pd sd -> KnowledgeBase game -> Maybe b)
         -- ^ From a fact about the dependency, and the current knowledge base,
         -- get the value of the dependency that should be used to continue the
-        -- active rule.
+        -- active rule. WARNING If this returns Nothing, the active rule will be
+        -- inserted directly; you must ensure that the rule will eventually be
+        -- fired via some other means.
         -> ix
         -- ^ Active rule's dependency's index.
         -> ActiveRule game b
@@ -391,8 +426,10 @@ insertFact factTop = do
             [] -> modifyKB (directInsert activeRule)
             -- Base cases: fully overlapping fact, continue the rule.
             [f] | arFactSpan == toFactSpan f -> do
-                depValue <- asksKB (depFactToValue f)
-                continueRule depValue activeRule
+                depValueMay <- asksKB (depFactToValue f)
+                case depValueMay of
+                    Nothing -> modifyKB (directInsert activeRule)
+                    Just depValue -> continueRule depValue activeRule
 
             -- Recursive case: split the active rule and insert the parts.
             _ -> do
