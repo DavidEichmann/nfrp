@@ -259,12 +259,15 @@ newtype TimelineB     a = TimelineB    { unTimelineB    :: Timeline a    (MaybeC
 newtype TimelineBVal  a = TimelineBVal { unTimelineBVal :: Timeline a    a               (NoChangeVal a) }
 newtype TimelineE     a = TimelineE    { unTimelineE    :: Timeline Void (Maybe a)       NoChange        }
 
+-- | An empty Timeline
 empty :: Timeline initT pointT spanT
 empty = Timeline Nothing Map.empty
 
+-- | An empty MultiTimeline
 mtEmpty :: MultiTimeline a
 mtEmpty = MultiTimeline []
 
+-- | Lookup the fact at (i.e. intersecting) a TimeX.
 tlLookup :: TimeX -> Timeline initT pointT spanT -> Maybe (Fact' initT pointT spanT)
 tlLookup tx (Timeline initAMay m) = case tx of
     X_NegInf -> Init <$> initAMay

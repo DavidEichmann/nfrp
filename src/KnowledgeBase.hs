@@ -42,6 +42,7 @@ module KnowledgeBase
     , newKnowledgeBase
     , insertFacts
     , lookupB
+    , lookupE
 
     -- Facts
     , Fact
@@ -193,6 +194,15 @@ lookupBIx bix tx kb = do
 
 lookupB :: FieldIx game => KeyB game a -> TimeX -> KnowledgeBase game -> Maybe a
 lookupB keyb = lookupBIx (bIx keyb)
+
+lookupEIx :: EIx a -> Time -> KnowledgeBase game -> Maybe (Maybe a)
+lookupEIx eix t kb = do
+    let TimelineE timeline = kbFactsE kb DMap.! eix
+    ChangePoint _ e <- tlLookup (toTime t) timeline
+    return e
+
+lookupE :: FieldIx game => KeyE game a -> Time -> KnowledgeBase game -> Maybe (Maybe a)
+lookupE keyb = lookupEIx (eIx keyb)
 
 newtype ActiveRulesB game a = ActiveRulesB { unActiveRulesB :: MultiTimeline (ActiveRule game a) }
 newtype ActiveRulesE game a = ActiveRulesE { unActiveRulesE :: MultiTimeline (ActiveRule game (Maybe a)) }
