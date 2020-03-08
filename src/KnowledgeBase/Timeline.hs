@@ -23,7 +23,8 @@
 
 -- | Timeline of facts for an Event/Behavor.
 module KnowledgeBase.Timeline
-    ( TimelineE (..)
+    ( Timeline
+    , TimelineE (..)
     , TimelineB (..)
     , TimelineBVal (..)
     , MultiTimeline (..)
@@ -40,6 +41,8 @@ module KnowledgeBase.Timeline
     , IsChange (..)
     , CropView (..)
 
+    , empty
+    , mtEmpty
     , toFactSpan
     , factSpanMinT
     , factSpanJustBeforeMinT
@@ -256,6 +259,12 @@ newtype TimelineB     a = TimelineB    { unTimelineB    :: Timeline a    (MaybeC
 newtype TimelineBVal  a = TimelineBVal { unTimelineBVal :: Timeline a    a               (NoChangeVal a) }
 newtype TimelineE     a = TimelineE    { unTimelineE    :: Timeline Void (Maybe a)       NoChange        }
 
+empty :: Timeline initT pointT spanT
+empty = Timeline Nothing Map.empty
+
+mtEmpty :: MultiTimeline a
+mtEmpty = MultiTimeline []
+
 tlLookup :: TimeX -> Timeline initT pointT spanT -> Maybe (Fact' initT pointT spanT)
 tlLookup tx (Timeline initAMay m) = case tx of
     X_NegInf -> Init <$> initAMay
@@ -321,28 +330,6 @@ mtViewIntersecting viewA (MultiTimeline allAs) = MultiTimeline <$> go allAs
     where
     go [] = ([], [])
     go (a:as) = viewA a <> go as
-
-
--- case factSpan of
---     FS_Init -> (initAs, MultiTimeline [] m)
---     _ -> let
---         (tspanLo, intersectsFact) = case factSpan of
---             FS_Init -> error "Impossible!"
---             FS_Point t -> (X_Exactly t, intersects t)
---             FS_Span tspan -> (spanExcMinT tspan, intersects tspan)
---         prevFacts =
---                 [ (k, partition (intersectsFact . aToFactSpan) fs)
---                 | Just (k, fs) <- [Map.lookupLT tspanLo m]
---                 ]
---         rightFacts
---             = takeWhile (\(_,f) -> intersectsFact (toFactSpan f))
---             $ Map.assocs
---             $ Map.dropWhileAntitone (< tspanLo) m
---         intersectingFacts = prevFact ++ rightFacts
---         m' = m `Map.withoutKeys` (Set.fromAscList (fst <$> intersectingFacts))
---         in ( snd <$> intersectingFacts
---             , Timeline initAMay m'
---             )
 
 -- | Get all right neighbors starting just after the end of the given FactSpan.
 rightNeighbors :: forall id pd sd

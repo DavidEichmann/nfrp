@@ -86,8 +86,8 @@ data SpanExc
     deriving anyclass (Binary)
 data SpanInc
     = SpanInc
-        !(AllOr RightSpaceInc) -- ^ Time span left  bound Exclusive. All == Inclusive -Inf
-        !(AllOr LeftSpaceInc)  -- ^ Time span right bound Exclusive. All == !Inclusive! Inf
+        !(AllOr RightSpaceInc) -- ^ Time span left  bound Inclusive. All == Inclusive -Inf
+        !(AllOr LeftSpaceInc)  -- ^ Time span right bound Inclusive. All == !Inclusive! Inf
     deriving stock (Eq, Generic) -- NOT Ord
     deriving anyclass (Binary)
 
@@ -208,6 +208,8 @@ instance Contains LeftSpaceExc TimeX where
     contains (LeftSpaceExc a) t = t < toTime a
 instance Contains RightSpaceExc TimeX where
     contains (RightSpaceExc a) t = t > toTime a
+instance Contains LeftSpaceInc Time where
+    contains (LeftSpaceInc ls) t = t <= ls
 instance Contains LeftSpaceExc Time where
     contains (LeftSpaceExc ls) t = t < ls
 instance Contains RightSpaceExc Time where
@@ -322,6 +324,32 @@ spanIncExcMaybe :: Maybe Time -> Maybe Time -> Maybe SpanIncExc
 spanIncExcMaybe lo hi = (maybe All (Or . RightSpaceInc) lo) `intersect`
                         (maybe All (Or . LeftSpaceExc) hi)
 
+data SpanExcInc
+    = SpanExcInc
+        (AllOr RightSpaceExc) -- ^ Time span left  bound Exclusive. All == Inclusive -Inf
+        (AllOr LeftSpaceInc)  -- ^ Time span right bound Inclusive. All == !Inclusive! Inf
+    deriving (Eq) -- NOT Ord
+
+instance Show SpanExcInc where
+    show (SpanExcInc allOrR allOrL) = "SpanExcInc [" ++ rt  ++ " " ++ lt ++ "]"
+        where
+        rt = case allOrR of
+            All -> "←"
+            Or r -> show r
+        lt = case allOrL of
+            All -> "→"
+            Or l -> show l
+
+spanExcInc :: Maybe Time -> Maybe Time -> SpanExcInc
+spanExcInc lo hi
+    = case spanExcIncMaybe lo hi of
+        Nothing -> error "spanIncExc: lo >= hi"
+        Just x -> x
+
+spanExcIncMaybe :: Maybe Time -> Maybe Time -> Maybe SpanExcInc
+spanExcIncMaybe lo hi = (maybe All (Or . RightSpaceExc) lo) `intersect`
+                        (maybe All (Or . LeftSpaceInc) hi)
+
 -- -- More convenient span creating functions
 -- spanToInc :: Time -> SpanIncExc
 -- spanToInc hi= spanIncExc Nothing (Just $ delay $ toTime hi)
@@ -345,6 +373,11 @@ instance Intersect RightSpaceInc LeftSpaceExc (Maybe SpanIncExc) where
     intersect r@(RightSpaceInc lo) l@(LeftSpaceExc hi)
         | lo < hi = Just (SpanIncExc (Or r) (Or l))
         | otherwise = Nothing
+instance Intersect LeftSpaceInc RightSpaceExc (Maybe SpanExcInc) where intersect = flip intersect
+instance Intersect RightSpaceExc LeftSpaceInc (Maybe SpanExcInc) where
+    intersect r@(RightSpaceExc lo) l@(LeftSpaceInc hi)
+        | lo < hi = Just (SpanExcInc (Or r) (Or l))
+        | otherwise = Nothing
 instance Intersect SpanIncExc LeftSpaceExc (Maybe SpanIncExc) where intersect = flip intersect
 instance Intersect LeftSpaceExc SpanIncExc (Maybe SpanIncExc) where
     intersect ls (SpanIncExc r l) = r `intersect` (l `intersect` ls)
@@ -360,6 +393,10 @@ instance Intersect RightSpaceInc RightSpaceInc RightSpaceInc where
     intersect (RightSpaceInc a) (RightSpaceInc b) = RightSpaceInc (max a b)
 instance Intersect LeftSpaceExc LeftSpaceExc LeftSpaceExc where
     intersect (LeftSpaceExc a) (LeftSpaceExc b) = LeftSpaceExc (min a b)
+instance Intersect (AllOr LeftSpaceInc ) (AllOr RightSpaceExc) (Maybe SpanExcInc) where intersect = flip intersect
+instance Intersect (AllOr RightSpaceExc) (AllOr LeftSpaceInc)  (Maybe SpanExcInc) where
+    intersect (Or rs) (Or ls) = rs `intersect` ls
+    intersect allOrRs allOrLs = Just (SpanExcInc allOrRs allOrLs)
 instance Intersect (AllOr LeftSpaceExc ) (AllOr RightSpaceInc) (Maybe SpanIncExc) where intersect = flip intersect
 instance Intersect (AllOr RightSpaceInc) (AllOr LeftSpaceExc)  (Maybe SpanIncExc) where
     intersect (Or rs) (Or ls) = rs `intersect` ls
@@ -405,6 +442,8 @@ instance Contains RightSpaceInc TimeD where
     contains (RightSpaceInc a) t = t >= toTime a
 instance Contains RightSpaceInc Time where
     contains rs t = rs `contains` D_Exactly t
+instance Contains SpanExcInc Time where
+    contains (SpanExcInc rs ls) t = ls `contains` t && rs `contains` t
 instance Contains SpanIncExc Time where
     contains (SpanIncExc rs ls) t = ls `contains` t && rs `contains` t
 instance Contains RightSpaceInc RightSpaceInc where

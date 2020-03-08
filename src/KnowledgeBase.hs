@@ -15,12 +15,40 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
 
-module KnowledgeBase where
+module KnowledgeBase
+    ( -- Language Definition
+      GameDefinition
+    , SourceEventDef (..)
+    , BehaviorDef (..)
+    , EventDef (..)
+    , KeyB
+    , KeyE
+    , KeySE
+    , EIx (..)
+    , BIx (..)
+    , FieldIx (..)
+    , Rule
+    , foldB
+    , behavior
+    , getB
+    , getNextB
+    , getE
+
+    -- Knowledge base management
+    , KnowledgeBase
+    , newKnowledgeBase
+    , insertFacts
+    , lookupB
+
+    -- Facts
+    , Fact
+    , facts
+    ) where
 
 import Control.Applicative ((<|>))
 import Control.Monad (forM, forM_, mapM_, when)
 import Control.Monad.Trans.State.Lazy
-import Data.List (find, takeWhile)
+import Data.List (find, nub, sort, takeWhile)
 import Data.Maybe (fromMaybe)
 
 import KnowledgeBase.DMap (DMap)
@@ -31,16 +59,23 @@ import qualified KnowledgeBase.Timeline as T
 import TimeSpan
 import Time
 
+--
+-- FRP surface language (This shouled be moved to FRP module)
+--
+
 data SourceEventDef a   = SourceEvent
 data BehaviorDef game a = BehaviorDef [FactB a] (Rule game a)
 data EventDef    game a = EventDef    [FactE a] (Rule game a)
+
+type GameDefinition game = game SourceEventDef (EventDef game) (BehaviorDef game)
 
 newtype EIx a = EIx Int deriving (Eq, Ord, Show)
 newtype BIx a = BIx Int deriving (Eq, Ord, Show)
 data Ix a = Ix_B (BIx a) | Ix_E (EIx a)
 
-type KeyB game a = forall e b . game e e b -> b a
-type KeyE game a = forall e b . game e e b -> e a
+type KeyB  game a = forall e b    . game e e b -> b a
+type KeyE  game a = forall e b    . game e e b -> e a
+type KeySE game a = forall se e b . game se e b -> se a
 data Key game a
     = KeyB (KeyB game a)
     | KeyE (KeyE game a)
@@ -50,6 +85,9 @@ class FieldIx game where
 
     eIx :: KeyE game a -> EIx a
     eIx k = k fieldIxs
+
+    seIx :: KeySE game a -> EIx a
+    seIx k = k fieldIxs
 
     bIx :: KeyB game a -> BIx a
     bIx k = k fieldIxs
@@ -113,7 +151,7 @@ I'm worried about performance. Feels like there will be a lot of splitting of
 the rules. In particular I'm worried that we recalculate even though values have
 not changed.
 
-We may spend too much time in kbLookupB traversing backwards to find the latest
+We may spend too much time in lookupBIx traversing backwards to find the latest
 change. One solution would be to add an invariant on kbFactsB that all runs of
 NoChange must be combined into a single NoChange span where possible. This might
 just be a simple change to `insertFact`.
@@ -136,13 +174,15 @@ data KnowledgeBase game = KnowledgeBase
     -- (potentially many times) into smaller spans. as facts are inserted.
     }
 
-kbLookupB :: BIx a -> TimeX -> KnowledgeBase game -> Maybe a
-kbLookupB bix tx kb = do
+lookupBIx :: BIx a -> TimeX -> KnowledgeBase game -> Maybe a
+lookupBIx bix tx kb = do
     let TimelineB timeline = kbFactsB kb DMap.! bix
     factBTx <- tlLookup tx timeline
     let leftNs = leftNeighbors timeline (toFactSpan factBTx)
     foldr (\fact valMay -> factBToMayVal fact <|> valMay) Nothing (factBTx : leftNs)
 
+lookupB :: FieldIx game => KeyB game a -> TimeX -> KnowledgeBase game -> Maybe a
+lookupB keyb = lookupBIx (bIx keyb)
 
 newtype ActiveRulesB game a = ActiveRulesB { unActiveRulesB :: MultiTimeline (ActiveRule game a) }
 newtype ActiveRulesE game a = ActiveRulesE { unActiveRulesE :: MultiTimeline (ActiveRule game (Maybe a)) }
@@ -192,6 +232,36 @@ data Fact game
     = forall a . FactB (BIx a) (FactB a)
     | forall a . FactE (EIx a) (FactE a)
 
+-- | Create some facts about a source event.
+facts :: FieldIx game
+      => KeySE game a
+      -> Maybe Time
+      -- ^ Start of known time span (Exclusive). Nothing means negative infinity.
+      -> Maybe Time
+      -- ^ End of known time span (Inclusive). Nothing means positive infinity.
+      -> [(Time, a)]
+      -- ^ Event occurences. Must be strictly increasing in time and all in the
+      -- given known time span.
+      -> [Fact game]
+      -- The resulting facts.
+facts keySE tLoMay tHiMay occs = case outOfRangeOccs of
+    (_:_) -> error $ "facts: input occurrences are out of the range " ++ show tspan ++ ": " ++ show occTs
+    _ | occTs == sort (nub occTs) -> FactE eix <$> go tLoMay occs
+      | otherwise -> error $ "facts: input occurrences times are not strictly increasing: " ++ show occTs
+    where
+    occTs = fst <$> occs
+    tspan = spanExcInc tLoMay tHiMay
+    outOfRangeOccs = filter (not . contains tspan . fst) occs
+    eix = seIx keySE
+
+    go loMay []
+        | loMay ==  tHiMay = []
+        | otherwise = [ChangeSpan (spanExc loMay tHiMay) NoChange]
+    go loMay ((t,a):as)
+        = [ ChangeSpan (spanExc loMay (Just t)) NoChange
+          , ChangePoint t (Just a)
+          ] ++ go (Just t) as
+
 -- | State is the KnowledgeBase and the facts learned (including initial facts).
 type KnowledgeBaseM game = State (KnowledgeBase game, [Fact game])
 
@@ -207,18 +277,29 @@ asksKB f = gets (f . fst)
 runKnowledgeBaseM_ :: KnowledgeBaseM game a -> KnowledgeBase game -> (KnowledgeBase game, [Fact game])
 runKnowledgeBaseM_ m k = snd $ runState m (k, [])
 
+newKnowledgeBase :: GameDefinition game -> KnowledgeBase game
+newKnowledgeBase _ = KnowledgeBase
+    { kbFactsE = DMap.empty (TimelineE T.empty) :: DMap EIx TimelineE
+    , kbFactsB = DMap.empty (TimelineB T.empty) :: DMap BIx TimelineB
+    -- ^ All known facts.
+    , kbActiveRulesE     = DMap.empty (ActiveRulesE mtEmpty) :: DMap EIx (ActiveRulesE game)
+    , kbActiveRulesBCurr = DMap.empty (ActiveRulesB mtEmpty) :: DMap BIx (ActiveRulesB game)
+    , kbActiveRulesBNext = DMap.empty (ActiveRulesB mtEmpty) :: DMap BIx (ActiveRulesB game)
+    -- All rules are initialized to their first dependency spanning all of time
+    -- (except events' rules don't cover initial value). Hence a rule will be
+    -- fully discharged exactly once for all time, though will usually be split
+    -- (potentially many times) into smaller spans. as facts are inserted.
+    }
+
 insertFacts :: (FieldIx game)
     => KnowledgeBase game
     -- ^ Current KnowledgeBase.
     -> [Fact game]
     -- ^ New Facts
-    -> ( KnowledgeBase game
-       -- ^ New KnowledgeBase.
-       , [Fact game]
-       -- ^ New facts including the input facts.
-       )
+    -> KnowledgeBase game
+    -- ^ New KnowledgeBase.
 insertFacts knowledgeBaseTop fs
-    = runKnowledgeBaseM_ (forM fs $ insertFact) knowledgeBaseTop
+    = fst $ runKnowledgeBaseM_ (forM fs $ insertFact) knowledgeBaseTop
 
 insertFact :: forall game . FieldIx game
     => Fact game
@@ -252,12 +333,12 @@ insertFact factTop = do
             -- time span.
             -- For initial value facts, curr/next is just the initial value at X_NegInf.
             currAMay :: Maybe a <- asksKB $
-                kbLookupB ix (fromMaybe X_NegInf $ factSpanJustBeforeMinT (toFactSpan factB))
+                lookupBIx ix (fromMaybe X_NegInf $ factSpanJustBeforeMinT (toFactSpan factB))
 
             -- The (next) value known for the current fact's time span.
             -- For initial value facts, curr/next is just the initial value at X_NegInf.
             nextAMay :: Maybe a <- asksKB $
-                kbLookupB ix (fromMaybe X_NegInf $ factSpanMinT (toFactSpan factB))
+                lookupBIx ix (fromMaybe X_NegInf $ factSpanMinT (toFactSpan factB))
 
             kbFactsB' <- asksKB kbFactsB
             let factBSpan = toFactSpan factB
@@ -303,7 +384,6 @@ insertFact factTop = do
 
             -- Continue dependent rules
             mapM_ (continueRule (factEToOcc factE)) (unMultiTimeline extractedActiveRules)
-
     where
     insertCurrValueFact
         :: BIx a
@@ -315,280 +395,173 @@ insertFact factTop = do
             kbActiveRulesBCurr
             (\kb activeRules -> kb { kbActiveRulesBCurr = activeRules })
 
-    -- | insert a value fact into the knowlege base. This will handle poking any
-    -- active rules.
-    insertNextValueFact
-        :: BIx a
-        -> a
-        -> FactSpan
-        -> KnowledgeBaseM game ()
-    insertNextValueFact
-        = insertValueFact
-            kbActiveRulesBNext
-            (\kb activeRules -> kb { kbActiveRulesBNext = activeRules })
 
-    insertValueFact
-        :: (KnowledgeBase game -> DMap BIx (ActiveRulesB game))
-        -- ^ Get current or next active rules.
-        -> (KnowledgeBase game -> DMap BIx (ActiveRulesB game) -> KnowledgeBase game)
-        -- ^ Set current or next active rules.
-        -> BIx a
-        -> a
-        -> FactSpan
-        -> KnowledgeBaseM game ()
-    insertValueFact getActiveRules setActiveRules bix a valueFactSpan = do
-        -- Find/remove all active rules who's time (span) intersects the value fact.
-        ActiveRulesB activeRulesMT <- asksKB $ \kb -> (getActiveRules kb) DMap.! bix
-        let (extractedActiveRules, activeRulesMT') = mtCropView ar_factSpan activeRulesMT valueFactSpan
-        modifyKB $ \kb -> setActiveRules kb (DMap.update (const $ Just $ ActiveRulesB activeRulesMT') bix (getActiveRules kb))
-        mapM_ (continueRule a) (unMultiTimeline extractedActiveRules)
 
-    continueRule :: a -> ActiveRule game a -> KnowledgeBaseM game ()
-    continueRule a activeRule
-        -- Step all the extracted active rules and reinsert them either as new
-        -- active rules, or as facts (if the rule terminates).
-        = case activeRule of
-            ActiveRuleB factSpan finalFieldBIx continuationB ->
-                -- TODO use changeDetected
-                case continuationB a of
-                    Result r -> insertFact (FactB finalFieldBIx (case factSpan of
-                        FS_Init -> Init r
-                        FS_Point t -> ChangePoint t (MaybeChange (Just r))   -- TODO allow Rule to return "NoChange" for behaviours
-                        FS_Span tspan -> ChangeSpan tspan NoChange
-                        ))
-                    DependencyE keyE cont -> insertActiveRuleE (eIx keyE)
-                        (ActiveRuleB factSpan finalFieldBIx cont)
-                    DependencyB con keyB cont -> insertActiveRuleB con (bIx keyB)
-                        (ActiveRuleB factSpan finalFieldBIx cont)
-            ActiveRuleE factSpan finalFieldEIx continuationE ->
-                case continuationE a of
-                    Result r -> insertFact (FactE finalFieldEIx (case factSpan of
-                        FS_Init -> error "Trying to set Init value of an Event but events don't have initial values. Did you accidentally insert a Rule for an event that spans all of time including the initial value?"
-                        FS_Point t -> ChangePoint t r
-                        FS_Span tspan -> ChangeSpan tspan NoChange
-                        ))
-                    DependencyE keyE cont -> insertActiveRuleE (eIx keyE)
-                        (ActiveRuleE factSpan finalFieldEIx cont)
-                    DependencyB con keyB cont -> insertActiveRuleB con (bIx keyB)
-                        (ActiveRuleE factSpan finalFieldEIx cont)
+--
+-- For internal use
+--
 
-    insertActiveRuleE :: forall b
-        .  EIx b                        -- ^ Active rule's current dependency
-        -> ActiveRule game (Maybe b)    -- ^ Active rule
-        -> KnowledgeBaseM game ()
-    insertActiveRuleE eix activeRule
-        = insertActiveRule'
-            (\kb -> unTimelineE $ kbFactsE kb DMap.! eix)
-            (\ar kb -> kb
-                    { kbActiveRulesE = DMap.update
-                        (\(ActiveRulesE mt) -> Just $ ActiveRulesE $ mtFromList [ar] `mtUnion` mt)
-                        eix
-                        (kbActiveRulesE kb)
-                    }
-            )
-            (\f _kb -> Just (factEToOcc f))
-            eix
-            activeRule
 
-    insertActiveRuleB :: forall b
-        .  CurrOrNext
-        -> BIx b                -- ^ Active rule's current dependency
-        -> ActiveRule game b    -- ^ Active rule
-        -> KnowledgeBaseM game ()
-    insertActiveRuleB con bix activeRule
-        = insertActiveRule'
-            (\kb -> unTimelineB $ kbFactsB kb DMap.! bix)
-            (case con of
-                Curr -> \ar kb -> kb
-                    { kbActiveRulesBCurr = DMap.update
-                        (\(ActiveRulesB mt) -> Just $ ActiveRulesB $ mtFromList [ar] `mtUnion` mt)
-                        bix
-                        (kbActiveRulesBCurr kb)
-                    }
-                Next -> \ar kb -> kb
-                    { kbActiveRulesBNext = DMap.update
-                        (\(ActiveRulesB mt) -> Just $ ActiveRulesB $ mtFromList [ar] `mtUnion` mt)
-                        bix
-                        (kbActiveRulesBNext kb)
-                    }
-            )
-            (case con of
-                Curr -> \f kb -> kbLookupB bix (fromMaybe X_NegInf $ factSpanMinT $ toFactSpan f) kb
-                Next -> \f kb -> case f of
-                    -- The only time Next is different from current is if the
-                    -- fact is a change in the behavior value.
-                    ChangePoint _ (MaybeChange (Just b)) -> Just b
-                    _ -> kbLookupB bix (fromMaybe X_NegInf $ factSpanMinT $ toFactSpan f) kb
-            )
-            bix
-            activeRule
+-- | insert a value fact into the knowlege base. This will handle poking any
+-- active rules.
+insertNextValueFact
+    :: FieldIx game
+    => BIx a
+    -> a
+    -> FactSpan
+    -> KnowledgeBaseM game ()
+insertNextValueFact
+    = insertValueFact
+        kbActiveRulesBNext
+        (\kb activeRules -> kb { kbActiveRulesBNext = activeRules })
 
-    insertActiveRule'
-        :: forall b ix timeline id pd sd cvOutsize . (CropView (timeline id pd sd) FactSpan [Fact' id pd sd] cvOutsize)
-        => (KnowledgeBase game -> timeline id pd sd)
-        -- ^ Get active rule's dependency's timeline
-        -> (ActiveRule game b -> KnowledgeBase game -> KnowledgeBase game)
-        -- ^ Directly insert an active rule (assuming the dependency is `ix`).
-        -> (Fact' id pd sd -> KnowledgeBase game -> Maybe b)
-        -- ^ From a fact about the dependency, and the current knowledge base,
-        -- get the value of the dependency that should be used to continue the
-        -- active rule. WARNING If this returns Nothing, the active rule will be
-        -- inserted directly; you must ensure that the rule will eventually be
-        -- fired via some other means.
-        -> ix
-        -- ^ Active rule's dependency's index.
-        -> ActiveRule game b
-        -- ^ The active rule.
-        -> KnowledgeBaseM game ()
-    insertActiveRule' getTimeline directInsert depFactToValue ix activeRule = do
-        timeline <- asksKB $ getTimeline
-        let arFactSpan = ar_factSpan activeRule
-            extractedFacts = crop timeline arFactSpan
+insertValueFact
+    :: FieldIx game
+    => (KnowledgeBase game -> DMap BIx (ActiveRulesB game))
+    -- ^ Get current or next active rules.
+    -> (KnowledgeBase game -> DMap BIx (ActiveRulesB game) -> KnowledgeBase game)
+    -- ^ Set current or next active rules.
+    -> BIx a
+    -> a
+    -> FactSpan
+    -> KnowledgeBaseM game ()
+insertValueFact getActiveRules setActiveRules bix a valueFactSpan = do
+    -- Find/remove all active rules who's time (span) intersects the value fact.
+    ActiveRulesB activeRulesMT <- asksKB $ \kb -> (getActiveRules kb) DMap.! bix
+    let (extractedActiveRules, activeRulesMT') = mtCropView ar_factSpan activeRulesMT valueFactSpan
+    modifyKB $ \kb -> setActiveRules kb (DMap.update (const $ Just $ ActiveRulesB activeRulesMT') bix (getActiveRules kb))
+    mapM_ (continueRule a) (unMultiTimeline extractedActiveRules)
 
-        case extractedFacts of
-            -- Base cases: no facts, just directly insert the active rule.
-            [] -> modifyKB (directInsert activeRule)
-            -- Base cases: fully overlapping fact, continue the rule.
-            [f] | arFactSpan == toFactSpan f -> do
-                depValueMay <- asksKB (depFactToValue f)
-                case depValueMay of
-                    Nothing -> modifyKB (directInsert activeRule)
-                    Just depValue -> continueRule depValue activeRule
+continueRule :: FieldIx game => a -> ActiveRule game a -> KnowledgeBaseM game ()
+continueRule a activeRule
+    -- Step all the extracted active rules and reinsert them either as new
+    -- active rules, or as facts (if the rule terminates).
+    = case activeRule of
+        ActiveRuleB factSpan finalFieldBIx continuationB ->
+            -- TODO use changeDetected
+            case continuationB a of
+                Result r -> insertFact (FactB finalFieldBIx (case factSpan of
+                    FS_Init -> Init r
+                    FS_Point t -> ChangePoint t (MaybeChange (Just r))   -- TODO allow Rule to return "NoChange" for behaviours
+                    FS_Span tspan -> ChangeSpan tspan NoChange
+                    ))
+                DependencyE keyE cont -> insertActiveRuleE (eIx keyE)
+                    (ActiveRuleB factSpan finalFieldBIx cont)
+                DependencyB con keyB cont -> insertActiveRuleB con (bIx keyB)
+                    (ActiveRuleB factSpan finalFieldBIx cont)
+        ActiveRuleE factSpan finalFieldEIx continuationE ->
+            case continuationE a of
+                Result r -> insertFact (FactE finalFieldEIx (case factSpan of
+                    FS_Init -> error "Trying to set Init value of an Event but events don't have initial values. Did you accidentally insert a Rule for an event that spans all of time including the initial value?"
+                    FS_Point t -> ChangePoint t r
+                    FS_Span tspan -> ChangeSpan tspan NoChange
+                    ))
+                DependencyE keyE cont -> insertActiveRuleE (eIx keyE)
+                    (ActiveRuleE factSpan finalFieldEIx cont)
+                DependencyB con keyB cont -> insertActiveRuleB con (bIx keyB)
+                    (ActiveRuleE factSpan finalFieldEIx cont)
 
-            -- Recursive case: split the active rule and insert the parts.
-            _ -> do
-                let notCoveredRules :: [FactSpan]
-                    notCoveredRules = arFactSpan `difference` (toFactSpan <$> extractedFacts)
+insertActiveRuleE :: forall game b . FieldIx game
+    => EIx b                        -- ^ Active rule's current dependency
+    -> ActiveRule game (Maybe b)    -- ^ Active rule
+    -> KnowledgeBaseM game ()
+insertActiveRuleE eix activeRule
+    = insertActiveRule'
+        (\kb -> unTimelineE $ kbFactsE kb DMap.! eix)
+        (\ar kb -> kb
+                { kbActiveRulesE = DMap.update
+                    (\(ActiveRulesE mt) -> Just $ ActiveRulesE $ mtFromList [ar] `mtUnion` mt)
+                    eix
+                    (kbActiveRulesE kb)
+                }
+        )
+        (\f _kb -> Just (factEToOcc f))
+        eix
+        activeRule
 
-                    notCoveredActiveRules :: [ActiveRule game b]
-                    notCoveredActiveRules = case activeRule of
-                        ActiveRuleB _ finalBix cont
-                            -> [ ActiveRuleB s finalBix cont | s <- notCoveredRules ]
-                        ActiveRuleE _ finalEix cont
-                            -> [ ActiveRuleE s finalEix cont | s <- notCoveredRules ]
+insertActiveRuleB :: forall game b . FieldIx game
+    => CurrOrNext
+    -> BIx b                -- ^ Active rule's current dependency
+    -> ActiveRule game b    -- ^ Active rule
+    -> KnowledgeBaseM game ()
+insertActiveRuleB con bix activeRule
+    = insertActiveRule'
+        (\kb -> unTimelineB $ kbFactsB kb DMap.! bix)
+        (case con of
+            Curr -> \ar kb -> kb
+                { kbActiveRulesBCurr = DMap.update
+                    (\(ActiveRulesB mt) -> Just $ ActiveRulesB $ mtFromList [ar] `mtUnion` mt)
+                    bix
+                    (kbActiveRulesBCurr kb)
+                }
+            Next -> \ar kb -> kb
+                { kbActiveRulesBNext = DMap.update
+                    (\(ActiveRulesB mt) -> Just $ ActiveRulesB $ mtFromList [ar] `mtUnion` mt)
+                    bix
+                    (kbActiveRulesBNext kb)
+                }
+        )
+        (case con of
+            Curr -> \f kb -> lookupBIx bix (fromMaybe X_NegInf $ factSpanMinT $ toFactSpan f) kb
+            Next -> \f kb -> case f of
+                -- The only time Next is different from current is if the
+                -- fact is a change in the behavior value.
+                ChangePoint _ (MaybeChange (Just b)) -> Just b
+                _ -> lookupBIx bix (fromMaybe X_NegInf $ factSpanMinT $ toFactSpan f) kb
+        )
+        bix
+        activeRule
 
-                    -- THEN continue and insert the covered active rules
-                    coveredActiveRules :: [ActiveRule game b]
-                    coveredActiveRules = case activeRule of
-                        ActiveRuleB _ finalBix cont
-                            -> [ ActiveRuleB (toFactSpan fact) finalBix cont | fact <- extractedFacts ]
-                        ActiveRuleE _ finalEix cont
-                            -> [ ActiveRuleE (toFactSpan fact) finalEix cont | fact <- extractedFacts ]
+insertActiveRule'
+    :: forall game b ix timeline id pd sd cvOutsize . (FieldIx game, CropView (timeline id pd sd) FactSpan [Fact' id pd sd] cvOutsize)
+    => (KnowledgeBase game -> timeline id pd sd)
+    -- ^ Get active rule's dependency's timeline
+    -> (ActiveRule game b -> KnowledgeBase game -> KnowledgeBase game)
+    -- ^ Directly insert an active rule (assuming the dependency is `ix`).
+    -> (Fact' id pd sd -> KnowledgeBase game -> Maybe b)
+    -- ^ From a fact about the dependency, and the current knowledge base,
+    -- get the value of the dependency that should be used to continue the
+    -- active rule. WARNING If this returns Nothing, the active rule will be
+    -- inserted directly; you must ensure that the rule will eventually be
+    -- fired via some other means.
+    -> ix
+    -- ^ Active rule's dependency's index.
+    -> ActiveRule game b
+    -- ^ The active rule.
+    -> KnowledgeBaseM game ()
+insertActiveRule' getTimeline directInsert depFactToValue ix activeRule = do
+    timeline <- asksKB $ getTimeline
+    let arFactSpan = ar_factSpan activeRule
+        extractedFacts = crop timeline arFactSpan
 
-                mapM_ (insertActiveRule' getTimeline directInsert depFactToValue ix) (notCoveredActiveRules ++ coveredActiveRules)
+    case extractedFacts of
+        -- Base cases: no facts, just directly insert the active rule.
+        [] -> modifyKB (directInsert activeRule)
+        -- Base cases: fully overlapping fact, continue the rule.
+        [f] | arFactSpan == toFactSpan f -> do
+            depValueMay <- asksKB (depFactToValue f)
+            case depValueMay of
+                Nothing -> modifyKB (directInsert activeRule)
+                Just depValue -> continueRule depValue activeRule
 
-    -- | insert an active rule. The rule will be split into smaller spans and
-    -- evaluated as far as possible.
-    -- insertActiveRule
-    --     :: ActiveRule game a
-    --     -> KnowledgeBaseM game ()
-    -- insertActiveRule getActiveRules setActiveRules bix activeRule = _
-        -- TODO check for overlapping insertion
-    -- insertActiveRule
-    --   ix
-    --   activeRule
-    --   kb
-    --   = case ix of
-    --     Ix_B (bix :: BIx a) -> let
-    --         depVals :: [FactBVal a]
-    --         depVals = _crop (unTimelineBVal (kbValuesB kb DMap.! bix)) (ar_factSpan activeRule)
-    --         in foldl'
-    --             (\(kb', fs) depVal -> let
-    --                 a = factBValToVal depVal
-    --                 -- Run the rule
-    --                 (kb'', fs') = case activeRule of
-    --                     ActiveRuleB _arChangeDetected arFactSpan arFinalBIx arContinuation
-    --                         -> case arContinuation a of
-    --                             -- Got a result, so insert the newly learned fact
-    --                             Result r -> insertFact
-    --                                 (FactB arFinalBIx (case arFactSpan of
-    --                                     FS_Init -> Init r
-    --                                     -- TODO make use of arChangeDetected: if no
-    --                                     -- change detected, the resulting fact
-    --                                     -- should be NoChange
-    --                                     FS_Point t -> ChangePoint t (MaybeChange (Just r))
-    --                                     FS_Span tspan -> ChangeSpan tspan NoChange
-    --                                     )
-    --                                 )
-    --                                 kb'
-    --                             -- Got a new active rule. Insert it.
-    --                             DependencyE ke cont -> _
-    --                             DependencyB _ ke cont -> _
-    --                             -- Left (nextDepIx', activeRule') -> insertActiveRule nextDepIx' activeRule' kb'
-    --                     ActiveRuleE _arChangeDetected arFactSpan arFinalEIx arContinuation
-    --                         -> case arContinuation a of
-    --                             -- -- Got a result, so insert the newly learned fact
-    --                             -- Result r -> insertFact
-    --                             --     (FactB arFinalBIx (case arFactSpan of
-    --                             --         FS_Init -> Init r
-    --                             --         -- TODO make use of arChangeDetected: if no
-    --                             --         -- change detected, the resulting fact
-    --                             --         -- should be NoChange
-    --                             --         FS_Point t -> ChangePoint t (MaybeChange (Just r))
-    --                             --         FS_Span tspan -> ChangeSpan tspan NoChange
-    --                             --         )
-    --                             --     )
-    --                             --     kb'
-    --                             _ -> _
-    --                                     -- Ix_E rEix -> FactE rEix <$> (case arFactSpan of
-    --                                     --     FS_Init -> Nothing
-    --                                     --     -- TODO make use of arChangeDetected: if no
-    --                                     --     -- change detected, the resulting fact
-    --                                     --     -- should be NoChange
-    --                                     --     FS_Point t -> Just $ ChangePoint t (Just r)
-    --                                     --     FS_Span tspan -> Just $ ChangeSpan tspan NoChange
-    --                                     --     )
-    --                 in (kb'', fs' ++ fs)
-    --             )
-    --             (kb, [])
-    --             depVals
-    --     Ix_E eix -> _
+        -- Recursive case: split the active rule and insert the parts.
+        _ -> do
+            let notCoveredRules :: [FactSpan]
+                notCoveredRules = arFactSpan `difference` (toFactSpan <$> extractedFacts)
 
-        --
+                notCoveredActiveRules :: [ActiveRule game b]
+                notCoveredActiveRules = case activeRule of
+                    ActiveRuleB _ finalBix cont
+                        -> [ ActiveRuleB s finalBix cont | s <- notCoveredRules ]
+                    ActiveRuleE _ finalEix cont
+                        -> [ ActiveRuleE s finalEix cont | s <- notCoveredRules ]
 
-    -- -- | Lookup the known value just before (i.e. neighboring) the given time.
-    -- lookupValueBJustBeforeTime :: forall a . BIx a -> Time -> DMap BIx TimelineBVal -> Maybe a
-    -- lookupValueBJustBeforeTime ix t fm = case leftNeighbors t () do
-    --     TimelineBVal _ m <- fm DMap.! ix
-    --     (_, factBCVal) <- Map.lookupLT (X_Exactly t) m
-    --     case factBCVal of
-    --         -- There is a unknown gap between current time, t, and the last
-    --         -- FBCV_Change, so return Nothing.
-    --         FBCV_Change _ _ -> Nothing
-    --         FBCV_NoChange tspan a -> if tspan `contains` X_JustBefore t
-    --             then Just a
-    --             else Nothing
+                -- THEN continue and insert the covered active rules
+                coveredActiveRules :: [ActiveRule game b]
+                coveredActiveRules = case activeRule of
+                    ActiveRuleB _ finalBix cont
+                        -> [ ActiveRuleB (toFactSpan fact) finalBix cont | fact <- extractedFacts ]
+                    ActiveRuleE _ finalEix cont
+                        -> [ ActiveRuleE (toFactSpan fact) finalEix cont | fact <- extractedFacts ]
 
-    -- lookupValueBJustBeforeSpanExc :: forall a . BIx a -> SpanExc -> DMap BIx TimelineBVal -> Maybe a
-    -- lookupValueBJustBeforeSpanExc ix tspan fm = do
-    --     TimelineBVal initAMay m <- fm DMap.! ix
-    --     case spanExcJustBefore tspan of
-    --         Nothing -> initAMay
-    --         Just tJustBefore -> do
-    --             factBCVal <- Map.lookup (X_Exactly tJustBefore) m
-    --             case factBCVal of
-    --                 FBCV_Change _ a -> Just a
-    --                 -- We looked up an exact time, but FBCV_NoChange's key must
-    --                 -- be a X_JustAfter.
-    --                 FBCV_NoChange _ _ -> error "lookupValueBJustBeforeSpanExc: expected FBCV_Change but found FBCV_NoChange"
-
-    -- -- | Get all right NoChange neighbors (excludes input fact)
-    -- rightNoChangeNeighborsExc
-    --     :: TimelineB a
-    --     -> FactB a
-    --     -- ^ Current fact. First neighbor start just after this fact.
-    --     -> [FactB a]
-    -- rightNoChangeNeighborsExc kBFactsB@(TimelineB _ m) currFactB = case nextFactMay of
-    --     Nothing -> []
-    --     Just nextFact -> nextFact : rightNoChangeNeighborsExc kBFactsB nextFact
-    --     where
-    --     nextFactMay = case currFactB of
-    --         FB_Init a -> FB_Change <$> Map.lookup X_NegInf m
-    --         FB_Change (FBC_Change t _)
-    --             -> FB_Change <$> Map.lookup (X_JustAfter t) m
-    --         FB_Change (FBC_NoChange tspan)
-    --             -> do
-    --                 -- If spanExcJustAfter gives Nothing then we've reached the
-    --                 -- end of time, so can stop.
-    --                 nextTx <- spanExcJustAfter tspan
-    --                 FB_Change <$> Map.lookup (X_Exactly nextTx) m
+            mapM_ (insertActiveRule' getTimeline directInsert depFactToValue ix) (notCoveredActiveRules ++ coveredActiveRules)

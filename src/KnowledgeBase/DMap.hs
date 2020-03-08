@@ -37,6 +37,9 @@ data DMap (ix :: Type -> Type) (v :: Type -> Type)
         (Map Int ())
         -- ^ Map. Key must be coerced and values must be unsafeCoerced.
 
+empty :: (forall a . v a) -> DMap ix v
+empty def = DMap def Map.empty
+
 update :: Coercible (ix a) Int
     => (v a -> Maybe (v a))
     -- ^ Nothing means use the default value

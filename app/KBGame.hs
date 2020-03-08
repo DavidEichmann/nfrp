@@ -1,8 +1,3 @@
-{-# OPTIONS_GHC -Wno-partial-type-signatures #-}
-{-# OPTIONS_GHC -fdefer-typed-holes #-}
-{-# OPTIONS_GHC -Wno-unused-top-binds #-}
-{-# OPTIONS_GHC -Wincomplete-uni-patterns #-}
-
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE ExistentialQuantification #-}
@@ -20,9 +15,12 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
 
-module KnowledgeBaseGame where
+module Main where
 
 import KnowledgeBase
+
+main :: IO ()
+main = putStrLn "Hello World!"
 
 -- Describes all the data E/Bs of the game (and inputs)
 data Game sourceEvent event behavior = Game
@@ -36,7 +34,7 @@ data Game sourceEvent event behavior = Game
     }
 type Pos = (Int, Int)
 
-gameLogic :: Game SourceEventDef (EventDef Game) (BehaviorDef Game)
+gameLogic :: GameDefinition Game
 gameLogic = Game
     { player1InputA = SourceEvent
     , player1InputB = SourceEvent
