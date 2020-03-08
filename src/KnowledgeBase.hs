@@ -356,38 +356,40 @@ insertFact factTop = do
         TimelineE timelineE <- asksKB $ \kb -> kbFactsE kb DMap.! eix
         let arFactSpan = ar_factSpan activeRule
             (extractedFacts, _) = cropView timelineE arFactSpan
-        -- The extracted facts might cover a subset of the active rule span. For
-        -- the spans that are NOT covered the rule should be inserted directly
-        -- and *before* continuing any rules incase some derived continuation
-        -- (from continuing the covered rules) needs to see the not-covered
-        -- rules.
-            notCoveredRules :: [FactSpan]
-            notCoveredRules = arFactSpan `difference` (toFactSpan <$> extractedFacts)
 
-            notCovertedActiveRules :: [ActiveRule game (Maybe b)]
-            notCovertedActiveRules = case activeRule of
-                ActiveRuleB _ finalBix cont
-                    -> [ ActiveRuleB s finalBix cont | s <- notCoveredRules ]
-                ActiveRuleE _ finalEix cont
-                    -> [ ActiveRuleE s finalEix cont | s <- notCoveredRules ]
+        case extractedFacts of
+            -- Base cases: no facts, just directly insert the active rule.
+            [] -> modifyKB $ \kb -> kb
+                    { kbActiveRulesE = DMap.update
+                        (\(ActiveRulesE mt) -> Just $ ActiveRulesE $ mtFromList ar_factSpan [activeRule] `mtUnion` mt)
+                        eix
+                        (kbActiveRulesE kb)
+                    }
+            -- Base cases: fully overlapping fact, continue the rule.
+            [f] | arFactSpan == toFactSpan f -> do
+                continueRule (factEToOcc f) activeRule
 
-        -- FIRST directly insert the not-covered active rules.
-        modifyKB $ \kb -> kb
-            { kbActiveRulesE = DMap.update
-                (\(ActiveRulesE mt) -> Just $ ActiveRulesE $ mtFromList ar_factSpan notCovertedActiveRules `mtUnion` mt)
-                eix
-                (kbActiveRulesE kb)
-            }
+            -- Recursive case: split the active rule and insert the parts.
+            _ -> do
+                let notCoveredRules :: [FactSpan]
+                    notCoveredRules = arFactSpan `difference` (toFactSpan <$> extractedFacts)
 
-        -- THEN continue and insert the covered active rules
-        forM_ extractedFacts $ \coveredfact -> do
-            let coveredSpan = toFactSpan coveredfact
-                coveredActiveRule = case activeRule of
-                    ActiveRuleB _ finalBix cont
-                        -> ActiveRuleB coveredSpan finalBix cont
-                    ActiveRuleE _ finalEix cont
-                        -> ActiveRuleE coveredSpan finalEix cont
-            continueRule (factEToOcc coveredfact) coveredActiveRule
+                    notCoveredActiveRules :: [ActiveRule game (Maybe b)]
+                    notCoveredActiveRules = case activeRule of
+                        ActiveRuleB _ finalBix cont
+                            -> [ ActiveRuleB s finalBix cont | s <- notCoveredRules ]
+                        ActiveRuleE _ finalEix cont
+                            -> [ ActiveRuleE s finalEix cont | s <- notCoveredRules ]
+
+                    -- THEN continue and insert the covered active rules
+                    coveredActiveRules :: [ActiveRule game (Maybe b)]
+                    coveredActiveRules = case activeRule of
+                        ActiveRuleB _ finalBix cont
+                            -> [ ActiveRuleB (toFactSpan fact) finalBix cont | fact <- extractedFacts ]
+                        ActiveRuleE _ finalEix cont
+                            -> [ ActiveRuleE (toFactSpan fact) finalEix cont | fact <- extractedFacts ]
+
+                mapM_ (insertActiveRuleE eix) (notCoveredActiveRules ++ coveredActiveRules)
 
     insertActiveRuleB :: CurrOrNext -> BIx b -> ActiveRule game b -> KnowledgeBaseM game ()
     insertActiveRuleB = _

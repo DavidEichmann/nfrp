@@ -89,6 +89,7 @@ data FactSpan
     -- ^ single point in time
     | FS_Span SpanExc
     -- ^ Span of time. `allT` does NOT include the (Behavior) initial value.
+    deriving stock (Eq)
 
 
 instance Contains FactSpan Time where
