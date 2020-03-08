@@ -21,6 +21,7 @@ import Control.Applicative ((<|>))
 import Control.Monad (forM, forM_, mapM_, when)
 import Control.Monad.Trans.State.Lazy
 import Data.List (find, takeWhile)
+import Data.Maybe (fromMaybe)
 
 import KnowledgeBase.DMap (DMap)
 import qualified KnowledgeBase.DMap as DMap
@@ -164,6 +165,29 @@ data ActiveRule game a
         -- Nothing result means no event occurrence.
         }
 
+instance CropView (ActiveRule game a) FactSpan [ActiveRule game a] [ActiveRule game a] where
+    cropView activeRule factSpan = case ar_factSpan activeRule `intersect` factSpan of
+      Nothing -> ([], [activeRule])
+      Just cropSpan ->
+        let outsideSpans :: [FactSpan]
+            outsideSpans = ar_factSpan activeRule `difference` factSpan
+
+            outsideActiveRules :: [ActiveRule game a]
+            outsideActiveRules = case activeRule of
+                ActiveRuleB _ finalBix cont
+                    -> [ ActiveRuleB s finalBix cont | s <- outsideSpans ]
+                ActiveRuleE _ finalEix cont
+                    -> [ ActiveRuleE s finalEix cont | s <- outsideSpans ]
+
+            -- THEN continue and insert the covered active rules
+            insideActiveRule :: ActiveRule game a
+            insideActiveRule = case activeRule of
+                ActiveRuleB _ finalBix cont
+                    -> ActiveRuleB cropSpan finalBix cont
+                ActiveRuleE _ finalEix cont
+                    -> ActiveRuleE cropSpan finalEix cont
+        in ([insideActiveRule], outsideActiveRules)
+
 data Fact game
     = forall a . FactB (BIx a) (FactB a)
     | forall a . FactE (EIx a) (FactE a)
@@ -202,8 +226,8 @@ insertFact :: forall game . FieldIx game
     -> KnowledgeBaseM game ()
 insertFact factTop = do
     hasOverlaps <- asksKB $ \kb -> case factTop of
-        FactB ix f -> not $ null $ fst $ cropView (unTimelineB (kbFactsB kb DMap.! ix)) (toFactSpan f)
-        FactE ix f -> not $ null $ fst $ cropView (unTimelineE (kbFactsE kb DMap.! ix)) (toFactSpan f)
+        FactB ix f -> not $ tlNull $ snd $ cropView (unTimelineB (kbFactsB kb DMap.! ix)) (toFactSpan f)
+        FactE ix f -> not $ tlNull $ snd $ cropView (unTimelineE (kbFactsE kb DMap.! ix)) (toFactSpan f)
 
     when hasOverlaps $ error "insertFacts: new fact overlaps existing facts" -- TODO better output
 
@@ -226,12 +250,14 @@ insertFact factTop = do
 
             -- The (current) value known just before the current fact's
             -- time span.
+            -- For initial value facts, curr/next is just the initial value at X_NegInf.
             currAMay :: Maybe a <- asksKB $
-                kbLookupB ix (factSpanJustBeforeMinT (toFactSpan factB))
+                kbLookupB ix (fromMaybe X_NegInf $ factSpanJustBeforeMinT (toFactSpan factB))
 
             -- The (next) value known for the current fact's time span.
+            -- For initial value facts, curr/next is just the initial value at X_NegInf.
             nextAMay :: Maybe a <- asksKB $
-                kbLookupB ix (factSpanMinT (toFactSpan factB))
+                kbLookupB ix (fromMaybe X_NegInf $ factSpanMinT (toFactSpan factB))
 
             kbFactsB' <- asksKB kbFactsB
             let factBSpan = toFactSpan factB
@@ -272,11 +298,11 @@ insertFact factTop = do
 
             -- Extract dependent rules.
             ActiveRulesE activeRulesMT <- asksKB $ \kb -> kbActiveRulesE kb DMap.! ix
-            let (extractedActiveRules, activeRulesMT') = cropView activeRulesMT (toFactSpan factE)
+            let (extractedActiveRules, activeRulesMT') = mtCropView ar_factSpan activeRulesMT (toFactSpan factE)
             modifyKB $ \kb -> kb { kbActiveRulesE = DMap.update (const $ Just $ ActiveRulesE activeRulesMT') ix (kbActiveRulesE kb) }
 
             -- Continue dependent rules
-            mapM_ (continueRule (factEToOcc factE)) extractedActiveRules
+            mapM_ (continueRule (factEToOcc factE)) (unMultiTimeline extractedActiveRules)
 
     where
     insertCurrValueFact
@@ -313,9 +339,9 @@ insertFact factTop = do
     insertValueFact getActiveRules setActiveRules bix a valueFactSpan = do
         -- Find/remove all active rules who's time (span) intersects the value fact.
         ActiveRulesB activeRulesMT <- asksKB $ \kb -> (getActiveRules kb) DMap.! bix
-        let (extractedActiveRules, activeRulesMT') = cropView activeRulesMT valueFactSpan
+        let (extractedActiveRules, activeRulesMT') = mtCropView ar_factSpan activeRulesMT valueFactSpan
         modifyKB $ \kb -> setActiveRules kb (DMap.update (const $ Just $ ActiveRulesB activeRulesMT') bix (getActiveRules kb))
-        mapM_ (continueRule a) extractedActiveRules
+        mapM_ (continueRule a) (unMultiTimeline extractedActiveRules)
 
     continueRule :: a -> ActiveRule game a -> KnowledgeBaseM game ()
     continueRule a activeRule
@@ -355,7 +381,7 @@ insertFact factTop = do
             (\kb -> unTimelineE $ kbFactsE kb DMap.! eix)
             (\ar kb -> kb
                     { kbActiveRulesE = DMap.update
-                        (\(ActiveRulesE mt) -> Just $ ActiveRulesE $ mtFromList ar_factSpan [ar] `mtUnion` mt)
+                        (\(ActiveRulesE mt) -> Just $ ActiveRulesE $ mtFromList [ar] `mtUnion` mt)
                         eix
                         (kbActiveRulesE kb)
                     }
@@ -375,30 +401,30 @@ insertFact factTop = do
             (case con of
                 Curr -> \ar kb -> kb
                     { kbActiveRulesBCurr = DMap.update
-                        (\(ActiveRulesB mt) -> Just $ ActiveRulesB $ mtFromList ar_factSpan [ar] `mtUnion` mt)
+                        (\(ActiveRulesB mt) -> Just $ ActiveRulesB $ mtFromList [ar] `mtUnion` mt)
                         bix
                         (kbActiveRulesBCurr kb)
                     }
                 Next -> \ar kb -> kb
                     { kbActiveRulesBNext = DMap.update
-                        (\(ActiveRulesB mt) -> Just $ ActiveRulesB $ mtFromList ar_factSpan [ar] `mtUnion` mt)
+                        (\(ActiveRulesB mt) -> Just $ ActiveRulesB $ mtFromList [ar] `mtUnion` mt)
                         bix
                         (kbActiveRulesBNext kb)
                     }
             )
             (case con of
-                Curr -> \f kb -> kbLookupB bix (factSpanMinT $ toFactSpan f) kb
+                Curr -> \f kb -> kbLookupB bix (fromMaybe X_NegInf $ factSpanMinT $ toFactSpan f) kb
                 Next -> \f kb -> case f of
                     -- The only time Next is different from current is if the
                     -- fact is a change in the behavior value.
                     ChangePoint _ (MaybeChange (Just b)) -> Just b
-                    _ -> kbLookupB bix (factSpanMinT $ toFactSpan f) kb
+                    _ -> kbLookupB bix (fromMaybe X_NegInf $ factSpanMinT $ toFactSpan f) kb
             )
             bix
             activeRule
 
     insertActiveRule'
-        :: forall b ix timeline id pd sd . (CropView (timeline id pd sd) FactSpan [Fact' id pd sd])
+        :: forall b ix timeline id pd sd cvOutsize . (CropView (timeline id pd sd) FactSpan [Fact' id pd sd] cvOutsize)
         => (KnowledgeBase game -> timeline id pd sd)
         -- ^ Get active rule's dependency's timeline
         -> (ActiveRule game b -> KnowledgeBase game -> KnowledgeBase game)
@@ -417,7 +443,7 @@ insertFact factTop = do
     insertActiveRule' getTimeline directInsert depFactToValue ix activeRule = do
         timeline <- asksKB $ getTimeline
         let arFactSpan = ar_factSpan activeRule
-            (extractedFacts, _) = cropView timeline arFactSpan
+            extractedFacts = crop timeline arFactSpan
 
         case extractedFacts of
             -- Base cases: no facts, just directly insert the active rule.
