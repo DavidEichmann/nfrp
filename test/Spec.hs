@@ -66,7 +66,7 @@ tests = testGroup "lcTransaction"
         let err = show kb
             kbInit = newKnowledgeBase gameLogic
             input1Facts = facts input1 Nothing Nothing [ (1, "a"), (10, "b"), (100, "c")]
-            -- player1InputBFacts = facts player1InputB Nothing Nothing [ (1, ()), (5, ()), (50, ())]
+            -- input1Facts = facts input1 Nothing (Just 1) [  ]
             kb = insertFacts input1Facts kbInit
 
         assertEqual err (Just (Nothing)) (lookupE input1 0 kb)
@@ -109,7 +109,13 @@ gameLogic = Game
     { input1 = SourceEvent
     , steppedInput1 = foldB "init" $ do
         occ <- getE input1
-        return $ fromMaybe "init" occ
+        oldVal <- getB steppedInput1
+        return $ fromMaybe oldVal occ
+
+        TODO things aren't looking good. the test is showing the source event facts are inserted,
+        but we seem to loos active rules.
+        perhaps pick a simpler case? Maybe derive an event that is just the mapped event.
+
     }
 
 -- TODO use generics to do this. Why do this like this? Well we'll need to send

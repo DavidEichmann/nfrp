@@ -105,7 +105,7 @@ instance Show SpanExc where
 spanExc :: Maybe Time -> Maybe Time -> SpanExc
 spanExc lo hi
     = case spanExcMaybe lo hi of
-        Nothing -> error "spanIncExc: lo >= hi"
+        Nothing -> error "spanExc: lo >= hi"
         Just x -> x
 
 -- Inclusive start Exclusive end span.
@@ -343,7 +343,7 @@ instance Show SpanExcInc where
 spanExcInc :: Maybe Time -> Maybe Time -> SpanExcInc
 spanExcInc lo hi
     = case spanExcIncMaybe lo hi of
-        Nothing -> error "spanIncExc: lo >= hi"
+        Nothing -> error "spanExcInc: lo >= hi"
         Just x -> x
 
 spanExcIncMaybe :: Maybe Time -> Maybe Time -> Maybe SpanExcInc

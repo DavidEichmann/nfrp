@@ -272,23 +272,27 @@ facts :: FieldIx game
       -- given known time span.
       -> [Fact game]
       -- The resulting facts.
-facts keySE tLoMay tHiMay occs = case outOfRangeOccs of
+facts keySE tLoMayTop tHiMay occs = case outOfRangeOccs of
     (_:_) -> error $ "facts: input occurrences are out of the range " ++ show tspan ++ ": " ++ show occTs
-    _ | occTs == sort (nub occTs) -> FactE eix <$> go tLoMay occs
+    _ | occTs == sort (nub occTs) -> FactE eix <$> go tLoMayTop occs
       | otherwise -> error $ "facts: input occurrences times are not strictly increasing: " ++ show occTs
     where
     occTs = fst <$> occs
-    tspan = spanExcInc tLoMay tHiMay
+    tspan = spanExcInc tLoMayTop tHiMay
     outOfRangeOccs = filter (not . contains tspan . fst) occs
     eix = seIx keySE
 
     go loMay []
-        | loMay ==  tHiMay = []
+        | Just tHi <- tHiMay
+        = if loMay == tHiMay
+            then []
+            else ChangeSpan (spanExc loMay tHiMay) NoChange
+                    : [ChangePoint tHi Nothing]
         | otherwise = [ChangeSpan (spanExc loMay tHiMay) NoChange]
     go loMay ((t,a):as)
-        = [ ChangeSpan (spanExc loMay (Just t)) NoChange
-          , ChangePoint t (Just a)
-          ] ++ go (Just t) as
+        = ChangeSpan (spanExc loMay (Just t)) NoChange
+            : ChangePoint t (Just a)
+            : go (Just t) as
 
 -- | State is the KnowledgeBase and the facts learned (including initial facts).
 type KnowledgeBaseM game = State (KnowledgeBase game, [Fact game])
@@ -694,3 +698,7 @@ instance Pretty (EIx a) where pretty = viaShow
 
 instance Pretty (ActiveRulesE game a) where pretty = viaShow . fmap ar_factSpan . unMultiTimeline . unActiveRulesE
 instance Pretty (ActiveRulesB game a) where pretty = viaShow . fmap ar_factSpan . unMultiTimeline . unActiveRulesB
+
+instance Pretty (Fact game) where
+    pretty (FactB ix f) = "FactB (" <> pretty ix <> ") " <> pretty (toFactSpan f)
+    pretty (FactE ix f) = "FactE (" <> pretty ix <> ") " <> pretty (toFactSpan f)
