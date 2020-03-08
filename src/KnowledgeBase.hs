@@ -84,15 +84,15 @@ data Key game a
     = KeyB (KeyB game a)
     | KeyE (KeyE game a)
 
-newtype SomeKeyB  game = SomeKeyB  (forall se e b a . game se e b -> b  a)
-newtype SomeKeyE  game = SomeKeyE  (forall se e b a . game se e b -> e  a)
-newtype SomeKeySE game = SomeKeySE (forall se e b a . game se e b -> se a)
+data SomeKeyB  game = forall a . SomeKeyB  (forall se e b . game se e b -> b  a)
+data SomeKeyE  game = forall a . SomeKeyE  (forall se e b . game se e b -> e  a)
+data SomeKeySE game = forall a . SomeKeySE (forall se e b . game se e b -> se a)
 class FieldIx game where
     fieldIxs :: game EIx EIx BIx
 
-    allGameBs  :: game se e b -> [SomeKeyB  game]
-    allGameEs  :: game se e b -> [SomeKeyE  game]
-    allGameSEs :: game se e b -> [SomeKeySE game]
+    allGameBs  :: [SomeKeyB  game]
+    allGameEs  :: [SomeKeyE  game]
+    allGameSEs :: [SomeKeySE game]
 
     eIx :: KeyE game a -> EIx a
     eIx k = k fieldIxs
@@ -312,33 +312,33 @@ newKnowledgeBase gameDef = let
         -- (potentially many times) into smaller spans. as facts are inserted.
         }
     initializeKB = do
-        forM_ (allGameBs gameDef) $ \(SomeKeyB keyB) -> case keyB gameDef of
+        forM_ allGameBs $ \(SomeKeyB keyB) -> case keyB gameDef of
             BehaviorDef fs rule -> do
                 let bix = keyB fieldIxs
                 mapM_ insertFact (FactB bix <$> fs)
                 insertRuleB bix rule
 
-        forM_ (allGameEs gameDef) $ \(SomeKeyE keyE) -> case keyE gameDef of
+        forM_ allGameEs $ \(SomeKeyE keyE) -> case keyE gameDef of
             EventDef fs rule -> do
                 let eix = keyE fieldIxs
                 mapM_ insertFact (FactE eix <$> fs)
                 insertRuleE eix rule
 
         -- Here for completeness and compiler errors if SourceEventDef changes
-        forM_ (allGameSEs gameDef) $ \(SomeKeySE keySE) -> case keySE gameDef of
+        forM_ allGameSEs $ \(SomeKeySE keySE) -> case keySE gameDef of
             SourceEvent -> return ()
 
     in fst $ runKnowledgeBaseM_ initializeKB emptyKB
 
 
 insertFacts :: (FieldIx game)
-    => KnowledgeBase game
-    -- ^ Current KnowledgeBase.
-    -> [Fact game]
+    => [Fact game]
     -- ^ New Facts
     -> KnowledgeBase game
+    -- ^ Current KnowledgeBase.
+    -> KnowledgeBase game
     -- ^ New KnowledgeBase.
-insertFacts knowledgeBaseTop fs
+insertFacts fs knowledgeBaseTop
     = fst $ runKnowledgeBaseM_ (forM fs $ insertFact) knowledgeBaseTop
 
 insertFact :: forall game . FieldIx game

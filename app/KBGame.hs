@@ -20,7 +20,12 @@ module Main where
 import KnowledgeBase
 
 main :: IO ()
-main = putStrLn "Hello World!"
+main = do
+    let kb = newKnowledgeBase gameLogic
+        player1InputAFacts = facts player1InputA Nothing Nothing [ (1, ()), (10, ()), (100, ())]
+        player1InputBFacts = facts player1InputB Nothing Nothing [ (1, ()), (5, ()), (50, ())]
+        kb' = insertFacts (player1InputAFacts ++ player1InputBFacts) kb
+    putStrLn "Hello World!"
 
 -- Describes all the data E/Bs of the game (and inputs)
 data Game sourceEvent event behavior = Game
@@ -32,6 +37,7 @@ data Game sourceEvent event behavior = Game
     , player2Pos :: behavior Pos
     , arePlayersOverlapping :: behavior Bool
     }
+
 type Pos = (Int, Int)
 
 gameLogic :: GameDefinition Game
@@ -77,3 +83,17 @@ instance FieldIx Game where
         , player2Pos            = BIx 5
         , arePlayersOverlapping = BIx 6
         }
+
+    allGameBs =
+        [ SomeKeyB player1Pos
+        , SomeKeyB player2Pos
+        , SomeKeyB arePlayersOverlapping
+        ]
+    allGameEs = []
+    allGameSEs =
+        [ SomeKeySE player1InputA
+        , SomeKeySE player1InputB
+        , SomeKeySE player2InputA
+        , SomeKeySE player2InputB
+        ]
+
