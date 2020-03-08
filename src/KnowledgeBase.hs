@@ -1,8 +1,3 @@
-{-# OPTIONS_GHC -Wno-partial-type-signatures #-}
-{-# OPTIONS_GHC -fdefer-typed-holes #-}
-{-# OPTIONS_GHC -Wno-unused-top-binds #-}
-{-# OPTIONS_GHC -Wincomplete-uni-patterns #-}
-
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE ExistentialQuantification #-}
@@ -206,8 +201,11 @@ insertFact :: forall game . FieldIx game
     -- ^ A single fact to insert.
     -> KnowledgeBaseM game ()
 insertFact factTop = do
-    overlaps <- _checkOverlap
-    when overlaps $ error "insertFacts: new fact overlaps existing facts" -- TODO better output
+    hasOverlaps <- asksKB $ \kb -> case factTop of
+        FactB ix f -> not $ null $ fst $ cropView (unTimelineB (kbFactsB kb DMap.! ix)) (toFactSpan f)
+        FactE ix f -> not $ null $ fst $ cropView (unTimelineE (kbFactsE kb DMap.! ix)) (toFactSpan f)
+
+    when hasOverlaps $ error "insertFacts: new fact overlaps existing facts" -- TODO better output
 
     -- Store the new fact.
     writeFact factTop
@@ -568,9 +566,3 @@ insertFact factTop = do
     --                 -- end of time, so can stop.
     --                 nextTx <- spanExcJustAfter tspan
     --                 FB_Change <$> Map.lookup (X_Exactly nextTx) m
-
-
-
-
-    overlaps :: Bool
-    overlaps = _
