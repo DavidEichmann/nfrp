@@ -67,13 +67,13 @@ gameLogic = Game
 -- facts over the network eventually, and we'll need a way to index those facts
 -- on their corresponding field, so something like this seems inherently
 -- necessary.
-gameFields :: Game EIx EIx BIx
-gameFields = Game
-    { player1InputA         = EIx 0
-    , player1InputB         = EIx 1
-    , player2InputA         = EIx 2
-    , player2InputB         = EIx 3
-    , player1Pos            = BIx 4
-    , player2Pos            = BIx 5
-    , arePlayersOverlapping = BIx 6
-    }
+instance FieldIx Game where
+    fieldIxs = Game
+        { player1InputA         = EIx 0
+        , player1InputB         = EIx 1
+        , player2InputA         = EIx 2
+        , player2InputB         = EIx 3
+        , player1Pos            = BIx 4
+        , player2Pos            = BIx 5
+        , arePlayersOverlapping = BIx 6
+        }

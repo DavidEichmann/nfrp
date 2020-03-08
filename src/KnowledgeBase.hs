@@ -24,6 +24,9 @@ module KnowledgeBase
     , KeyB
     , KeyE
     , KeySE
+    , SomeKeyB (..)
+    , SomeKeyE (..)
+    , SomeKeySE (..)
     , EIx (..)
     , BIx (..)
     , FieldIx (..)
@@ -65,7 +68,7 @@ import Time
 
 data SourceEventDef a   = SourceEvent
 data BehaviorDef game a = BehaviorDef [FactB a] (Rule game a)
-data EventDef    game a = EventDef    [FactE a] (Rule game a)
+data EventDef    game a = EventDef    [FactE a] (Rule game (Maybe a))
 
 type GameDefinition game = game SourceEventDef (EventDef game) (BehaviorDef game)
 
@@ -80,8 +83,15 @@ data Key game a
     = KeyB (KeyB game a)
     | KeyE (KeyE game a)
 
+newtype SomeKeyB  game = SomeKeyB  (forall se e b a . game se e b -> b  a)
+newtype SomeKeyE  game = SomeKeyE  (forall se e b a . game se e b -> e  a)
+newtype SomeKeySE game = SomeKeySE (forall se e b a . game se e b -> se a)
 class FieldIx game where
     fieldIxs :: game EIx EIx BIx
+
+    allGameBs  :: game se e b -> [SomeKeyB  game]
+    allGameEs  :: game se e b -> [SomeKeyE  game]
+    allGameSEs :: game se e b -> [SomeKeySE game]
 
     eIx :: KeyE game a -> EIx a
     eIx k = k fieldIxs
@@ -277,19 +287,39 @@ asksKB f = gets (f . fst)
 runKnowledgeBaseM_ :: KnowledgeBaseM game a -> KnowledgeBase game -> (KnowledgeBase game, [Fact game])
 runKnowledgeBaseM_ m k = snd $ runState m (k, [])
 
-newKnowledgeBase :: GameDefinition game -> KnowledgeBase game
-newKnowledgeBase _ = KnowledgeBase
-    { kbFactsE = DMap.empty (TimelineE T.empty) :: DMap EIx TimelineE
-    , kbFactsB = DMap.empty (TimelineB T.empty) :: DMap BIx TimelineB
-    -- ^ All known facts.
-    , kbActiveRulesE     = DMap.empty (ActiveRulesE mtEmpty) :: DMap EIx (ActiveRulesE game)
-    , kbActiveRulesBCurr = DMap.empty (ActiveRulesB mtEmpty) :: DMap BIx (ActiveRulesB game)
-    , kbActiveRulesBNext = DMap.empty (ActiveRulesB mtEmpty) :: DMap BIx (ActiveRulesB game)
-    -- All rules are initialized to their first dependency spanning all of time
-    -- (except events' rules don't cover initial value). Hence a rule will be
-    -- fully discharged exactly once for all time, though will usually be split
-    -- (potentially many times) into smaller spans. as facts are inserted.
-    }
+newKnowledgeBase :: FieldIx game => GameDefinition game -> KnowledgeBase game
+newKnowledgeBase gameDef = let
+    emptyKB = KnowledgeBase
+        { kbFactsE = DMap.empty (TimelineE T.empty) :: DMap EIx TimelineE
+        , kbFactsB = DMap.empty (TimelineB T.empty) :: DMap BIx TimelineB
+        -- ^ All known facts.
+        , kbActiveRulesE     = DMap.empty (ActiveRulesE mtEmpty) :: DMap EIx (ActiveRulesE game)
+        , kbActiveRulesBCurr = DMap.empty (ActiveRulesB mtEmpty) :: DMap BIx (ActiveRulesB game)
+        , kbActiveRulesBNext = DMap.empty (ActiveRulesB mtEmpty) :: DMap BIx (ActiveRulesB game)
+        -- All rules are initialized to their first dependency spanning all of time
+        -- (except events' rules don't cover initial value). Hence a rule will be
+        -- fully discharged exactly once for all time, though will usually be split
+        -- (potentially many times) into smaller spans. as facts are inserted.
+        }
+    initializeKB = do
+        forM_ (allGameBs gameDef) $ \(SomeKeyB keyB) -> case keyB gameDef of
+            BehaviorDef fs rule -> do
+                let bix = keyB fieldIxs
+                mapM_ insertFact (FactB bix <$> fs)
+                insertRuleB bix rule
+
+        forM_ (allGameEs gameDef) $ \(SomeKeyE keyE) -> case keyE gameDef of
+            EventDef fs rule -> do
+                let eix = keyE fieldIxs
+                mapM_ insertFact (FactE eix <$> fs)
+                insertRuleE eix rule
+
+        -- Here for completeness and compiler errors if SourceEventDef changes
+        forM_ (allGameSEs gameDef) $ \(SomeKeySE keySE) -> case keySE gameDef of
+            SourceEvent -> return ()
+
+    in fst $ runKnowledgeBaseM_ initializeKB emptyKB
+
 
 insertFacts :: (FieldIx game)
     => KnowledgeBase game
@@ -460,6 +490,34 @@ continueRule a activeRule
                     (ActiveRuleE factSpan finalFieldEIx cont)
                 DependencyB con keyB cont -> insertActiveRuleB con (bIx keyB)
                     (ActiveRuleE factSpan finalFieldEIx cont)
+
+-- | Insert the rule for an event (for all time). Note this does NOT insert an
+-- active rule for FS_Init as events don't have init values.
+insertRuleE :: FieldIx game
+    => EIx a
+    -> Rule game (Maybe a)
+    -> KnowledgeBaseM game ()
+insertRuleE eix rule = case rule of
+    DependencyE depKE cont -> insertActiveRuleE (eIx depKE)
+        $ ActiveRuleE (FS_Span allT) eix cont
+    DependencyB con depKB cont -> insertActiveRuleB con (bIx depKB)
+        $ ActiveRuleE (FS_Span allT) eix cont
+    -- TODO WTF does this mean? An event that is always occurring? Do we allow this?
+    Result _ -> error $ "Event definition must have at least 1 dependency: " ++ show eix
+
+-- | Insert the rule for a behavior (for all time).
+insertRuleB :: FieldIx game
+    => BIx a
+    -> Rule game a
+    -> KnowledgeBaseM game ()
+insertRuleB bix rule = case rule of
+    DependencyE depKE cont -> insertActiveRuleE (eIx depKE)
+        $ ActiveRuleB (FS_Span allT) bix cont
+    DependencyB con depKB cont -> insertActiveRuleB con (bIx depKB)
+        $ ActiveRuleB (FS_Span allT) bix cont
+    Result r -> do
+        insertFact (FactB bix (Init r))
+        insertFact (FactB bix (ChangeSpan allT NoChange))
 
 insertActiveRuleE :: forall game b . FieldIx game
     => EIx b                        -- ^ Active rule's current dependency
