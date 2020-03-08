@@ -47,8 +47,9 @@ module KnowledgeBase.Timeline
     , tlLookup
     , leftNeighbors
     , rightNeighbors
-    , tUnion
+    -- , tUnion
     , mtUnion
+    , mtFromList
     -- , lookupIntersecting
     -- , lookupIntersectingBVal
     -- , lookupIntersectingBOf
@@ -62,6 +63,7 @@ module KnowledgeBase.Timeline
     , setValueForallFactB
     , factBValToVal
     , factBToMayVal
+    , factEToOcc
     ) where
 
 import Control.Monad (guard)
@@ -115,6 +117,9 @@ instance Intersect Time FactSpan (Maybe Time) where
         FS_Init -> Nothing
         FS_Point t' -> if t == t' then Just t else Nothing
         FS_Span tspan -> if tspan `contains` t then Just t else Nothing
+
+instance Difference FactSpan [FactSpan] [FactSpan] where
+    difference = _
 
 factSpanMinT :: FactSpan -> TimeX
 factSpanMinT fs = case fs of
@@ -184,9 +189,15 @@ factBValToVal f = case f of
     ChangeSpan _ (NoChangeVal a) -> a
 
 factBToMayVal :: FactB a -> Maybe a
-factBToMayVal f = case f of
+factBToMayVal factB = case factB of
     Init a -> Just a
     ChangePoint _ (MaybeChange aMay) -> aMay
+    ChangeSpan _ _ -> Nothing
+
+factEToOcc :: FactE a -> Maybe a
+factEToOcc factE = case factE of
+    Init _ -> error "Impossible! found an event with an initial value."
+    ChangePoint _ occMay -> occMay
     ChangeSpan _ _ -> Nothing
 
 --
@@ -325,11 +336,14 @@ isLeftNeighborOf :: FactSpan -> FactSpan -> Bool
 isLeftNeighborOf left right = _
 
 
+mtFromList :: (a -> FactSpan) -> [a] -> MultiTimeline a
+mtFromList = _
+
 mtUnion :: MultiTimeline a -> MultiTimeline a -> MultiTimeline a
 mtUnion = _
 
-tUnion :: Timeline initT pointT spanT -> Timeline initT pointT spanT -> Timeline initT pointT spanT
-tUnion = _
+-- tUnion :: Timeline initT pointT spanT -> Timeline initT pointT spanT -> Timeline initT pointT spanT
+-- tUnion = _
 
 --
 -- Crop i.e. removing exactly a span of time from the timeline
@@ -341,4 +355,7 @@ class CropView a span out | a span -> out where
     crop a s = fst (cropView a s)
 
 instance CropView (MultiTimeline a) FactSpan [a] where
+    cropView = _
+
+instance CropView (Timeline initT pointT spanT) FactSpan [Fact' initT pointT spanT] where
     cropView = _
