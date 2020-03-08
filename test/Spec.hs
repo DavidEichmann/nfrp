@@ -14,9 +14,10 @@ import Control.Monad (when)
 import Data.Kind (Type)
 import Data.Maybe (isJust, isNothing, fromMaybe)
 import qualified System.Timeout as Sys
+import Data.Text.Prettyprint.Doc
 
-import NFRP
-import FRP
+-- import NFRP
+-- import FRP
 import Time
 import TimeSpan
 import KnowledgeBase
@@ -55,36 +56,45 @@ tests = testGroup "lcTransaction"
         )
     ]
   , -}
+    -- testGroup "Timeline"
+    -- [ testCase "cropView" $ do
+    --     crop
+    -- ]
+
     testGroup "KnowledgeBase"
     [ testCase "Example Game" $ do
-        let kbInit = newKnowledgeBase gameLogic
+        let err = show kb
+            kbInit = newKnowledgeBase gameLogic
             input1Facts = facts input1 Nothing Nothing [ (1, "a"), (10, "b"), (100, "c")]
             -- player1InputBFacts = facts player1InputB Nothing Nothing [ (1, ()), (5, ()), (50, ())]
             kb = insertFacts input1Facts kbInit
 
-        lookupE input1 0 kb   @?= Just (Nothing)
-        lookupE input1 1 kb   @?= Just (Just "a")
-        lookupE input1 5 kb   @?= Just (Nothing)
-        lookupE input1 10 kb  @?= Just (Just "b")
-        lookupE input1 50 kb  @?= Just (Nothing)
-        lookupE input1 100 kb @?= Just (Just "c")
-        lookupE input1 101 kb @?= Just (Nothing)
+        assertEqual err (Just (Nothing)) (lookupE input1 0 kb)
+        assertEqual err (Just (Just "a")) (lookupE input1 1 kb)
+        assertEqual err (Just (Nothing)) (lookupE input1 5 kb)
+        assertEqual err (Just (Just "b")) (lookupE input1 10 kb)
+        assertEqual err (Just (Nothing)) (lookupE input1 50 kb)
+        assertEqual err (Just (Just "c")) (lookupE input1 100 kb)
+        assertEqual err (Just (Nothing)) (lookupE input1 101 kb)
 
-        -- lookupE input2 0 kb @?= Nothing
-        -- lookupE input2 1 kb @?= Just ()
-        -- lookupE input2 2 kb @?= Nothing
-        -- lookupE input2 5 kb @?= Just ()
-        -- lookupE input2 20 kb @?= Nothing
-        -- lookupE input2 50 kb @?= Just ()
-        -- lookupE input2 60 kb @?= Nothing
+        assertEqual err (Just "init") (lookupB steppedInput1 0 kb)
+        assertEqual err (Just "init") (lookupB steppedInput1 1 kb)
+        assertEqual err (Just "a") (lookupB steppedInput1 2 kb)
+        assertEqual err (Just "a") (lookupB steppedInput1 5 kb)
+        assertEqual err (Just "b") (lookupB steppedInput1 (X_JustAfter 10) kb)
+        assertEqual err (Just "b") (lookupB steppedInput1 20 kb)
+        assertEqual err (Just "b") (lookupB steppedInput1 50 kb)
+        assertEqual err (Just "b") (lookupB steppedInput1 100 kb)
+        assertEqual err (Just "c") (lookupB steppedInput1 (X_JustAfter 100) kb)
+        assertEqual err (Just "c") (lookupB steppedInput1 110 kb)
 
-        -- lookupB steppedInput1 0 kb @?= Nothing
-        -- lookupB steppedInput1 1 kb @?= Just ()
-        -- lookupB steppedInput1 2 kb @?= Nothing
-        -- lookupB steppedInput1 5 kb @?= Just ()
-        -- lookupB steppedInput1 20 kb @?= Nothing
-        -- lookupB steppedInput1 50 kb @?= Just ()
-        -- lookupB steppedInput1 60 kb @?= Nothing
+        -- assertEqual err (Nothing) (lookupB steppedInput1 0 kb)
+        -- assertEqual err (Just ()) (lookupB steppedInput1 1 kb)
+        -- assertEqual err (Nothing) (lookupB steppedInput1 2 kb)
+        -- assertEqual err (Just ()) (lookupB steppedInput1 5 kb)
+        -- assertEqual err (Nothing) (lookupB steppedInput1 20 kb)
+        -- assertEqual err (Just ()) (lookupB steppedInput1 50 kb)
+        -- assertEqual err (Nothing) (lookupB steppedInput1 60 kb)
     ]
   ]
 

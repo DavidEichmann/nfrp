@@ -12,6 +12,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -43,6 +44,7 @@ module KnowledgeBase.Timeline
 
     , empty
     , mtEmpty
+    , timelineFactSpans
     , toFactSpan
     , factSpanMinT
     , factSpanJustBeforeMinT
@@ -78,6 +80,8 @@ import           Data.Map (Map)
 import           Data.Maybe (isJust, maybeToList)
 import qualified Data.Set as Set
 import           Data.Void
+import           Data.Text.Prettyprint.Doc
+
 
 import Time
 import TimeSpan
@@ -95,7 +99,7 @@ data FactSpan
     -- ^ single point in time
     | FS_Span SpanExc
     -- ^ Span of time. `allT` does NOT include the (Behavior) initial value.
-    deriving stock (Eq)
+    deriving stock (Eq, Show)
 
 
 instance Contains FactSpan Time where
@@ -193,6 +197,7 @@ data Fact' initT pointT spanT
     = Init initT
     | ChangePoint Time pointT
     | ChangeSpan SpanExc spanT
+    deriving (Show)
 
 type FactB     a = Fact' a (MaybeChange a) NoChange
 type FactBVal  a = Fact' a a (NoChangeVal a)
@@ -255,9 +260,15 @@ factEToOcc factE = case factE of
 --
 
 data Timeline initT pointT spanT = Timeline (Maybe initT) (Map TimeX (Fact' initT pointT spanT))
+    deriving (Show)
 newtype TimelineB     a = TimelineB    { unTimelineB    :: Timeline a    (MaybeChange a) NoChange        }
 newtype TimelineBVal  a = TimelineBVal { unTimelineBVal :: Timeline a    a               (NoChangeVal a) }
 newtype TimelineE     a = TimelineE    { unTimelineE    :: Timeline Void (Maybe a)       NoChange        }
+
+timelineFactSpans :: Timeline initT pointT spanT -> [FactSpan]
+timelineFactSpans (Timeline initMay m)
+    = [ FS_Init | Just _ <- [initMay] ]
+    ++ (toFactSpan <$> Map.elems m)
 
 -- | An empty Timeline
 empty :: Timeline initT pointT spanT
@@ -488,3 +499,13 @@ instance ShiftFactSpanIntersecting (FactE a) where
             _ -> err
         where
         err = error "shiftFactSpanIntersecting: expected intersecting fact and factspan"
+
+
+instance Pretty FactSpan where
+    pretty = viaShow
+instance Pretty (Timeline it pt st) where
+    pretty timeline = "Timeline" <+> pretty (timelineFactSpans timeline)
+instance Pretty (TimelineE a) where
+    pretty = pretty . unTimelineE
+instance Pretty (TimelineB a) where
+    pretty = pretty . unTimelineB

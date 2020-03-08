@@ -6,9 +6,11 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeInType #-}
 {-# LANGUAGE TypeOperators #-}
@@ -54,6 +56,8 @@ import Control.Monad (forM, forM_, mapM_, when)
 import Control.Monad.Trans.State.Lazy
 import Data.List (find, nub, sort, takeWhile)
 import Data.Maybe (fromMaybe)
+import           Data.Text.Prettyprint.Doc
+import           Data.Text.Prettyprint.Doc.Render.String
 
 import KnowledgeBase.DMap (DMap)
 import qualified KnowledgeBase.DMap as DMap
@@ -198,11 +202,15 @@ lookupB keyb = lookupBIx (bIx keyb)
 lookupEIx :: EIx a -> Time -> KnowledgeBase game -> Maybe (Maybe a)
 lookupEIx eix t kb = do
     let TimelineE timeline = kbFactsE kb DMap.! eix
-    ChangePoint _ e <- tlLookup (toTime t) timeline
-    return e
+    f <- tlLookup (toTime t) timeline
+    case f of
+        Init _ -> error "lookupEIx: found Init event"
+        ChangePoint _ e -> Just e
+        ChangeSpan _ NoChange  -> Just Nothing
 
 lookupE :: FieldIx game => KeyE game a -> Time -> KnowledgeBase game -> Maybe (Maybe a)
 lookupE keyb = lookupEIx (eIx keyb)
+
 
 newtype ActiveRulesB game a = ActiveRulesB { unActiveRulesB :: MultiTimeline (ActiveRule game a) }
 newtype ActiveRulesE game a = ActiveRulesE { unActiveRulesE :: MultiTimeline (ActiveRule game (Maybe a)) }
@@ -346,11 +354,15 @@ insertFact :: forall game . FieldIx game
     -- ^ A single fact to insert.
     -> KnowledgeBaseM game ()
 insertFact factTop = do
-    hasOverlaps <- asksKB $ \kb -> case factTop of
-        FactB ix f -> not $ tlNull $ snd $ cropView (unTimelineB (kbFactsB kb DMap.! ix)) (toFactSpan f)
-        FactE ix f -> not $ tlNull $ snd $ cropView (unTimelineE (kbFactsE kb DMap.! ix)) (toFactSpan f)
-
-    when hasOverlaps $ error "insertFacts: new fact overlaps existing facts" -- TODO better output
+    () <- asksKB $ \kb -> case factTop of
+        FactB ix f -> case fst (cropView (unTimelineB (kbFactsB kb DMap.! ix)) (toFactSpan f)) of
+            [] -> ()
+            xs -> error $ "insertFacts: new fact (" ++ show (toFactSpan f)
+                    ++ ") for " ++ show ix ++ " overlaps existing facts: " ++ show (toFactSpan <$> xs)
+        FactE ix f -> case fst (cropView (unTimelineE (kbFactsE kb DMap.! ix)) (toFactSpan f)) of
+            [] -> ()
+            xs -> error $ "insertFacts: new fact (" ++ show (toFactSpan f)
+                    ++ ") for " ++ show ix ++ " overlaps existing facts: " ++ show (toFactSpan <$> xs)
 
     -- Store the new fact.
     writeFact factTop
@@ -633,3 +645,52 @@ insertActiveRule' getTimeline directInsert depFactToValue ix activeRule = do
                         -> [ ActiveRuleE (toFactSpan fact) finalEix cont | fact <- extractedFacts ]
 
             mapM_ (insertActiveRule' getTimeline directInsert depFactToValue ix) (notCoveredActiveRules ++ coveredActiveRules)
+
+knTimelineB :: BIx a -> KnowledgeBase game -> TimelineB a
+knTimelineB bix kb = kbFactsB kb DMap.! bix
+
+knTimelineE :: EIx a -> KnowledgeBase game -> TimelineE a
+knTimelineE eix kb = kbFactsE kb DMap.! eix
+
+instance FieldIx game => Pretty (KnowledgeBase game) where
+    pretty kb = vsep
+        [ "KnowledgeBase:"
+        , indent 2 $ vsep $
+            [ vsep [ pretty ix <> ":"
+                   , indent 2 $ vsep
+                        [ pretty (knTimelineB ix kb)
+                        , "ActiveRules Curr: " <+> pretty (kbActiveRulesBCurr kb DMap.! ix)
+                        , "ActiveRules Next: " <+> pretty (kbActiveRulesBNext kb DMap.! ix)
+                        ]
+                    ]
+                | SomeKeyB keyB <- allGameBs @game
+                , let ix = bIx keyB
+                ] ++
+            [ vsep [ pretty ix <> ":"
+                   , indent 2 $ vsep
+                        [ pretty (knTimelineE ix kb)
+                        , "ActiveRules: " <+> pretty (kbActiveRulesE kb DMap.! ix)
+                        ]
+                    ]
+                | SomeKeyE keyE <- allGameEs @game
+                , let ix = eIx keyE
+                ] ++
+            [ vsep [ pretty ix <> ":"
+                   , indent 2 $ vsep
+                        [ pretty (knTimelineE ix kb)
+                        , "ActiveRules: " <+> pretty (kbActiveRulesE kb DMap.! ix)
+                        ]
+                    ]
+                | SomeKeySE keyE <- allGameSEs @game
+                , let ix = seIx keyE
+                ]
+        ]
+
+instance FieldIx game => Show (KnowledgeBase game) where
+    showsPrec _ = renderShowS . layoutPretty defaultLayoutOptions . pretty
+
+instance Pretty (BIx a) where pretty = viaShow
+instance Pretty (EIx a) where pretty = viaShow
+
+instance Pretty (ActiveRulesE game a) where pretty = viaShow . fmap ar_factSpan . unMultiTimeline . unActiveRulesE
+instance Pretty (ActiveRulesB game a) where pretty = viaShow . fmap ar_factSpan . unMultiTimeline . unActiveRulesB
