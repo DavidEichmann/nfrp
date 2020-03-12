@@ -35,6 +35,7 @@ module KnowledgeBase
     , Rule
     , foldB
     , behavior
+    , event
     , getB
     , getNextB
     , getE
@@ -157,6 +158,9 @@ foldB aInit = BehaviorDef [(Init aInit)]
 
 behavior :: Rule game a -> BehaviorDef game a
 behavior = BehaviorDef []
+
+event :: Rule game (Maybe a) -> EventDef game a
+event = EventDef []
 
 {-
 

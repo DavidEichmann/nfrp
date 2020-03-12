@@ -270,6 +270,18 @@ timelineFactSpans (Timeline initMay m)
     = [ FS_Init | Just _ <- [initMay] ]
     ++ (toFactSpan <$> Map.elems m)
 
+timelineFactSpansE :: Timeline Void (Maybe pointT) NoChange -> [(FactSpan, IsOcc)]
+timelineFactSpansE (Timeline _ m) = toFactSpanIsOcc <$> Map.elems m
+    where
+    toFactSpanIsOcc :: Fact' Void (Maybe pointT) NoChange -> (FactSpan, IsOcc)
+    toFactSpanIsOcc (Init _) = (FS_Init, IsNotOcc)
+    toFactSpanIsOcc (ChangePoint t (Just _)) = (FS_Point t, IsOcc)
+    toFactSpanIsOcc (ChangePoint t Nothing) = (FS_Point t, IsNotOcc)
+    toFactSpanIsOcc (ChangeSpan tspan _) = (FS_Span tspan, IsNotOcc)
+
+data IsOcc = IsOcc | IsNotOcc
+    deriving (Show)
+
 -- | An empty Timeline
 empty :: Timeline initT pointT spanT
 empty = Timeline Nothing Map.empty
@@ -503,9 +515,11 @@ instance ShiftFactSpanIntersecting (FactE a) where
 
 instance Pretty FactSpan where
     pretty = viaShow
+instance Pretty IsOcc where
+    pretty = viaShow
 instance Pretty (Timeline it pt st) where
     pretty timeline = "Timeline" <+> pretty (timelineFactSpans timeline)
 instance Pretty (TimelineE a) where
-    pretty = pretty . unTimelineE
+    pretty timelineE = "Timeline" <+> pretty (timelineFactSpansE (unTimelineE timelineE))
 instance Pretty (TimelineB a) where
     pretty = pretty . unTimelineB
