@@ -65,7 +65,6 @@ import KnowledgeBase.DMap (DMap)
 import qualified KnowledgeBase.DMap as DMap
 import KnowledgeBase.Timeline hiding (insertFact)
 import qualified KnowledgeBase.Timeline as T
-
 import TimeSpan
 import Time
 
@@ -420,7 +419,7 @@ insertFact factTop = do
 
             -- Extract dependent rules.
             ActiveRulesE activeRulesMT <- asksKB $ \kb -> kbActiveRulesE kb DMap.! ix
-            let (extractedActiveRules, activeRulesMT') = mtCropView ar_factSpan activeRulesMT (toFactSpan factE)
+            let (extractedActiveRules, activeRulesMT') = mtCropView activeRulesMT (toFactSpan factE)
             modifyKB $ \kb -> kb { kbActiveRulesE = DMap.update (const $ Just $ ActiveRulesE activeRulesMT') ix (kbActiveRulesE kb) }
 
             -- Continue dependent rules
@@ -469,7 +468,7 @@ insertValueFact
 insertValueFact getActiveRules setActiveRules bix a valueFactSpan = do
     -- Find/remove all active rules who's time (span) intersects the value fact.
     ActiveRulesB activeRulesMT <- asksKB $ \kb -> (getActiveRules kb) DMap.! bix
-    let (extractedActiveRules, activeRulesMT') = mtCropView ar_factSpan activeRulesMT valueFactSpan
+    let (extractedActiveRules, activeRulesMT') = mtCropView activeRulesMT valueFactSpan
     modifyKB $ \kb -> setActiveRules kb (DMap.update (const $ Just $ ActiveRulesB activeRulesMT') bix (getActiveRules kb))
     mapM_ (continueRule a) (unMultiTimeline extractedActiveRules)
 

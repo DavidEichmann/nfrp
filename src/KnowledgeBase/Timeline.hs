@@ -435,14 +435,12 @@ class CropView a span inside outside | a span -> inside, a span -> outside where
     crop :: a -> span -> inside
     crop a s = fst (cropView a s)
 
-mtCropView :: CropView a FactSpan [a] [a] => (a -> FactSpan) -> MultiTimeline a -> FactSpan -> (MultiTimeline a, MultiTimeline a)
-mtCropView aToSpan (MultiTimeline as) factSpan = (MultiTimeline ins, MultiTimeline outs)
+mtCropView :: CropView a FactSpan [a] [a] => MultiTimeline a -> FactSpan -> (MultiTimeline a, MultiTimeline a)
+mtCropView (MultiTimeline as) factSpan = (MultiTimeline ins, MultiTimeline outs)
     where
     (ins, outs) = mconcat
         [ cropView a factSpan
         | a <- as
-        , let aSpan = aToSpan a
-        , aSpan `intersects` factSpan
         ]
 
 instance ShiftFactSpanIntersecting (Fact' initT pointT spanT)
