@@ -22,22 +22,14 @@ module KnowledgeBase
     ( -- Language Definition
       GameData (..)
     , FieldType (..)
-    -- , SourceEventDef (..)
-    , sourceEventDef
-    -- , BehaviorDef (..)
-    -- , EventDef (..)
     , KeyB
     , KeyE
     , KeySE
-    , SomeKeyB (..)
-    , SomeKeyE (..)
-    , SomeKeySE (..)
-    , EIx (..)
-    , BIx (..)
     , FieldIx (..)
     , B, SE, E
 
     , Rule
+    , sourceEventDef
     , foldB
     , behavior
     , event
@@ -82,8 +74,8 @@ import Time
 --
 
 data SourceEventDef a   = SourceEventDef
-sourceEventDef :: F game 'SourceEvent 'Definition a
-sourceEventDef = F SourceEventDef
+sourceEventDef :: Field game 'SourceEvent 'Definition a
+sourceEventDef = Field SourceEventDef
 data BehaviorDef (game :: GameData -> Type) a = BehaviorDef [FactB a] (Rule game a)
 data EventDef    (game :: GameData -> Type) a = EventDef    [FactE a] (Rule game (Maybe a))
 
@@ -107,8 +99,8 @@ getB k = DependencyB Curr (bIx k) Result
 getNextB :: FieldIx game => KeyB game a -> Rule game a
 getNextB k = DependencyB Next (bIx k) Result
 
-getE :: (FieldIx game, Field game eventType 'Index a ~ EIx a)
-    => (game 'Index -> F game eventType 'Index a)
+getE :: (FieldIx game, F game eventType 'Index a ~ EIx a)
+    => (game 'Index -> Field game eventType 'Index a)
     -> Rule game (Maybe a)
 getE k = DependencyE (eIx k) Result
 
@@ -134,14 +126,14 @@ instance Monad (Rule game) where
 --
 
 -- | For a single field, some initial facts (if any) and the corresponding rule.
-foldB :: a -> Rule game a -> F game 'Behavior 'Definition a
-foldB aInit r = F $ BehaviorDef [(Init aInit)] r
+foldB :: a -> Rule game a -> Field game 'Behavior 'Definition a
+foldB aInit r = Field $ BehaviorDef [(Init aInit)] r
 
-behavior :: Rule game a -> F game 'Behavior 'Definition a
-behavior r = F $ BehaviorDef [] r
+behavior :: Rule game a -> Field game 'Behavior 'Definition a
+behavior r = Field $ BehaviorDef [] r
 
-event :: Rule game (Maybe a) -> F game 'Event 'Definition a
-event r = F $ EventDef [] r
+event :: Rule game (Maybe a) -> Field game 'Event 'Definition a
+event r = Field $ EventDef [] r
 
 {-
 
@@ -193,8 +185,8 @@ lookupEIx eix t kb = do
         ChangePoint _ e -> Just e
         ChangeSpan _ NoChange  -> Just Nothing
 
-lookupE :: (Field game eventType 'Index a ~ EIx a, FieldIx game)
-    => (game 'Index -> F game eventType 'Index a)
+lookupE :: (F game eventType 'Index a ~ EIx a, FieldIx game)
+    => (game 'Index -> Field game eventType 'Index a)
     -> Time
     -> KnowledgeBase game
     -> Maybe (Maybe a)
@@ -207,17 +199,17 @@ data ActiveRule game a
     = forall b . ActiveRuleB
         { ar_factSpan :: FactSpan
         -- ^ result and dependencies span this time exactly.
-        , ar_finalFieldBIx :: BIx b
+        , _ar_finalFieldBIx :: BIx b
         -- ^ result is for this field
-        , ar_continuationB :: a -> Rule game b
+        , _ar_continuationB :: a -> Rule game b
         -- ^ Continuation. Takes current dependencies value. Current dep is implicit.
         }
     | forall b . ActiveRuleE
         { ar_factSpan :: FactSpan
         -- ^ result and dependencies span this time exactly.
-        , ar_finalFieldEIx :: EIx b
+        , _ar_finalFieldEIx :: EIx b
         -- ^ result is for this event
-        , ar_continuationE :: a -> Rule game (Maybe b)
+        , _ar_continuationE :: a -> Rule game (Maybe b)
         -- ^ Continuation. Takes current dependencies value. Current dep is implicit.
         -- Nothing result means no event occurrence.
         }
@@ -323,12 +315,12 @@ newKnowledgeBase gameDef = let
         -- (potentially many times) into smaller spans. as facts are inserted.
         }
     initializeKB = sequence_ $ traverseFields gameDef
-        (\_ (F SourceEventDef) -> return ())
-        (\eix (F (EventDef fs rule)) -> do
+        (\_ (Field SourceEventDef) -> return ())
+        (\eix (Field (EventDef fs rule)) -> do
                 mapM_ insertFact (FactE eix <$> fs)
                 insertRuleE eix rule
         )
-        (\bix (F (BehaviorDef fs rule)) -> do
+        (\bix (Field (BehaviorDef fs rule)) -> do
             mapM_ insertFact (FactB bix <$> fs)
             insertRuleB bix rule
         )
@@ -717,42 +709,36 @@ data GameData
     | Index
     | Definition
 
--- TODO swap fieldType and gameData positions
-newtype F game fieldType gameData a = F { unF :: Field game fieldType gameData a }
+newtype Field game fieldType gameData a = Field { unF :: F game fieldType gameData a }
 
-type family Field (game :: GameData -> Type) (fieldType :: FieldType) (gameData :: GameData) a :: Type where
+type family F (game :: GameData -> Type) (fieldType :: FieldType) (gameData :: GameData) a :: Type where
 
-    Field _ 'SourceEvent 'Raw a = Maybe a
-    Field _ 'Event       'Raw a = Maybe a
-    Field _ 'Behavior    'Raw a = a
+    F _ 'SourceEvent 'Raw a = Maybe a
+    F _ 'Event       'Raw a = Maybe a
+    F _ 'Behavior    'Raw a = a
 
-    Field _ 'SourceEvent 'Index a = EIx a
-    Field _ 'Event       'Index a = EIx a
-    Field _ 'Behavior    'Index a = BIx a
+    F _ 'SourceEvent 'Index a = EIx a
+    F _ 'Event       'Index a = EIx a
+    F _ 'Behavior    'Index a = BIx a
 
-    Field _    'SourceEvent 'Definition a = SourceEventDef a
-    Field game 'Event       'Definition a = EventDef game a
-    Field game 'Behavior    'Definition a = BehaviorDef game a
+    F _    'SourceEvent 'Definition a = SourceEventDef a
+    F game 'Event       'Definition a = EventDef game a
+    F game 'Behavior    'Definition a = BehaviorDef game a
 
-type B  game f a = F game 'Behavior    f a
-type E  game f a = F game 'Event       f a
-type SE game f a = F game 'SourceEvent f a
+type B  game f a = Field game 'Behavior    f a
+type E  game f a = Field game 'Event       f a
+type SE game f a = Field game 'SourceEvent f a
 
 newtype EIx a = EIx Int deriving (Eq, Ord, Show)
 newtype BIx a = BIx Int deriving (Eq, Ord, Show)
-data Ix a = Ix_B (BIx a) | Ix_E (EIx a)
+-- data Ix a = Ix_B (BIx a) | Ix_E (EIx a)
 
-type KeyB  game (a :: Type) = forall (gameData :: GameData) . game gameData -> F game 'Behavior    gameData a
-type KeyE  game (a :: Type) = forall (gameData :: GameData) . game gameData -> F game 'Event       gameData a
-type KeySE game (a :: Type) = forall (gameData :: GameData) . game gameData -> F game 'SourceEvent gameData a
-data Key game (a :: Type)
-    = KeyB (KeyB game a)
-    | KeyE (KeyE game a)
-
-
-data SomeKeyB  game = forall a . SomeKeyB  (forall f . game f -> F game 'Behavior    f a)
-data SomeKeyE  game = forall a . SomeKeyE  (forall f . game f -> F game 'Event       f a)
-data SomeKeySE game = forall a . SomeKeySE (forall f . game f -> F game 'SourceEvent f a)
+type KeyB  game (a :: Type) = forall (gameData :: GameData) . game gameData -> Field game 'Behavior    gameData a
+type KeyE  game (a :: Type) = forall (gameData :: GameData) . game gameData -> Field game 'Event       gameData a
+type KeySE game (a :: Type) = forall (gameData :: GameData) . game gameData -> Field game 'SourceEvent gameData a
+-- data Key game (a :: Type)
+--     = KeyB (KeyB game a)
+--     | KeyE (KeyE game a)
 
 class FieldIx (game :: GameData -> *) where
     fieldIxs :: game 'Index
@@ -761,20 +747,20 @@ class FieldIx (game :: GameData -> *) where
 
     traverseFields
         :: game gameData
-        -> (forall x . EIx x -> F game 'SourceEvent gameData x -> a)
-        -> (forall x . EIx x -> F game 'Event       gameData x -> a)
-        -> (forall x . BIx x -> F game 'Behavior    gameData x -> a)
+        -> (forall x . EIx x -> Field game 'SourceEvent gameData x -> a)
+        -> (forall x . EIx x -> Field game 'Event       gameData x -> a)
+        -> (forall x . BIx x -> Field game 'Behavior    gameData x -> a)
         -> [a]
     default traverseFields :: (Generic (game gameData), GTraverseGame (Rep (game gameData)) game gameData)
         => game gameData
-        -> (forall x . EIx x -> F game 'SourceEvent gameData x -> a)
-        -> (forall x . EIx x -> F game 'Event       gameData x -> a)
-        -> (forall x . BIx x -> F game 'Behavior    gameData x -> a)
+        -> (forall x . EIx x -> Field game 'SourceEvent gameData x -> a)
+        -> (forall x . EIx x -> Field game 'Event       gameData x -> a)
+        -> (forall x . BIx x -> Field game 'Behavior    gameData x -> a)
         -> [a]
     traverseFields g = gTraverseFields 0 (from g)
 
-eIx :: (Field game eventType 'Index a ~ EIx a, FieldIx game)
-    => (game 'Index -> F game eventType 'Index a)
+eIx :: (F game eventType 'Index a ~ EIx a, FieldIx game)
+    => (game 'Index -> Field game eventType 'Index a)
     -> EIx a
 eIx k = unF (k fieldIxs)
 
@@ -791,28 +777,28 @@ instance GFieldIxs (NP I xs) => GFieldIxs (SOP I '[xs]) where
     gFieldIxs ix = SOP (Z (gFieldIxs ix))
 instance GFieldIxs (NP I '[]) where
     gFieldIxs _ = Nil
-instance (Field game 'SourceEvent 'Index a ~ EIx a, GFieldIxs (NP I xs)) => GFieldIxs (NP I (F game 'SourceEvent 'Index a ': xs)) where
-    gFieldIxs ix = I (F $EIx ix) :* gFieldIxs (ix + 1)
-instance (Field game 'Event 'Index a ~ EIx a, GFieldIxs (NP I xs)) => GFieldIxs (NP I (F game 'Event 'Index a ': xs)) where
-    gFieldIxs ix = I (F $EIx ix) :* gFieldIxs (ix + 1)
-instance (Field game 'Behavior 'Index a ~ BIx a, GFieldIxs (NP I xs)) => GFieldIxs (NP I (F game 'Behavior 'Index a ': xs)) where
-    gFieldIxs ix = I (F $BIx ix) :* gFieldIxs (ix + 1)
+instance (F game 'SourceEvent 'Index a ~ EIx a, GFieldIxs (NP I xs)) => GFieldIxs (NP I (Field game 'SourceEvent 'Index a ': xs)) where
+    gFieldIxs ix = I (Field $EIx ix) :* gFieldIxs (ix + 1)
+instance (F game 'Event 'Index a ~ EIx a, GFieldIxs (NP I xs)) => GFieldIxs (NP I (Field game 'Event 'Index a ': xs)) where
+    gFieldIxs ix = I (Field $EIx ix) :* gFieldIxs (ix + 1)
+instance (F game 'Behavior 'Index a ~ BIx a, GFieldIxs (NP I xs)) => GFieldIxs (NP I (Field game 'Behavior 'Index a ': xs)) where
+    gFieldIxs ix = I (Field $BIx ix) :* gFieldIxs (ix + 1)
 
 class GTraverseGame rep game gameData where
     gTraverseFields
         :: Int -- ^ current index
         -> rep
-        -> (forall x . EIx x -> F game 'SourceEvent gameData x -> a)
-        -> (forall x . EIx x -> F game 'Event       gameData x -> a)
-        -> (forall x . BIx x -> F game 'Behavior    gameData x -> a)
+        -> (forall x . EIx x -> Field game 'SourceEvent gameData x -> a)
+        -> (forall x . EIx x -> Field game 'Event       gameData x -> a)
+        -> (forall x . BIx x -> Field game 'Behavior    gameData x -> a)
         -> [a]
 instance (GTraverseGame (NP I xs) game gameData) => GTraverseGame (SOP I '[xs]) game gameData where
     gTraverseFields ix game fse fe fb = gTraverseFields ix (unZ $ unSOP $ game) fse fe fb
 instance GTraverseGame (NP I '[]) game gameData where
     gTraverseFields _ _ _ _ _ = []
-instance GTraverseGame (NP I xs) game gameData => GTraverseGame (NP I ((F game 'SourceEvent gameData x) ': xs)) game gameData where
+instance GTraverseGame (NP I xs) game gameData => GTraverseGame (NP I ((Field game 'SourceEvent gameData x) ': xs)) game gameData where
     gTraverseFields ix game fse fe fb = (fse (EIx ix) $ unI $ hd game) : gTraverseFields (ix + 1) (tl game) fse fe fb
-instance GTraverseGame (NP I xs) game gameData => GTraverseGame (NP I ((F game 'Event gameData x) ': xs)) game gameData where
+instance GTraverseGame (NP I xs) game gameData => GTraverseGame (NP I ((Field game 'Event gameData x) ': xs)) game gameData where
     gTraverseFields ix game fse fe fb = (fe (EIx ix) $ unI $ hd game) : gTraverseFields (ix + 1) (tl game) fse fe fb
-instance GTraverseGame (NP I xs) game gameData => GTraverseGame (NP I ((F game 'Behavior gameData x) ': xs)) game gameData where
+instance GTraverseGame (NP I xs) game gameData => GTraverseGame (NP I ((Field game 'Behavior gameData x) ': xs)) game gameData where
     gTraverseFields ix game fse fe fb = (fb (BIx ix)$ unI $ hd game) : gTraverseFields (ix + 1) (tl game) fse fe fb
