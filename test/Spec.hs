@@ -73,40 +73,47 @@ tests = testGroup "lcTransaction"
     [ testCase "Example Game" $ do
         let err = show kb
             kbInit = newKnowledgeBase gameLogic
-            input1Facts = facts input1 Nothing Nothing [ (1, "a"), (10, "b"), (100, "c")]
-            -- input1Facts = facts input1 Nothing (Just 1) [  ]
-            --            ++ facts input1 (Just 1) Nothing [  ]
+            input1Facts = facts sourceEvent1 Nothing Nothing [ (1, "a"), (10, "b"), (100, "c")]
+                       ++ facts sourceEvent2 Nothing Nothing [ (0, "A"), (10, "B"), (110, "C")]
+            -- input1Facts = facts sourceEvent1 Nothing (Just 1) [  ]
+            --            ++ facts sourceEvent1 (Just 1) Nothing [  ]
             kb = insertFacts input1Facts kbInit
 
-        assertEqual err (Just Nothing)    (lookupE input1 0   kb)
-        assertEqual err (Just (Just "a")) (lookupE input1 1   kb)
-        assertEqual err (Just Nothing)    (lookupE input1 5   kb)
-        assertEqual err (Just (Just "b")) (lookupE input1 10  kb)
-        assertEqual err (Just Nothing)    (lookupE input1 50  kb)
-        assertEqual err (Just (Just "c")) (lookupE input1 100 kb)
-        assertEqual err (Just Nothing)    (lookupE input1 101 kb)
+        assertEqual err (Just Nothing)    (lookupE sourceEvent1 0   kb)
+        assertEqual err (Just (Just "a")) (lookupE sourceEvent1 1   kb)
+        assertEqual err (Just Nothing)    (lookupE sourceEvent1 5   kb)
+        assertEqual err (Just (Just "b")) (lookupE sourceEvent1 10  kb)
+        assertEqual err (Just Nothing)    (lookupE sourceEvent1 50  kb)
+        assertEqual err (Just (Just "c")) (lookupE sourceEvent1 100 kb)
+        assertEqual err (Just Nothing)    (lookupE sourceEvent1 101 kb)
 
+        assertEqual err (Just Nothing)          (lookupE mappedEvent1 0   kb)
+        assertEqual err (Just (Just "hello a")) (lookupE mappedEvent1 1   kb)
+        assertEqual err (Just Nothing)          (lookupE mappedEvent1 2   kb)
+        assertEqual err (Just Nothing)          (lookupE mappedEvent1 5   kb)
+        assertEqual err (Just (Just "hello b")) (lookupE mappedEvent1 10  kb)
+        assertEqual err (Just Nothing)          (lookupE mappedEvent1 20  kb)
+        assertEqual err (Just Nothing)          (lookupE mappedEvent1 50  kb)
+        assertEqual err (Just (Just "hello c")) (lookupE mappedEvent1 100 kb)
+        assertEqual err (Just Nothing)          (lookupE mappedEvent1 110 kb)
 
-        assertEqual err (Just Nothing)          (lookupE mappedInput1 0   kb)
-        assertEqual err (Just (Just "hello a")) (lookupE mappedInput1 1   kb)
-        assertEqual err (Just Nothing)          (lookupE mappedInput1 2   kb)
-        assertEqual err (Just Nothing)          (lookupE mappedInput1 5   kb)
-        assertEqual err (Just (Just "hello b")) (lookupE mappedInput1 10  kb)
-        assertEqual err (Just Nothing)          (lookupE mappedInput1 20  kb)
-        assertEqual err (Just Nothing)          (lookupE mappedInput1 50  kb)
-        assertEqual err (Just (Just "hello c")) (lookupE mappedInput1 100 kb)
-        assertEqual err (Just Nothing)          (lookupE mappedInput1 110 kb)
+        assertEqual err (Just Nothing)           (lookupE mappedEvent1x 0   kb)
+        assertEqual err (Just (Just "xhello a")) (lookupE mappedEvent1x 1   kb)
+        assertEqual err (Just Nothing)           (lookupE mappedEvent1x 2   kb)
+        assertEqual err (Just Nothing)           (lookupE mappedEvent1x 5   kb)
+        assertEqual err (Just (Just "xhello b")) (lookupE mappedEvent1x 10  kb)
+        assertEqual err (Just Nothing)           (lookupE mappedEvent1x 20  kb)
+        assertEqual err (Just Nothing)           (lookupE mappedEvent1x 50  kb)
+        assertEqual err (Just (Just "xhello c")) (lookupE mappedEvent1x 100 kb)
+        assertEqual err (Just Nothing)           (lookupE mappedEvent1x 110 kb)
 
-
-        assertEqual err (Just Nothing)          (lookupE mappedInput1x 0   kb)
-        assertEqual err (Just (Just "xhello a")) (lookupE mappedInput1x 1   kb)
-        assertEqual err (Just Nothing)          (lookupE mappedInput1x 2   kb)
-        assertEqual err (Just Nothing)          (lookupE mappedInput1x 5   kb)
-        assertEqual err (Just (Just "xhello b")) (lookupE mappedInput1x 10  kb)
-        assertEqual err (Just Nothing)          (lookupE mappedInput1x 20  kb)
-        assertEqual err (Just Nothing)          (lookupE mappedInput1x 50  kb)
-        assertEqual err (Just (Just "xhello c")) (lookupE mappedInput1x 100 kb)
-        assertEqual err (Just Nothing)          (lookupE mappedInput1x 110 kb)
+        assertEqual err (Just Nothing)     (lookupE simultaneousEvent 0   kb)
+        assertEqual err (Just Nothing)     (lookupE simultaneousEvent 1   kb)
+        assertEqual err (Just Nothing)     (lookupE simultaneousEvent 5   kb)
+        assertEqual err (Just (Just "bB")) (lookupE simultaneousEvent 10  kb)
+        assertEqual err (Just Nothing)     (lookupE simultaneousEvent 50  kb)
+        assertEqual err (Just Nothing)     (lookupE simultaneousEvent 100 kb)
+        assertEqual err (Just Nothing)     (lookupE simultaneousEvent 110 kb)
 
         -- assertEqual err (Just "init") (lookupB steppedInput1 X_NegInf kb)
         -- assertEqual err (Just "init") (lookupB steppedInput1 0 kb)
@@ -133,26 +140,38 @@ tests = testGroup "lcTransaction"
 
 -- Describes all the data E/Bs of the game (and inputs)
 data Game (f :: GameData) = Game
-    { input1        :: SE Game f String
-    , mappedInput1  :: E Game f String
-    , mappedInput1x :: E Game f String
+    { sourceEvent1        :: SE Game f String
+    , sourceEvent2        :: SE Game f String
+    , mappedEvent1        :: E Game f String
+    , mappedEvent1x       :: E Game f String
+    , simultaneousEvent   :: E Game f String
     -- , steppedInput1 :: B Game f String
     } deriving (GHC.Generic, Generic, FieldIx)
 
 gameLogic :: Game 'Definition
 gameLogic = Game
-    { input1 = sourceEventDef
+    { sourceEvent1 = sourceEventDef
+    , sourceEvent2 = sourceEventDef
 
-    , mappedInput1 = event $ do
-        occ <- getE input1
+    -- Map source event.
+    , mappedEvent1 = event $ do
+        occ <- getE sourceEvent1
         return $ ("hello " ++) <$> occ
 
-    , mappedInput1x = event $ do
-        occ <- getE mappedInput1
+    -- Map a mapped event
+    , mappedEvent1x = event $ do
+        occ <- getE mappedEvent1
         return $ ("x" ++) <$> occ
 
+    -- Combine multiple events.
+    , simultaneousEvent = event $ do
+        occA <- getE sourceEvent1
+        occB <- getE sourceEvent2
+        return $ (++) <$> occA <*> occB
+
+
     -- , steppedInput1 = foldB "init" $ do
-    --     occ <- getE input1
+    --     occ <- getE sourceEvent1
     --     -- oldVal <- getB steppedInput1
     --     -- return (fromMaybe oldVal occ)
     --     return (fromMaybe "xxx" occ)
