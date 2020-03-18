@@ -115,37 +115,43 @@ tests = testGroup "lcTransaction"
         assertEqual err (Just Nothing)     (lookupE simultaneousEvent 100 kb)
         assertEqual err (Just Nothing)     (lookupE simultaneousEvent 110 kb)
 
-        -- assertEqual err (Just "init") (lookupB steppedInput1 X_NegInf kb)
-        -- assertEqual err (Just "init") (lookupB steppedInput1 0 kb)
-        -- assertEqual err (Just "init") (lookupB steppedInput1 1 kb)
-        -- assertEqual err (Just "a") (lookupB steppedInput1 (X_JustAfter 1) kb)
-        -- assertEqual err (Just "a") (lookupB steppedInput1 2 kb)
-        -- assertEqual err (Just "a") (lookupB steppedInput1 10 kb)
-        -- assertEqual err (Just "b") (lookupB steppedInput1 (X_JustAfter 10) kb)
-        -- assertEqual err (Just "b") (lookupB steppedInput1 50 kb)
-        -- assertEqual err (Just "a") (lookupB steppedInput1 100 kb)
-        -- assertEqual err (Just "c") (lookupB steppedInput1 (X_JustAfter 100) kb)
-        -- assertEqual err (Just "c") (lookupB steppedInput1 150 kb)
-        -- assertEqual err (Just "c") (lookupB steppedInput1 X_Inf kb)
+        assertEqual err (Just "init") (lookupB steppedSE1 X_NegInf kb)
+        assertEqual err (Just "init") (lookupB steppedSE1 0 kb)
+        assertEqual err (Just "init") (lookupB steppedSE1 1 kb)
+        assertEqual err (Just "a")    (lookupB steppedSE1 (X_JustAfter 1) kb)
+        assertEqual err (Just "a")    (lookupB steppedSE1 2 kb)
+        assertEqual err (Just "a")    (lookupB steppedSE1 10 kb)
+        assertEqual err (Just "b")    (lookupB steppedSE1 (X_JustAfter 10) kb)
+        assertEqual err (Just "b")    (lookupB steppedSE1 50 kb)
+        assertEqual err (Just "b")    (lookupB steppedSE1 100 kb)
+        assertEqual err (Just "c")    (lookupB steppedSE1 (X_JustAfter 100) kb)
+        assertEqual err (Just "c")    (lookupB steppedSE1 150 kb)
+        assertEqual err (Just "c")    (lookupB steppedSE1 X_Inf kb)
 
-        -- assertEqual err (Nothing) (lookupB steppedInput1 0 kb)
-        -- assertEqual err (Just ()) (lookupB steppedInput1 1 kb)
-        -- assertEqual err (Nothing) (lookupB steppedInput1 2 kb)
-        -- assertEqual err (Just ()) (lookupB steppedInput1 5 kb)
-        -- assertEqual err (Nothing) (lookupB steppedInput1 20 kb)
-        -- assertEqual err (Just ()) (lookupB steppedInput1 50 kb)
-        -- assertEqual err (Nothing) (lookupB steppedInput1 60 kb)
+        assertEqual err (Just "init") (lookupB steppedSimultaneousEvent X_NegInf kb)
+        assertEqual err (Just "init") (lookupB steppedSimultaneousEvent 0 kb)
+        assertEqual err (Just "init") (lookupB steppedSimultaneousEvent 1 kb)
+        assertEqual err (Just "init") (lookupB steppedSimultaneousEvent (X_JustAfter 1) kb)
+        assertEqual err (Just "init") (lookupB steppedSimultaneousEvent 2 kb)
+        assertEqual err (Just "init") (lookupB steppedSimultaneousEvent 10 kb)
+        assertEqual err (Just "bB") (lookupB steppedSimultaneousEvent (X_JustAfter 10) kb)
+        assertEqual err (Just "bB") (lookupB steppedSimultaneousEvent 50 kb)
+        assertEqual err (Just "bB") (lookupB steppedSimultaneousEvent 100 kb)
+        assertEqual err (Just "bB") (lookupB steppedSimultaneousEvent (X_JustAfter 100) kb)
+        assertEqual err (Just "bB") (lookupB steppedSimultaneousEvent 150 kb)
+        assertEqual err (Just "bB") (lookupB steppedSimultaneousEvent X_Inf kb)
     ]
   ]
 
 -- Describes all the data E/Bs of the game (and inputs)
 data Game (f :: GameData) = Game
-    { sourceEvent1        :: SE Game f String
-    , sourceEvent2        :: SE Game f String
-    , mappedEvent1        :: E Game f String
-    , mappedEvent1x       :: E Game f String
-    , simultaneousEvent   :: E Game f String
-    -- , steppedInput1 :: B Game f String
+    { sourceEvent1                :: SE Game f String
+    , sourceEvent2                :: SE Game f String
+    , mappedEvent1                :: E Game f String
+    , mappedEvent1x               :: E Game f String
+    , simultaneousEvent           :: E Game f String
+    , steppedSE1                  :: B Game f String
+    , steppedSimultaneousEvent    :: B Game f String
     } deriving (GHC.Generic, Generic, FieldIx)
 
 gameLogic :: Game 'Definition
@@ -169,11 +175,29 @@ gameLogic = Game
         occB <- getE sourceEvent2
         return $ (++) <$> occA <*> occB
 
+      -- TODO How do we implement step correctly? We should support both:
+      --   * refer to previous value of this behavior (getB steppedSE1). I think
+      --     this is currently broken
+      --     * maybe `foldB` should always be given the previous value
+      --       (implemented with getB)? And cases that don't want the previous
+      --       value should use `step` or `behavior`
+      --   * Allow this rule to return MaybeChange.
+    , steppedSE1 = foldB "init" $ do
+        occ <- getE sourceEvent1
+        oldVal <- getB steppedSE1
+        return (fromMaybe oldVal occ)
 
-    -- , steppedInput1 = foldB "init" $ do
+    -- , steppedSE1' = step "init" $ do
     --     occ <- getE sourceEvent1
-    --     -- oldVal <- getB steppedInput1
-    --     -- return (fromMaybe oldVal occ)
-    --     return (fromMaybe "xxx" occ)
+    --     return occ
+
+    , steppedSimultaneousEvent = foldB "init" $ do
+        occ <- getE simultaneousEvent
+        oldVal <- getB steppedSimultaneousEvent
+        return (fromMaybe oldVal occ)
+
+    -- , steppedSimultaneousEvent' = step "init" $ do
+    --     occ <- getE simultaneousEvent
+    --     return occ
     }
 

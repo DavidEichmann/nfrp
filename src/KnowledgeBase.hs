@@ -168,7 +168,11 @@ data KnowledgeBase game = KnowledgeBase
 lookupBIx :: BIx a -> TimeX -> KnowledgeBase game -> Maybe a
 lookupBIx bix tx kb = do
     let TimelineB timeline = kbFactsB kb DMap.! bix
-    factBTx <- tlLookup tx timeline
+        -- Hacky solution to make sure we get the value just before the given time.
+        tx' = case tx of
+                X_Exactly t -> X_JustBefore t
+                x -> x
+    factBTx <- tlLookup tx' timeline
     let leftNs = leftNeighbors timeline (toFactSpan factBTx)
     foldr (\fact valMay -> factBToMayVal fact <|> valMay) Nothing (factBTx : leftNs)
 

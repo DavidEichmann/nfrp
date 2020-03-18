@@ -44,7 +44,6 @@ module KnowledgeBase.Timeline
 
     , empty
     , mtEmpty
-    , timelineFactSpans
     , toFactSpan
     , factSpanMinT
     , factSpanJustBeforeMinT
@@ -269,6 +268,17 @@ timelineFactSpans :: Timeline initT pointT spanT -> [FactSpan]
 timelineFactSpans (Timeline initMay m)
     = [ FS_Init | Just _ <- [initMay] ]
     ++ (toFactSpan <$> Map.elems m)
+
+timelineFactSpansB :: Timeline initT (MaybeChange pointT) NoChange -> [(FactSpan, IsOcc)]
+timelineFactSpansB (Timeline initMay m)
+    = [ (FS_Init, IsOcc) | Just _ <- [initMay] ]
+    ++ [(toFactSpan f, case f of
+            Init _ -> IsOcc
+            ChangePoint _ (MaybeChange (Just _)) -> IsOcc
+            ChangePoint _ (MaybeChange Nothing) -> IsNotOcc
+            ChangeSpan _ NoChange -> IsNotOcc
+        )
+        | f <- Map.elems m]
 
 timelineFactSpansE :: Timeline Void (Maybe pointT) NoChange -> [(FactSpan, IsOcc)]
 timelineFactSpansE (Timeline _ m) = toFactSpanIsOcc <$> Map.elems m
@@ -520,4 +530,4 @@ instance Pretty (Timeline it pt st) where
 instance Pretty (TimelineE a) where
     pretty timelineE = "Timeline" <+> pretty (timelineFactSpansE (unTimelineE timelineE))
 instance Pretty (TimelineB a) where
-    pretty = pretty . unTimelineB
+    pretty timelineB = "Timeline" <+> pretty (timelineFactSpansB  (unTimelineB timelineB))
