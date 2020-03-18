@@ -1,3 +1,5 @@
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE ExistentialQuantification #-}
@@ -9,6 +11,7 @@
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeInType #-}
 {-# LANGUAGE TypeOperators #-}
@@ -16,6 +19,9 @@
 {-# LANGUAGE UndecidableSuperClasses #-}
 
 module Main where
+
+import qualified GHC.Generics as GHC
+import Generics.SOP
 
 import KnowledgeBase
 
@@ -25,27 +31,29 @@ main = do
         player1InputAFacts = facts player1InputA Nothing Nothing [ (1, ()), (10, ()), (100, ())]
         player1InputBFacts = facts player1InputB Nothing Nothing [ (1, ()), (5, ()), (50, ())]
         kb' = insertFacts (player1InputAFacts ++ player1InputBFacts) kb
-    putStrLn "Hello World!"
+    print $ kb'
 
 -- Describes all the data E/Bs of the game (and inputs)
-data Game sourceEvent event behavior = Game
-    { player1InputA :: sourceEvent ()
-    , player1InputB :: sourceEvent ()
-    , player2InputA :: sourceEvent ()
-    , player2InputB :: sourceEvent ()
-    , player1Pos :: behavior Pos
-    , player2Pos :: behavior Pos
-    , arePlayersOverlapping :: behavior Bool
+data Game (f :: GameData) = Game
+    { player1InputA          :: SE Game f ()
+    , player1InputB          :: SE Game f ()
+    , player2InputA          :: SE Game f ()
+    , player2InputB          :: SE Game f ()
+    , player1Pos             :: B Game f Pos
+    , player2Pos             :: B Game f Pos
+    , arePlayersOverlapping  :: B Game f Bool
     }
+    deriving stock (GHC.Generic)
+    deriving anyclass (Generic, FieldIx)
 
 type Pos = (Int, Int)
 
-gameLogic :: GameDefinition Game
+gameLogic :: Game 'Definition
 gameLogic = Game
-    { player1InputA = SourceEvent
-    , player1InputB = SourceEvent
-    , player2InputA = SourceEvent
-    , player2InputB = SourceEvent
+    { player1InputA = sourceEventDef
+    , player1InputB = sourceEventDef
+    , player2InputA = sourceEventDef
+    , player2InputB = sourceEventDef
     , player1Pos
         = foldB (0,0) $ do
             occA <- getE player1InputA
@@ -68,32 +76,3 @@ gameLogic = Game
             p2 <- getB player2Pos
             return (p1 == p2)
     }
-
--- TODO use generics to do this. Why do this like this? Well we'll need to send
--- facts over the network eventually, and we'll need a way to index those facts
--- on their corresponding field, so something like this seems inherently
--- necessary.
-instance FieldIx Game where
-    fieldIxs = Game
-        { player1InputA         = EIx 0
-        , player1InputB         = EIx 1
-        , player2InputA         = EIx 2
-        , player2InputB         = EIx 3
-        , player1Pos            = BIx 4
-        , player2Pos            = BIx 5
-        , arePlayersOverlapping = BIx 6
-        }
-
-    allGameBs =
-        [ SomeKeyB player1Pos
-        , SomeKeyB player2Pos
-        , SomeKeyB arePlayersOverlapping
-        ]
-    allGameEs = []
-    allGameSEs =
-        [ SomeKeySE player1InputA
-        , SomeKeySE player1InputB
-        , SomeKeySE player2InputA
-        , SomeKeySE player2InputB
-        ]
-

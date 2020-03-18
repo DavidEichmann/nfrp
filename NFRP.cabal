@@ -37,6 +37,7 @@ library
         containers >=0.5.9,
         deepseq -any,
         dependent-map -any,
+        generics-sop -any,
         gtk3 -any,
         mtl -any,
         network-simple -any,
@@ -63,6 +64,7 @@ executable KBGame
         network -any,
         NFRP -any,
         safe -any,
+        generics-sop -any,
         gtk3 -any,
         time == 1.8.0.2
 
@@ -79,6 +81,7 @@ executable Main
         network -any,
         NFRP -any,
         safe -any,
+        generics-sop -any,
         gtk3 -any,
         time == 1.8.0.2
 
@@ -97,6 +100,7 @@ executable Circles
         containers >=0.5.9,
         deepseq -any,
         gloss -any,
+        generics-sop -any,
         gtk3 -any,
         ncurses -any,
         network -any,
@@ -116,6 +120,7 @@ test-suite NFRP-test
         containers >=0.5.9,
         NFRP -any,
         binary -any,
+        generics-sop -any,
         prettyprinter -any,
         time == 1.8.0.2,
         tasty -any,

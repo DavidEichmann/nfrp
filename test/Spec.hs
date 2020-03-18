@@ -1,20 +1,23 @@
-{-# LANGUAGE ExistentialQuantification #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 
 import Test.Tasty
 import Test.Tasty.HUnit
 import Test.Tasty.QuickCheck
 
+import qualified GHC.Generics as GHC
 import Control.Monad (when)
 import Data.Kind (Type)
 import Data.Maybe (isJust, isNothing, fromMaybe)
 import qualified System.Timeout as Sys
 import Data.Text.Prettyprint.Doc
+import Generics.SOP
 
 -- import NFRP
 -- import FRP
@@ -110,36 +113,16 @@ tests = testGroup "lcTransaction"
   ]
 
 -- Describes all the data E/Bs of the game (and inputs)
-data Game sourceEvent (event :: Type -> Type) (behavior :: Type -> Type) = Game
-    { input1 :: sourceEvent String
-    , steppedInput1 :: event String
-    }
+data Game (f :: GameData) = Game
+    { input1 :: SE Game f String
+    , steppedInput1 :: E Game f String
+    } deriving (GHC.Generic, Generic, FieldIx)
 
-gameLogic :: GameDefinition Game
+gameLogic :: Game 'Definition
 gameLogic = Game
-    { input1 = SourceEvent
+    { input1 = sourceEventDef
     , steppedInput1 = event $ do
         occ <- getE input1
         return $ ("hello " ++) <$> occ
     }
-
--- TODO use generics to do this. Why do this like this? Well we'll need to send
--- facts over the network eventually, and we'll need a way to index those facts
--- on their corresponding field, so something like this seems inherently
--- necessary.
-instance FieldIx Game where
-    fieldIxs = Game
-        { input1         = EIx 0
-        , steppedInput1  = EIx 1
-        }
-
-    allGameBs =
-        [
-        ]
-    allGameEs =
-        [ SomeKeyE steppedInput1
-        ]
-    allGameSEs =
-        [ SomeKeySE input1
-        ]
 
