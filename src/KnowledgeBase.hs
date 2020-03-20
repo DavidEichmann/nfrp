@@ -60,6 +60,8 @@ import Data.Maybe (fromMaybe)
 import           Data.Text.Prettyprint.Doc
 import           Data.Text.Prettyprint.Doc.Render.String
 import Generics.SOP
+import Generics.SOP.NP
+import Generics.SOP.Universe
 
 import KnowledgeBase.DMap (DMap)
 import qualified KnowledgeBase.DMap as DMap
@@ -736,6 +738,14 @@ newtype EIx a = EIx Int deriving (Eq, Ord, Show)
 newtype BIx a = BIx Int deriving (Eq, Ord, Show)
 -- data Ix a = Ix_B (BIx a) | Ix_E (EIx a)
 
+eIx :: (F game eventType 'Index a ~ EIx a, FieldIx game)
+    => (game 'Index -> Field game eventType 'Index a)
+    -> EIx a
+eIx k = unF (k fieldIxs)
+
+bIx :: FieldIx game => KeyB game a -> BIx a
+bIx k = unF (k fieldIxs)
+
 type KeyB  game (a :: Type) = forall (gameData :: GameData) . game gameData -> Field game 'Behavior    gameData a
 type KeyE  game (a :: Type) = forall (gameData :: GameData) . game gameData -> Field game 'Event       gameData a
 type KeySE game (a :: Type) = forall (gameData :: GameData) . game gameData -> Field game 'SourceEvent gameData a
@@ -745,8 +755,13 @@ type KeySE game (a :: Type) = forall (gameData :: GameData) . game gameData -> F
 
 class FieldIx (game :: GameData -> *) where
     fieldIxs :: game 'Index
-    default fieldIxs :: (Generic (game 'Index), GFieldIxs (Rep (game 'Index))) => game 'Index
-    fieldIxs = to $ gFieldIxs 0
+    default fieldIxs :: (IsProductType (game 'Index) xs, All IsField xs) => game 'Index
+    fieldIxs =
+      productTypeTo $
+      hcmap
+        (Proxy @IsField)
+        (mapKI fieldIx)
+        index_NP
 
     traverseFields
         :: game gameData
@@ -754,54 +769,53 @@ class FieldIx (game :: GameData -> *) where
         -> (forall x . EIx x -> Field game 'Event       gameData x -> a)
         -> (forall x . BIx x -> Field game 'Behavior    gameData x -> a)
         -> [a]
-    default traverseFields :: (Generic (game gameData), GTraverseGame (Rep (game gameData)) game gameData)
+    default traverseFields :: forall gameData xs a . (IsProductType (game gameData) xs, All (IsGameField game gameData) xs)
         => game gameData
         -> (forall x . EIx x -> Field game 'SourceEvent gameData x -> a)
         -> (forall x . EIx x -> Field game 'Event       gameData x -> a)
         -> (forall x . BIx x -> Field game 'Behavior    gameData x -> a)
         -> [a]
-    traverseFields g = gTraverseFields 0 (from g)
-
-eIx :: (F game eventType 'Index a ~ EIx a, FieldIx game)
-    => (game 'Index -> Field game eventType 'Index a)
-    -> EIx a
-eIx k = unF (k fieldIxs)
-
-bIx :: FieldIx game => KeyB game a -> BIx a
-bIx k = unF (k fieldIxs)
+    traverseFields game fse fe fb =
+      hcollapse $
+      hczipWith
+        (Proxy @(IsGameField game gameData))
+        (mapKIK (\ ix -> dispatch ix fse fe fb))
+        index_NP
+        (productTypeFrom game)
 
 --
 -- Generic FieldIx
 --
 
-class GFieldIxs a where
-    gFieldIxs :: Int -> a
-instance GFieldIxs (NP I xs) => GFieldIxs (SOP I '[xs]) where
-    gFieldIxs ix = SOP (Z (gFieldIxs ix))
-instance GFieldIxs (NP I '[]) where
-    gFieldIxs _ = Nil
-instance (F game 'SourceEvent 'Index a ~ EIx a, GFieldIxs (NP I xs)) => GFieldIxs (NP I (Field game 'SourceEvent 'Index a ': xs)) where
-    gFieldIxs ix = I (Field $EIx ix) :* gFieldIxs (ix + 1)
-instance (F game 'Event 'Index a ~ EIx a, GFieldIxs (NP I xs)) => GFieldIxs (NP I (Field game 'Event 'Index a ': xs)) where
-    gFieldIxs ix = I (Field $EIx ix) :* gFieldIxs (ix + 1)
-instance (F game 'Behavior 'Index a ~ BIx a, GFieldIxs (NP I xs)) => GFieldIxs (NP I (Field game 'Behavior 'Index a ': xs)) where
-    gFieldIxs ix = I (Field $BIx ix) :* gFieldIxs (ix + 1)
+index_NP :: SListI xs => NP (K Int) xs
+index_NP =
+  ana_NP (\ (K i) -> (K i, K (i + 1))) (K 0)
 
-class GTraverseGame rep game gameData where
-    gTraverseFields
-        :: Int -- ^ current index
-        -> rep
-        -> (forall x . EIx x -> Field game 'SourceEvent gameData x -> a)
-        -> (forall x . EIx x -> Field game 'Event       gameData x -> a)
-        -> (forall x . BIx x -> Field game 'Behavior    gameData x -> a)
-        -> [a]
-instance (GTraverseGame (NP I xs) game gameData) => GTraverseGame (SOP I '[xs]) game gameData where
-    gTraverseFields ix game fse fe fb = gTraverseFields ix (unZ $ unSOP $ game) fse fe fb
-instance GTraverseGame (NP I '[]) game gameData where
-    gTraverseFields _ _ _ _ _ = []
-instance GTraverseGame (NP I xs) game gameData => GTraverseGame (NP I ((Field game 'SourceEvent gameData x) ': xs)) game gameData where
-    gTraverseFields ix game fse fe fb = (fse (EIx ix) $ unI $ hd game) : gTraverseFields (ix + 1) (tl game) fse fe fb
-instance GTraverseGame (NP I xs) game gameData => GTraverseGame (NP I ((Field game 'Event gameData x) ': xs)) game gameData where
-    gTraverseFields ix game fse fe fb = (fe (EIx ix) $ unI $ hd game) : gTraverseFields (ix + 1) (tl game) fse fe fb
-instance GTraverseGame (NP I xs) game gameData => GTraverseGame (NP I ((Field game 'Behavior gameData x) ': xs)) game gameData where
-    gTraverseFields ix game fse fe fb = (fb (BIx ix)$ unI $ hd game) : gTraverseFields (ix + 1) (tl game) fse fe fb
+class IsField a where
+  fieldIx :: Int -> a
+
+instance IsField (Field game 'SourceEvent 'Index a) where
+  fieldIx ix = Field $ EIx ix
+
+instance IsField (Field game 'Event 'Index a) where
+  fieldIx ix = Field $ EIx ix
+
+instance IsField (Field game 'Behavior 'Index a) where
+  fieldIx ix = Field $ BIx ix
+
+class IsGameField game gameData a where
+  dispatch ::
+       Int
+    -> (forall x . EIx x -> Field game 'SourceEvent gameData x -> b)
+    -> (forall x . EIx x -> Field game 'Event       gameData x -> b)
+    -> (forall x . BIx x -> Field game 'Behavior    gameData x -> b)
+    -> a -> b
+
+instance IsGameField game gameData (Field game 'SourceEvent gameData a) where
+  dispatch ix fse _fe _fb field = fse (EIx ix) field
+
+instance IsGameField game gameData (Field game 'Event       gameData a) where
+  dispatch ix _fse fe _fb field = fe  (EIx ix) field
+
+instance IsGameField game gameData (Field game 'Behavior    gameData a) where
+  dispatch ix _fse _fe fb field = fb  (BIx ix) field

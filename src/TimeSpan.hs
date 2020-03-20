@@ -43,6 +43,11 @@ data AllOr a
     deriving stock (Show, Generic) -- NOT Ord
     deriving anyclass (Binary)
 
+data AllOrIncExc a
+    = AIX_All   -- ^ all
+    | AIX_Inc a -- ^ inclusive
+    | AIX_Exc a -- ^ exclusive
+
 -- Half spaces
 newtype LeftSpaceExc  = LeftSpaceExc  Time   -- ^ [[ LeftSpaceExc  t' ]] = { t | t < t' }
     deriving stock (Eq, Ord, Generic)

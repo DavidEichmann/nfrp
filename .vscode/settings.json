@@ -1,7 +1,7 @@
 {
     "languageServerHaskell.enableHIE": true,
     "files.trimTrailingWhitespace": true,
-    "languageServerHaskell.hieExecutablePath": "/home/david/.local/bin/hie-8.4.3",
+    "languageServerHaskell.hieExecutablePath": "/home/david/.local/bin/hie-wrapper",
     "languageServerHaskell.useCustomHieWrapper": false,
     "cSpell.words": [
         "lspan",
