@@ -1,30 +1,63 @@
 # TODO
 
-* Naive NFRP: broadcast all source events
-  * [X] Assume a single source event for all nodes. And create a function that
-    generates all source events connected: my source event and also all other
-    nodes' source events connected via TCP.
-    * No clock sync (just have a placeholder)
-  * [ ] Blog post
-    * Why networking is hard
-    * how unity 3D does networking
-      * BONUS demonstrate shortcomings
-        * There is local state and host state. These may not be in sync, and you may get race conditions if you combine local state with "sync vars". e.g. send command to host, then immediatelly read sync var and do some logic. Oooops sync var was not updated yet. Bam! Race condition!
-        * Authoritative server -> double the lag compared to distributed.
-  * [ ] (Tuesday) Create a test "Game" from circles demonstrating lack of race conditions
-    * Simulate send delays (random)
-    * split Game into 2 behaviors so you don't block current position
-    * Shoot toward opposite position gives you a point if other player is there
-    * Show score
-    * BONUS show projectile when you shoot
-    * create a bot that very quickly flips between 2 spots
-    * show that even with a lot of lag both nodes calculate the same score
-* [ ] UDP!
-* [ ]
-* [ ]
-* [ ]
-* [ ]
+* 2 important issues:
 
-# Future work
+  1. WTF are actually the semantics of the Rule monad? It's odd that we can just
+     arbitrarily combine events and behaviors (current and next). So let's
+     define them better.
 
-* Vector clocks (and no clock synchronization)
+     Just like we can think of Events as a Behavior of Maybe a value, we can
+     also think of Behaviors as an initial value and an Event (i.e. the changes
+     to the value). We can then say the current value of a behavior is the
+     latest event strictly before the current time, and the next value is the
+     latest event before or equal to the current time.
+
+     So at least in terms of semantics, we can stick to thinking about events
+     and "latest"/"previous" occurrences given some initial value.
+
+     So what does it mean to getE in a Rule. I think each getE will return Maybe
+     the event occurrence implying that we are "merging" events i.e. the
+     resulting event will occur when any of the getE events occur. We can also
+     provide a `requireE` which will short circuit: the resulting event will
+     only happen when the required event happens. If multiple events are
+     required, then the resulting event will occur only when all the required
+     events are occuring. Note that the `requiredE` event completely override
+     the `getE` events in terms of the resulting event's occurrences:
+
+        result event occurs  <->  if any requiredE events
+                                    then (all requiredE events are occuring)
+                                    else (any getE events are occuring)
+
+    With a `getLatestE, getPreviousE :: EIx a -> Rule (Maybe a)`
+
+  2. How the hell do we resolve dead lock?
+
+      * Originally I thought this was an issue with self references, but the
+        problem is more general! It has to do with the fact that Rules are
+        monadic, so we can't progress / produce knowledge. My intuition is that
+        for spans of time, we know that the start of the span (or the whole
+        span) must be a NoChange span. Hence if we depend on a span that we
+        don't yet have knowledge for, we can at least use the knowledge that it
+        starts with a NoChange span to progress. The the catch is that we don't
+        know when that span ends, so we'll need a way to deal with that.
+        Specifically we'll need a way to express facts without knowing when they
+        end.
+
+            xE = NoChange till time T then unknown
+
+            behaviorA = steppedB initA $ do
+              xMay <- getE xE
+              b    <- getB behaviorB
+              return (f xMay b)
+
+            behaviorB = steppedB initB $ do
+              xMay <- getE xE
+              a    <- getB behaviorA
+              return (f xMay a)
+
+        The above should NOT deadlock. By looking at this we know that behaviorA
+        should have no change up to time T. Even though we behaviours A and B
+        depend on eachother, they only depend on the *previous* value, so this
+        should work out. Currently this does deadlock because the active rules
+        will both be waiting on facts for the other behavior.
+

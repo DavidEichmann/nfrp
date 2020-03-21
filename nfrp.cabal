@@ -23,6 +23,7 @@ library
         , KnowledgeBase.Timeline
         , KnowledgeBase.Ix
         , Lazy
+        , Theory
         , Time
         , TimeSpan
     hs-source-dirs: src
