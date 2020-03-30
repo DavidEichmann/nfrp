@@ -27,10 +27,120 @@ module Theory where
     import TimeSpan
 
 {-
-# NFRP Implementation and Semantics
+# NFRP Introduction
 
-NFRP is a networked FRP system. We start by looking only at "Events"
+NFRP is a networked FRP system. In practice we know when events are happening
+(and not happening) only for explicit spans of time. As we observe inputs from
+users and share information over the internet, our knowledge strictly increases.
 
+TODO talk about how we use total semantics as a mental model when using NFRP,
+but use the partial semantics for implementation (and I guess we might use it
+for more complicated aspect of NFRP like how to observe/listen to
+events/behaviors). Also, all the partial semantics functions should always
+either give Unknown or a value consistent with the total semantics.
+
+## Events Intro
+
+The main abstraction we use to model programs is an "Event". An event is
+something that occurs at distinct and instantaneous points in time. Each event
+occurrence may also carry with it a piece of data. While not used in this form
+in NFRP it is helpful to think of a (total) Event as the following datatype:
+
+    type Event a = [(Time, a)]
+
+    type Time = Double
+
+Note that the times in the Event's list are the event occurrence times, and must
+all be distinct. In practice we don't represent events like that, instead we
+index them using an event index type:
+-}
+    newtype EIx (a :: Type) = EIx Int
+        deriving newtype Eq
+{-
+For example `EIx 100` might refer to the event for a right mouse click, and `EIx
+101` might refer to the event for a left mouse click. We then use the index to
+lookup knowledge in a `knowledgeBase`.
+
+## KnowledgeBase
+
+Our kowledege is only ever partial. We can think of our current knowledge as a
+set of known facts about events:
+-}
+    -- | A set (actually a list) of known facts.
+    data KnowledgeBase = KnowledgeBase [SomeFact]
+
+    -- | A knowledge base with no facts.
+    emptyKnowledgeBase :: KnowledgeBase
+    emptyKnowledgeBase = KnowledgeBase []
+
+    -- | A fact for some arbitrary event of type `a`.
+    data SomeFact = forall a . SomeFact (EIx a) (Fact a)
+
+    -- | `Just x` mean the event is occurring with the value `x`. Nothing means
+    -- the event is not occurring.
+    type MaybeOcc a = Maybe a
+
+    -- | A single fact about an event.
+    data Fact a
+        = NoOcc SpanExc           -- No event is occurring in this time span.
+        | Occ Time (MaybeOcc a)   -- A single event may be occurring at this time.
+
+    -- | `SpanExc lo hi` is a time span from `lo` to `hi` excluding `lo` and
+    -- `hi`. If `lo` or `hi` is Nothing, that indicates an open interval. e.g.
+    --
+    --      SpanExc (Just 1) (Just 5)  means  1 < t < 5
+    --      SpanExc Nothing  (Just 5)  means      t < 5
+    --      SpanExc (Just 1) Nothing   means  1 < t
+    --      SpanExc Nothing Nothing    means "all time"
+    --
+    -- TODO this is Defined in the TimeSpan module
+{-
+Importantly, all facts are qualified over a point or span of time, and hence
+will never become untrue. There is a fairly intuitive reason why this is useful.
+The statement "The user is clicking the left mouse button" may be true now but
+will be untrue a moment later. In contrast, if we qualify the time, this
+statement will always be true: "The user clicked the left mouse button at
+exactly 6:30AM". Time travel is out of the scope of NFRP. We can now ask: what
+are all the known facts for a given event?
+-}
+    factsE :: EIx a -> KnowledgeBase -> [Fact a]
+    factsE (EIx eix) (KnowledgeBase es)
+        = [ unsafeCoerce fact
+            | SomeFact (EIx eix') fact <- es
+            , eix == eix'
+            ]
+{-
+More fundamentally, we can also ask: is an event occurring at a given time:
+-}
+    type MaybeKnown a = Maybe a
+
+    lookupE :: Time -> EIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
+    lookupE time eix kb = case find (\fact -> toFactSpan fact `contains` time) (factsE eix kb) of
+        Just (NoOcc _)    -> Just Nothing
+        Just (Occ _ aMay) -> Just aMay
+        Nothing           -> Nothing
+{-
+Remember we only have partial knowledge so the result is one of:
+
+    `Nothing`        meaning  "Unknown!"
+    `Just Nothing`   meaning  "Known! The event is NOT occurring"
+    `Just (Just x)`  meaning  "Known! The event IS occurring with value `x`"
+-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+{-
 ## Background
 
 ### Semantics of Total Event
@@ -47,8 +157,8 @@ denotation:
 
 Note that `⟦x⟧` means "denotation of x" and `[x]` is regular haskell syntax
 meaning "a list of x". As the time values are distinct, this means that at any
-point in time an event is occurring either exactly once or not at all. We can now
-answer the question of "is an event occurring at a given time?":
+point in time an event is occurring either exactly once or not at all. We can
+now answer the question of "is an event occurring at a given time?":
 -}
     type MaybeOcc a = Maybe a
 {-
@@ -67,31 +177,30 @@ Hence, when considering implementation, we make use of a `KnowledgeBase`. We
 also refer to Events with an event index.
 -}
     newtype EIx (a :: Type) = EIx Int         -- Index of an event
-        deriving newtype Eq
 
-    data SomeEventFact = forall a . SomeEventFact (EIx a) (EventFact a)
+    data SomeFact = forall a . SomeFact (EIx a) (Fact a)
 
-    data KnowledgeBase = KnowledgeBase [SomeEventFact]
+    data KnowledgeBase = KnowledgeBase [SomeFact]
 
-    newKnowledgeBase :: KnowledgeBase
-    newKnowledgeBase = KnowledgeBase []
+    emptyKnowledgeBase :: KnowledgeBase
+    emptyKnowledgeBase = KnowledgeBase []
 
-    factsE :: EIx a -> KnowledgeBase -> [EventFact a]
+    factsE :: EIx a -> KnowledgeBase -> [Fact a]
     factsE (EIx eix) (KnowledgeBase es)
         = [ unsafeCoerce fact
-            | SomeEventFact (EIx eix') fact <- es
+            | SomeFact (EIx eix') fact <- es
             , eix == eix'
             ]
 {-
 That represents the current knowledge of a set of events (and later also
 behaviors). As we receive new facts, we can add them to the `KnowledgeBase`:
 
-    insertFact :: SomeEventFact -> KnowledgeBase -> KnowledgeBase
+    insertFact :: SomeFact -> KnowledgeBase -> KnowledgeBase
     insertFact = ...
 
-This isn't as simple as appending facts as we also want to derive knowledge from
-existing facts. How exactly we derive all this knowledge is a main source of
-complexity when implementing NFRP.
+This isn't as simple as appending facts to the list of facts as we also want to
+derive knowledge from existing facts. How exactly we derive all this knowledge
+is a main source of complexity when implementing NFRP.
 
 # Semantics of (Partial) Event
 
@@ -99,11 +208,14 @@ Throughout the implementation of NFRP we always think of events as partial i.e.
 we only have knowledge of events for explicit periods of time. We make partial
 knowledge explicit with the following denotation:
 
-    ⟦ Event a ⟧ = [EventFact a]   -- Where facts' time spans never overlap
+    ⟦Event a⟧ = (Time -> MaybeKnown (MaybeOcc a))
 
-    data SpanExc = ...
+        -- Where Occurrences happen at distinct times i.e. have 0 duration.
+
+The representation we use is:
+    newtype Event a = Event [Fact a]
 -}
-    data EventFact a
+    data Fact a
         = NoOcc SpanExc        -- No event is occurring in this time span.
         | Occ Time (Maybe a)   -- A single event may be occurring at this time.
 {-
@@ -120,10 +232,10 @@ these facts is implicitly "unknown". Now our `lookupE` function changes a bit:
         Just (Occ _ aMay) -> Just aMay
         Nothing           -> Nothing
 
-    isOccurring :: Time -> EIx a -> KnowledgeBase -> Maybe Bool
+    isOccurring :: Time -> EIx a -> KnowledgeBase -> MaybeKnown Bool
     isOccurring time eix kb = fmap isJust (lookupE time eix kb)
 
-    toFactSpan :: EventFact a -> FactSpan
+    toFactSpan :: Fact a -> FactSpan
     toFactSpan (NoOcc tspan) = FS_Span tspan
     toFactSpan (Occ t _) = FS_Point t
 {-
@@ -145,7 +257,7 @@ events directly like so:
 This method of constructing events is how we'll ultimately express the input
 events to our program. We'll call these input events "source events". In a large
 program, we expect there to only be a small set of input events compared to the
-total number of events we want to describe. In the context of a video games, we
+total number of events we want to describe. In the context of a video game, we
 may only have a single source event `Event PlayerInputs` from which the entire
 game logic will be derived. So we need a way to create "derived events" from
 other events. NFRP provides a Monadic interface for this. The *Monadic* part is
@@ -158,6 +270,7 @@ The `EventM` monad is used to describe a derived event:
 
     data EventM a
         = forall b . GetE (EIx b) (MaybeOcc b -> EventM a)
+        -- ^ Mark the EIx as a
         | ReturnOcc a
         | ReturnNoOcc
         -- These are explained in the next section.
@@ -166,15 +279,33 @@ The `EventM` monad is used to describe a derived event:
 
     deriving instance Functor EventM
 
-    -- | Required this event to be occurring in order for the resulting event to
-    -- be occur.
-    requireE :: EIx a -> EventM a
-    requireE eix = GetE eix (maybe ReturnNoOcc ReturnOcc)
-
     -- | Optionally require this event. In order for the resulting event to
     -- occur, at least 1 of all `getE`ed events must be occurring.
     getE :: EIx a -> EventM (MaybeOcc a)
     getE eix = GetE eix (maybe (ReturnOcc Nothing) (ReturnOcc . Just))
+{-
+The interpretation can be summed up in this function:
+-}
+
+    -- TODO support self reference (will require adding a "self" `EIx a` parameter)
+    lookupEM :: Time -> EventM a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
+    lookupEM _ (ReturnOcc _) _ = Just Nothing -- Do dependent events, so the resulting event never occurs.
+    lookupEM t top kb = go top
+        where
+        go :: EventM a -> MaybeKnown (MaybeOcc a)
+        go (GetE depEIx cont) = _
+        go (ReturnOcc a) = _
+        go ReturnNoOcc = _
+        go (LatestE   depEIx cont) = _
+        go (PreviousE depEIx cont) = _
+
+    -- | We can derive a variant of getE here
+    requireE :: EIx a -> EventM a
+    requireE eix = do
+        depMay <- getE eix
+        case depMay of
+            Nothing -> ReturnNoOcc
+            Just a -> return a
 
 {-
 So the event expressed by a `EventM` withe index `eix` has the following
