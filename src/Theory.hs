@@ -51,8 +51,9 @@ in NFRP it is helpful to think of a (total) Event as the following datatype:
     type Time = Double
 
 Note that the times in the Event's list are the event occurrence times, and must
-all be distinct. In practice we don't represent events like that, instead we
-index them using an event index type:
+all be distinct i.e. an event can only be occurring at most once fr any given
+time. In practice we don't represent events like this, instead we index them
+using an event index type:
 -}
     newtype EIx (a :: Type) = EIx Int
         deriving newtype Eq
@@ -63,7 +64,7 @@ lookup knowledge in a `knowledgeBase`.
 
 ## KnowledgeBase
 
-Our kowledege is only ever partial. We can think of our current knowledge as a
+Our knowledge is only ever partial. We can think of our current knowledge as a
 set of known facts about events:
 -}
     -- | A set (actually a list) of known facts.
@@ -125,6 +126,82 @@ Remember we only have partial knowledge so the result is one of:
     `Nothing`        meaning  "Unknown!"
     `Just Nothing`   meaning  "Known! The event is NOT occurring"
     `Just (Just x)`  meaning  "Known! The event IS occurring with value `x`"
+
+### Derived Events
+
+When modeling our reactive program in FRP we wan to be able to define derived
+events in terms of other events. For this we need some language to describe
+derived events. For this NFRP provides a monadic interface (TODO why use the
+total denotation here?)
+-}
+    -- | Using the total denotation throughout
+    -- [[ EventM a ]]  =  [[ Event a ]]      -- Some event occurrences
+    data EventM a
+        -- TODO this definition is a bit cheating because we use Pure... actually the denotation is either a pure value or a event occ list.
+        -- [[ GetE eix f ]]
+        --      = -- when eix IS occurring
+        --         [ case f (Just b) of
+        --               Pure a -> (t, a)
+        --               aM -> [ (t, a) | (t', a) <- [[ aM ]], t' == t ]
+        --           | (t , b) <- eventOccs eix
+        --           ]
+        --        -- when eix is NOT occurring
+        --         ++ case f Nothing of
+        --                   Pure a -> []
+        --                   aM -> [ (t, a)
+        --                             | (t, a) <- [[ aM ]]
+        --                             , not $ t `elem` (fst <$> eventOccs eix))
+        --                             ]
+        = forall b . GetE (EIx b) (MaybeOcc b -> EventM a)
+
+        -- | A pure value
+        -- [[ Pure a ]]  =  []
+        | Pure a
+        -- [[ ReturnNoOcc ]]  =  []
+        | ReturnNoOcc
+
+        -- [[ PreviousE eix f ]] = [ (ta, a)
+        --    | (t, b, t') <- eventOccsAndNextOccTimeMay eix   -- nextOccTimeMay is Nothing for final event
+        --    , (ta, a) <- [[ f (Just b) ]]
+        --    , t < ta && maybe True (ta <=) t'
+        --    ] ++
+        --    -- Before first event
+        --    (filter ((beforeFirstOccTime eix <) . fst) [[ f Nothing ]])
+        | forall b . LatestE   (EIx b) (Maybe b -> EventM a)
+        | forall b . PreviousE (EIx b) (Maybe b -> EventM a)
+
+    deriving instance Functor EventM
+
+    -- | Optionally require this event. In order for the resulting event to
+    -- occur, at least 1 of all `getE`ed events must be occurring.
+    getE :: EIx a -> EventM (MaybeOcc a)
+    getE eix = GetE eix (maybe (Pure Nothing) (Pure . Just))
+
+    -- | We can derive a variant of getE that requires the dependent event to
+    -- be occurring.
+    requireE :: EIx a -> EventM a
+    requireE eix = do
+        depMay <- getE eix
+        case depMay of
+            Nothing -> ReturnNoOcc
+            Just a -> return a
+{-
+Ok well now we have some kinda confusing ass monad, but I imagine the usage to
+feel a lot more natural. Also, it's starting to look like the naive
+implementation will not terminate because we'll be forcing whole lists of event
+occurrences which will clearly not work (it forces future events!).
+
+
+TODO
+
+I think it may be nicer to use `Time -> MaybeOcc a` as a denotation of Events.
+
+For a simple self reference, you should be able to prove mathematically
+from the EventM denotations something along the lines of "you can assume there
+are no events happening as long as all other (i.e. non self referencing)
+dependencies are not occurring". Then hopefully you can expand on that to show
+how you can handle transitive self dependencies (and hopefully that's sufficient
+for the programs will be modeling).
 -}
 
 
@@ -139,6 +216,7 @@ Remember we only have partial knowledge so the result is one of:
 
 
 
+{-
 
 {-
 ## Background
@@ -271,7 +349,7 @@ The `EventM` monad is used to describe a derived event:
     data EventM a
         = forall b . GetE (EIx b) (MaybeOcc b -> EventM a)
         -- ^ Mark the EIx as a
-        | ReturnOcc a
+        | Pure a
         | ReturnNoOcc
         -- These are explained in the next section.
         | forall b . LatestE   (EIx b) (Maybe b -> EventM a)
@@ -282,19 +360,19 @@ The `EventM` monad is used to describe a derived event:
     -- | Optionally require this event. In order for the resulting event to
     -- occur, at least 1 of all `getE`ed events must be occurring.
     getE :: EIx a -> EventM (MaybeOcc a)
-    getE eix = GetE eix (maybe (ReturnOcc Nothing) (ReturnOcc . Just))
+    getE eix = GetE eix (maybe (Pure Nothing) (Pure . Just))
 {-
 The interpretation can be summed up in this function:
 -}
 
     -- TODO support self reference (will require adding a "self" `EIx a` parameter)
     lookupEM :: Time -> EventM a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
-    lookupEM _ (ReturnOcc _) _ = Just Nothing -- Do dependent events, so the resulting event never occurs.
+    lookupEM _ (Pure _) _ = Just Nothing -- Do dependent events, so the resulting event never occurs.
     lookupEM t top kb = go top
         where
         go :: EventM a -> MaybeKnown (MaybeOcc a)
         go (GetE depEIx cont) = _
-        go (ReturnOcc a) = _
+        go (Pure a) = _
         go ReturnNoOcc = _
         go (LatestE   depEIx cont) = _
         go (PreviousE depEIx cont) = _
@@ -451,7 +529,7 @@ span), we just don't know when the span will end. It ends at the next closest (i
 
 
 -}
-
+-}
 {- APPENDIX -}
 
     -- TODO
