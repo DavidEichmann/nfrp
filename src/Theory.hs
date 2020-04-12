@@ -17,15 +17,241 @@
 
 module Theory where
 
-    import Unsafe.Coerce
+    import qualified Control.Monad as M
     import Data.Kind
-    import Data.List (find)
-    import Data.Maybe (isJust)
+    import Data.List (foldl')
+    import Data.Maybe (fromMaybe)
+    import Unsafe.Coerce
 
     import Time
-    import KnowledgeBase.Timeline (FactSpan (..))
+    -- import KnowledgeBase.Timeline (FactSpan (..))
     import TimeSpan
 
+    data EventFact a
+        = FactNoOcc SpanExc
+        | FactMayOcc Time (MaybeOcc a)
+
+-- We have some set of `EIx`s, 𝔼, and a definition for each: either a source
+-- event or derived event and we want to calculate all facts about the derived
+-- events from the source events.
+
+    data InputEl = forall a . InputEl (EIx a) (Either [EventFact a] (EventM a))
+    type Inputs = [InputEl]
+
+    type MaybeOcc a = Maybe a
+
+    newtype EIx (a :: Type) = EIx Int         -- Index of an event
+        deriving newtype Eq
+
+-- Derived events are expressed with the EventM monad:
+
+    data EventM a
+        = Pure a
+        | NoOcc
+        | forall b . GetE  (EIx b) (MaybeOcc b -> EventM a)
+        | forall b . PrevE (EIx b) (Maybe    b -> EventM a)
+
+    deriving instance Functor EventM
+
+    instance Applicative EventM where
+        (<*>) = M.ap
+        pure = return
+
+    instance Monad EventM where
+        return = Pure
+        fa >>= fmb = case fa of
+            Pure a -> fmb a
+            NoOcc -> NoOcc
+            GetE  eixb mayOccToCont  -> GetE  eixb ((>>= fmb) . mayOccToCont)
+            PrevE eixb mayPrevToCont -> PrevE eixb ((>>= fmb) . mayPrevToCont)
+
+    getE :: EIx a -> EventM (MaybeOcc a)
+    getE eix = GetE eix Pure
+
+    prevE :: EIx a -> EventM (Maybe a)
+    prevE eix = PrevE eix Pure
+
+-- Give some `inputs :: Inputs`, we have this denotation for an event/EventM:
+
+    -- lookupE :: Time -> EIx a -> MaybeOcc a
+    -- lookupE t eix = case inputs eix of
+    --     Left lookupSourceE -> lookupSourceE t
+    --     Right eventM -> deriveE t eventM
+
+    -- deriveE :: forall a . Inputs -> Time -> EventM a -> MaybeOcc a
+    -- deriveE t eventM = deriveEgo False eventM
+    --
+    -- deriveEgo :: Time -> Bool -> EventM a -> MaybeOcc a
+    -- deriveEgo t False (Pure _) = Nothing
+    -- deriveEgo t True  (Pure a) = Just a
+    -- deriveEgo t _     NoOcc    = Nothing
+    -- deriveEgo t seenOcc (GetE eixB cont) = case lookupE inputs t eixB of
+    --     Nothing -> deriveEgo t seenOcc (cont Nothing)
+    --     Just b  -> deriveEgo t True    (cont (Just b))
+    -- deriveEgo t seenOcc (PrevE eixB cont)
+    --     = if ∃ t'  .  t' < t
+    --                ∧  isJust (lookupE t' exiB)
+    --                ∧  (∀ t' < t'' < t  .  lookupE t'' exiB == Nothing)
+    --         then lookupE t' exiB
+    --         else Nothing
+
+-- We store a knowledge base:
+
+    data SomeEventFact = forall a . SomeEventFact (EIx a) (EventFact a)
+    data SomeDerivation = forall a . SomeDerivation (EIx a) (Derivation a)
+
+    data KnowledgeBase = KnowledgeBase [SomeEventFact] [SomeDerivation]
+
+    factsE :: EIx a -> KnowledgeBase -> [EventFact a]
+    factsE (EIx eix) (KnowledgeBase es _)
+        = [ unsafeCoerce fact
+            | SomeEventFact (EIx eix') fact <- es
+            , eix == eix'
+            ]
+
+-- A derivation is a partial evaluation of the `deriveE` function, universally
+-- quantified over a range of time.
+
+    startDerivationForAllTime :: EventM a -> Derivation a
+    startDerivationForAllTime em = KnownSpan (Right allT) False em
+
+    -- eix :: Eix a  is implicit
+    data Derivation a
+        -- ∀ t ∈ tspan  .  lookup t eix = deriveEgo t seenOcc contDerivation
+        = KnownSpan
+            { derTspan   :: Either Time SpanExc
+            , derSeenOcc :: Bool
+            , derContDerivation :: EventM a
+            }
+        -- | ???
+
+-- Now a natural fist attempt at a solution is obvious: start with an initial
+-- knowledge base and continue evaluating derivations until all terminate or
+-- deadlock:
+
+    solution1 :: Inputs -> KnowledgeBase
+    solution1 inputs = go initialKb
+        where
+        initialFacts = concat
+            [ SomeEventFact eix <$> eventFacts
+            | InputEl eix (Left eventFacts) <- inputs
+            ]
+        initialDerivations =
+            [ SomeDerivation eix (startDerivationForAllTime eventM)
+            | InputEl eix (Right eventM) <- inputs
+            ]
+        initialKb = KnowledgeBase initialFacts initialDerivations
+
+        go :: KnowledgeBase -> KnowledgeBase
+        go kb = let (kb', hasChanged) = stepDerivations kb
+                in if hasChanged
+                        then go kb'
+                        else kb'
+
+        -- Tries to step all derivations once.
+        stepDerivations
+            :: KnowledgeBase
+            -- ^ Current knowledge base.
+            -> (KnowledgeBase, Bool)
+            -- ^ (New knowledge base, True is the new knowledge base is different from the old).
+        stepDerivations (KnowledgeBase facts derivations)
+            = (KnowledgeBase kb'facts kb'derivations, anyChanged)
+            where
+            (kb'facts, kb'derivations, anyChanged) = foldl'
+                (\(facts', derivations', changed)
+                  someDerivation@(SomeDerivation eix derivation)
+                  -> case stepDerivation facts' derivation of
+                    Nothing ->
+                        ( facts'
+                        , someDerivation:derivations'
+                        , changed
+                        )
+                    Just (newFacts, newDerivations) ->
+                        ( (SomeEventFact eix <$> newFacts) ++ facts'
+                        , (SomeDerivation eix <$> newDerivations) ++ derivations'
+                        , True
+                        )
+                )
+                (facts, [], False)
+                derivations
+
+        -- This is the important part that should correspond to the `deriveE`
+        -- denotation.
+        stepDerivation
+            :: [SomeEventFact]       -- ^ Current facts. Used to query for existing facts
+            -> Derivation a     -- ^ Derivation to step
+            -> Maybe ([EventFact a], [Derivation a])
+                                -- ^ Nothing if no progress. Else Just the new facts and new derivations.
+        stepDerivation facts derivation = case derivation of
+            KnownSpan tspan seenOcc contDerivation -> case contDerivation of
+                Pure a -> Just $ case (seenOcc, tspan) of
+                            (True, Left t) -> ([FactMayOcc t (Just a)], [])
+                            -- TODO looks like an invariant that `seenOcc -> tspan is a point in time (i.e. not a span)`
+                            (True, Right _) -> error "stepDerivation: encountered non-instantaneous event occurrence."
+                            (False, Left t) -> ([FactMayOcc t Nothing], [])
+                            (False, Right tspanSpan) -> ([FactNoOcc tspanSpan], [])
+                NoOcc -> Just $ case tspan of
+                            Left t          -> ([FactMayOcc t Nothing], [])
+                            Right tspanSpan -> ([FactNoOcc tspanSpan], [])
+                GetE  eixb mayOccToCont -> case spanLookupEFacts tspan eixb facts of
+                    ([], _) -> Nothing
+                    (factsB, unknowns) -> Just $ (
+                        -- For knowns, split and try to progress the derivation.
+                        mconcat
+                            [ case factB of
+                                FactNoOcc subTspan -> let
+                                    newCont = mayOccToCont Nothing
+                                    newDer  = KnownSpan (Right subTspan) seenOcc newCont
+                                    in fromMaybe
+                                        ([], [newDer])
+                                        -- ^ Couldn't progress further: no new facts, but we've progressed the derivation up to newDer.
+                                        (stepDerivation facts newDer)
+                                        -- ^ Try to progress further.
+                                FactMayOcc t maybeOccB -> case maybeOccB of
+                                    -- This is simmilar to above
+                                    Nothing -> let
+                                        newCont = mayOccToCont Nothing
+                                        newDer  = KnownSpan (Left t) seenOcc newCont
+                                        in fromMaybe
+                                            ([], [newDer])
+                                            (stepDerivation facts newDer)
+                                    Just b -> let
+                                        newCont = mayOccToCont (Just b)
+                                        newDer  = KnownSpan (Left t) True newCont
+                                        in fromMaybe
+                                            ([], [newDer])
+                                            (stepDerivation facts newDer)
+                            | factB <- factsB
+                            ]
+                        <>
+                        -- For unknowns, simply split the derivation into the
+                        -- unknown subspans.
+                        ([], [KnownSpan subTspan seenOcc contDerivation | subTspan <- unknowns])
+                        )
+                PrevE eixb mayPrevToCont -> _ -- This is where shit gets real!
+
+
+    -- | Directly look up all known facts for a given event and time or time
+    -- span.
+    spanLookupEFacts
+        :: Either Time SpanExc
+        -- ^ Time or span to lookup
+        -> EIx a
+        -- ^ Event to lookup
+        -> [SomeEventFact]
+        -- ^ All known facts.
+        -> ([EventFact a], [Either t SpanExc])
+        -- ^ ( Facts about the given event
+        --   , unknown times and time spans )
+        --   The union of these facts and times and time spans should exactly
+        --   equal the input time/time span.
+    spanLookupEFacts = _
+
+
+
+
+
+{-
 {-
 # NFRP Implementation and Semantics
 
@@ -161,7 +387,7 @@ The `EventM` monad is used to describe a derived event:
         | ReturnOcc a
         | ReturnNoOcc
         -- These are explained in the next section.
-        | forall b . LatestE   (EIx b) (Maybe b -> EventM a)
+        -- | forall b . LatestE   (EIx b) (Maybe b -> EventM a)
         | forall b . PreviousE (EIx b) (Maybe b -> EventM a)
 
     deriving instance Functor EventM
@@ -327,3 +553,4 @@ span), we just don't know when the span will end. It ends at the next closest (i
 
     instance Applicative EventM where
     instance Monad EventM where
+-}
