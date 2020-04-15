@@ -20,7 +20,7 @@ module Theory where
     import qualified Control.Monad as M
     import Data.Kind
     import Data.List (foldl')
-    import Data.Maybe (fromMaybe)
+    import Data.Maybe (fromMaybe, listToMaybe)
     import Unsafe.Coerce
 
     import Time
@@ -30,6 +30,10 @@ module Theory where
     data EventFact a
         = FactNoOcc SpanExc
         | FactMayOcc Time (MaybeOcc a)
+
+    factTSpan :: EventFact a -> Either Time SpanExc
+    factTSpan (FactNoOcc tspan) = Right tspan
+    factTSpan (FactMayOcc t _) = Left t
 
 -- We have some set of `EIx`s, 𝔼, and a definition for each: either a source
 -- event or derived event and we want to calculate all facts about the derived
@@ -71,6 +75,15 @@ module Theory where
     prevE :: EIx a -> EventM (Maybe a)
     prevE eix = PrevE eix Pure
 
+-- and a useful helper: TODO or we can just use MonadFail and a mono local bind
+
+    requireE :: EIx a -> EventM a
+    requireE eix = do
+        mayE <- getE eix
+        case mayE of
+            Nothing -> NoOcc
+            Just e -> return e
+
 -- Give some `inputs :: Inputs`, we have this denotation for an event/EventM:
 
     -- lookupE :: Time -> EIx a -> MaybeOcc a
@@ -95,6 +108,16 @@ module Theory where
     --         then lookupE t' exiB
     --         else Nothing
 
+    type MaybeKnown a = Maybe a
+    lookupEKB :: Time -> EIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
+    lookupEKB t eix kb = listToMaybe
+        [ case fact of
+            FactNoOcc _ -> Nothing
+            FactMayOcc _ occMay -> occMay
+        | fact <- factsE eix kb
+        , factTSpan fact `intersects` t
+        ]
+
 -- We store a knowledge base:
 
     data SomeEventFact = forall a . SomeEventFact (EIx a) (EventFact a)
@@ -103,7 +126,11 @@ module Theory where
     data KnowledgeBase = KnowledgeBase [SomeEventFact] [SomeDerivation]
 
     factsE :: EIx a -> KnowledgeBase -> [EventFact a]
-    factsE (EIx eix) (KnowledgeBase es _)
+    factsE eix (KnowledgeBase es _)
+        = factsE' eix es
+
+    factsE' :: EIx a -> [SomeEventFact] -> [EventFact a]
+    factsE' (EIx eix) es
         = [ unsafeCoerce fact
             | SomeEventFact (EIx eix') fact <- es
             , eix == eix'
@@ -228,7 +255,7 @@ module Theory where
                         -- unknown subspans.
                         ([], [KnownSpan subTspan seenOcc contDerivation | subTspan <- unknowns])
                         )
-                PrevE eixb mayPrevToCont -> _ -- This is where shit gets real!
+                PrevE _eixb _mayPrevToCont -> error "TODO support PrevE" -- This is where shit gets real!
 
 
     -- | Directly look up all known facts for a given event and time or time
@@ -240,12 +267,80 @@ module Theory where
         -- ^ Event to lookup
         -> [SomeEventFact]
         -- ^ All known facts.
-        -> ([EventFact a], [Either t SpanExc])
+        -> ([EventFact a], [Either Time SpanExc])
         -- ^ ( Facts about the given event
         --   , unknown times and time spans )
         --   The union of these facts and times and time spans should exactly
         --   equal the input time/time span.
-    spanLookupEFacts = _
+    spanLookupEFacts tspan eix allFacts = let
+        facts = factsE' eix allFacts
+        knownFacts =
+                [ case (fact, ttspan') of
+                    (FactNoOcc _, Right tspan') -> FactNoOcc tspan'
+                    (FactNoOcc _, Left t'     ) -> FactMayOcc t' Nothing
+                    (FactMayOcc _ _     , Right _) -> error "Intersection between SpanExc and Time must be Just Time or Nothing"
+                    (FactMayOcc _ occMay, Left t') -> FactMayOcc t' occMay
+                | fact <- facts
+                , Just ttspan' <- [factTSpan fact `intersect` tspan]
+                ]
+        knownTSpans = factTSpan <$> knownFacts
+        unknownTSpans = tspan `difference` knownTSpans
+        in (knownFacts, unknownTSpans)
+
+
+{-
+
+## Here is a working example:
+
+    eix1, eix2, eix3 :: EIx Int
+    eix1 = EIx 1
+    eix2 = EIx 2
+    eix3 = EIx 3
+
+    kb :: KnowledgeBase
+    kb = solution1
+            [ InputEl (EIx 1 :: EIx Int)
+                (Left [ FactNoOcc (spanExc Nothing (Just 7))
+                      , FactMayOcc 7 (Just 9)
+                      ]
+                )
+            , InputEl eix2
+                (Left [ FactNoOcc (spanExc Nothing (Just 5))
+                      , FactMayOcc 5 (Just 90)
+                      , FactMayOcc 7 (Just 80)
+                      ]
+                )
+            , InputEl eix3
+                (Right $ do
+                    e1 <- fromMaybe 0 <$> getE eix1
+                    e2 <- fromMaybe 0 <$> getE eix2
+                    return (e1+e2+100)
+                )
+            ]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+-}
+
+
+
+
+
+
+
 
 
 

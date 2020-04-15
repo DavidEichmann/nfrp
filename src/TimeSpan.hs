@@ -29,8 +29,8 @@
 
 module TimeSpan where
 
-import Data.List (group, sort)
-import Data.Maybe (isJust)
+import Data.List (foldl', group, sort)
+import Data.Maybe (catMaybes, isJust, maybeToList)
 import Data.Binary (Binary)
 import GHC.Generics (Generic)
 import Test.QuickCheck hiding (once)
@@ -166,6 +166,7 @@ instance Intersect RightSpaceExc LeftSpaceExc (Maybe SpanExc) where
     intersect r@(RightSpaceExc lo) l@(LeftSpaceExc hi)
         | lo < hi = Just (SpanExc (Or r) (Or l))
         | otherwise = Nothing
+instance Intersect Time Time (Maybe Time) where intersect a b = if a == b then Just a else Nothing
 instance Intersect Time SpanExc (Maybe Time) where intersect = flip intersect
 instance Intersect SpanExc Time (Maybe Time) where
     intersect tspan t = if tspan `contains` t then Just t else Nothing
@@ -195,7 +196,14 @@ instance Intersect LeftSpaceExc (AllOr RightSpaceExc) (Maybe SpanExc) where inte
 instance Intersect (AllOr RightSpaceExc) LeftSpaceExc (Maybe SpanExc) where
     intersect (Or rs) ls = rs `intersect` ls
     intersect All ls = Just (SpanExc All (Or ls))
-
+instance Intersect (Either Time SpanExc) (Either Time SpanExc) (Maybe (Either Time SpanExc)) where
+    intersect (Left a)  (Left b)  = Left  <$> intersect a b
+    intersect (Right a) (Left b)  = Left  <$> intersect a b
+    intersect (Left b)  (Right a) = Left  <$> intersect a b
+    intersect (Right b) (Right a) = Right <$> intersect a b
+instance Intersect (Either Time SpanExc) Time (Maybe Time) where
+    intersect (Left a)  b = a `intersect` b
+    intersect (Right a) b = a `intersect` b
 
 instance Difference LeftSpaceExc LeftSpaceExc (Maybe (Time, SpanExc)) where
     difference (LeftSpaceExc a) (LeftSpaceExc b) = (b,) <$> spanExcMaybe (Just b) (Just a)
@@ -207,6 +215,33 @@ instance Difference SpanExc LeftSpaceExc (Maybe (Time, SpanExc)) where
     difference s (LeftSpaceExc b) = (b,) <$> s `intersect` (RightSpaceExc b)
 instance Difference SpanExc RightSpaceExc (Maybe (SpanExc, Time)) where
     difference s (RightSpaceExc b) = (,b) <$> s `intersect` (LeftSpaceExc b)
+instance Difference SpanExc Time [SpanExc] where
+    difference tspan t = catMaybes [tspan `intersect` LeftSpaceExc t, tspan `intersect` RightSpaceExc t]
+instance Difference Time SpanExc (Maybe Time) where
+    difference t tspan = if tspan `contains` t
+        then Just t
+        else Nothing
+instance Difference (Either Time SpanExc) (Either Time SpanExc) [Either Time SpanExc] where
+    difference (Left a) (Left b)
+        | a == b = []
+        | otherwise = [Left a]
+    difference (Left a) (Right b) = fmap Left . maybeToList $ a `difference` b
+    difference (Right a) (Left b) = Right <$> a `difference` b
+    difference (Right a) (Right b) = concat
+        [ l ++ r
+        | let (x, y) = a `difference` b
+        , let l = case x of
+                        Nothing -> []
+                        Just (tspan, t) -> [Right tspan, Left t]
+        , let r = case y of
+                        Nothing -> []
+                        Just (t, tspan) -> [Right tspan, Left t]
+        ]
+instance Difference [Either Time SpanExc] (Either Time SpanExc) [Either Time SpanExc] where
+    difference a b = concatMap (`difference` b) a
+instance Difference (Either Time SpanExc) [Either Time SpanExc] [Either Time SpanExc] where
+    difference a bs = foldl' difference [a] bs
+
 
 
 instance Contains LeftSpaceExc TimeX where
