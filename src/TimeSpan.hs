@@ -244,6 +244,8 @@ instance Difference (Either Time SpanExc) [Either Time SpanExc] [Either Time Spa
 
 
 
+instance Contains Time Time where
+    contains = (==)
 instance Contains LeftSpaceExc TimeX where
     contains (LeftSpaceExc a) t = t < toTime a
 instance Contains RightSpaceExc TimeX where
@@ -258,6 +260,9 @@ instance Contains SpanExc Time where
     contains (SpanExc rs ls) t = ls `contains` t && rs `contains` t
 instance Contains SpanExc TimeX where
     contains (SpanExc rs ls) t = ls `contains` t && rs `contains` t
+instance Contains (Either Time SpanExc) Time where
+    contains (Left t') t = t' `contains` t
+    contains (Right tspan) t = tspan `contains` t
 instance Contains LeftSpaceExc LeftSpaceExc where
     contains (LeftSpaceExc a) (LeftSpaceExc b) = a >= b
 instance Contains RightSpaceExc RightSpaceExc where

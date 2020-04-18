@@ -6,6 +6,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE RankNTypes #-}
@@ -19,8 +20,8 @@ module Theory where
 
     import qualified Control.Monad as M
     import Data.Kind
-    import Data.List (foldl')
-    import Data.Maybe (fromMaybe, listToMaybe)
+    import Data.List (find, foldl')
+    import Data.Maybe (fromMaybe, listToMaybe, mapMaybe)
     import Unsafe.Coerce
 
     import Time
@@ -105,7 +106,7 @@ module Theory where
     --     = if ∃ t'  .  t' < t
     --                ∧  isJust (lookupE t' exiB)
     --                ∧  (∀ t' < t'' < t  .  lookupE t'' exiB == Nothing)
-    --         then lookupE t' exiB
+    --         then deriveEgo t (cont (lookupE t' exiB))
     --         else Nothing
 
     type MaybeKnown a = Maybe a
@@ -205,22 +206,24 @@ module Theory where
         -- This is the important part that should correspond to the `deriveE`
         -- denotation.
         stepDerivation
-            :: [SomeEventFact]       -- ^ Current facts. Used to query for existing facts
-            -> Derivation a     -- ^ Derivation to step
+            :: [SomeEventFact]
+            -- ^ Current facts. Used to query for existing facts
+            -> Derivation a
+            -- ^ Derivation to step
             -> Maybe ([EventFact a], [Derivation a])
-                                -- ^ Nothing if no progress. Else Just the new facts and new derivations.
+            -- ^ Nothing if no progress. Else Just the new facts and new derivations.
         stepDerivation facts derivation = case derivation of
-            KnownSpan tspan seenOcc contDerivation -> case contDerivation of
-                Pure a -> Just $ case (seenOcc, tspan) of
+            KnownSpan ttspan seenOcc contDerivation -> case contDerivation of
+                Pure a -> Just $ case (seenOcc, ttspan) of
                             (True, Left t) -> ([FactMayOcc t (Just a)], [])
-                            -- TODO looks like an invariant that `seenOcc -> tspan is a point in time (i.e. not a span)`
+                            -- TODO looks like an invariant that `seenOcc -> ttspan is a point in time (i.e. not a span)`
                             (True, Right _) -> error "stepDerivation: encountered non-instantaneous event occurrence."
                             (False, Left t) -> ([FactMayOcc t Nothing], [])
                             (False, Right tspanSpan) -> ([FactNoOcc tspanSpan], [])
-                NoOcc -> Just $ case tspan of
+                NoOcc -> Just $ case ttspan of
                             Left t          -> ([FactMayOcc t Nothing], [])
                             Right tspanSpan -> ([FactNoOcc tspanSpan], [])
-                GetE  eixb mayOccToCont -> case spanLookupEFacts tspan eixb facts of
+                GetE  eixb mayOccToCont -> case spanLookupEFacts ttspan eixb facts of
                     ([], _) -> Nothing
                     (factsB, unknowns) -> Just $ (
                         -- For knowns, split and try to progress the derivation.
@@ -255,7 +258,79 @@ module Theory where
                         -- unknown subspans.
                         ([], [KnownSpan subTspan seenOcc contDerivation | subTspan <- unknowns])
                         )
-                PrevE _eixb _mayPrevToCont -> error "TODO support PrevE" -- This is where shit gets real!
+                PrevE eixB mayPrevToCont ->
+                    -- For reference:
+                    --   deriveEgo t seenOcc (PrevE eixB cont)
+                    --     = if ∃ t'  .  t' < t
+                    --                ∧  isJust (lookupE t' exiB)
+                    --                ∧  (∀ t' < t'' < t  .  lookupE t'' exiB == Nothing)
+                    --         then deriveEgo t (cont (lookupE t' exiB))
+                    --         else Nothing
+                    case ttspan of
+                        -- When looking at a point time, we simply look up the previous event value of eixB.
+                        Left t -> case lookupPrevE t eixB facts of
+                            Nothing -> Nothing
+                            Just prevEBMay -> let
+                                newCont = mayPrevToCont prevEBMay
+                                newDer = KnownSpan ttspan seenOcc newCont
+                                in Just $ fromMaybe
+                                    ([], [newDer])
+                                    (stepDerivation facts newDer)
+                        -- When looking at a span of time, ????
+                        Right tspan -> _
+
+    -- | Directly look up the previous event occurrence (strictly before the given time).
+    lookupPrevE
+        :: Time
+        -- ^ Time t
+        -> EIx a
+        -- ^ Event to lookup.
+        -> [SomeEventFact]
+        -- ^ Known facts.
+        -> MaybeKnown (Maybe a)
+        -- ^ Nothing if unknown
+        -- Just Nothing if no event occurs before t.
+        -- Just (Just a) the value of the latest event occurring strictly before t.
+    lookupPrevE t eix allFacts = let
+        noOccSpans = mapMaybe
+                (\case
+                    FactMayOcc _ _ -> Nothing
+                    FactNoOcc tspan -> Just tspan
+                )
+                (factsE' eix allFacts)
+        -- We must find a FactMayOcc just before or containing t.
+        tspanMay = find
+                (\tspan -> tspan `contains` t || Just t == spanExcJustAfter tspan)
+                noOccSpans
+        in case tspanMay of
+            Nothing -> Nothing
+            Just tspan -> case spanExcJustBefore tspan of
+                Nothing -> Just Nothing
+                Just t' -> lookupCurrE t' eix allFacts
+
+    -- | Directly look up the current (i.e. latest) event occurrence (equal or before the given time).
+    lookupCurrE
+        :: Time
+        -- ^ Time t
+        -> EIx a
+        -- ^ Event to lookup.
+        -> [SomeEventFact]
+        -- ^ Known facts.
+        -> MaybeKnown (Maybe a)
+        -- ^ Nothing if unknown
+        -- Just Nothing if no event occurs before t.
+        -- Just (Just a) the value of the latest occurring at or before t.
+    lookupCurrE t eix allFacts = let
+        facts = factsE' eix allFacts
+        factMay = find (\f -> factTSpan f `contains` t) facts
+        in case factMay of
+            Nothing -> Nothing
+            Just fact -> case fact of
+                FactNoOcc tspan -> case spanExcJustBefore tspan of
+                    Nothing -> Just Nothing
+                    Just t' -> lookupCurrE t' eix allFacts
+                FactMayOcc _ Nothing -> lookupPrevE t eix allFacts
+                FactMayOcc _ (Just a) -> Just (Just a)
 
 
     -- | Directly look up all known facts for a given event and time or time
