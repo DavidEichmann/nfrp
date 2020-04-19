@@ -21,7 +21,7 @@ module Theory where
     import qualified Control.Monad as M
     import Data.Kind
     import Data.List (find, foldl')
-    import Data.Maybe (fromMaybe, listToMaybe, mapMaybe)
+    import Data.Maybe (fromMaybe, listToMaybe, mapMaybe, maybeToList)
     import Unsafe.Coerce
 
     import Time
@@ -32,9 +32,9 @@ module Theory where
         = FactNoOcc SpanExc
         | FactMayOcc Time (MaybeOcc a)
 
-    factTSpan :: EventFact a -> Either Time SpanExc
-    factTSpan (FactNoOcc tspan) = Right tspan
-    factTSpan (FactMayOcc t _) = Left t
+    factTSpan :: EventFact a -> DerivationSpan
+    factTSpan (FactNoOcc tspan) = DS_SpanExc tspan
+    factTSpan (FactMayOcc t _) = DS_Point t
 
 -- We have some set of `EIx`s, 𝔼, and a definition for each: either a source
 -- event or derived event and we want to calculate all facts about the derived
@@ -141,17 +141,29 @@ module Theory where
 -- quantified over a range of time.
 
     startDerivationForAllTime :: EventM a -> Derivation a
-    startDerivationForAllTime em = KnownSpan (Right allT) False em
+    startDerivationForAllTime em = KnownSpan (DS_SpanExc allT) False em
 
     -- eix :: Eix a  is implicit
     data Derivation a
         -- ∀ t ∈ tspan  .  lookup t eix = deriveEgo t seenOcc contDerivation
         = KnownSpan
-            { derTspan   :: Either Time SpanExc
+            { derTspan   :: DerivationSpan
             , derSeenOcc :: Bool
             , derContDerivation :: EventM a
             }
         -- | ???
+
+    data DerivationSpan
+        -- | DS_Point x ⟹ t < x
+        = DS_Point Time
+        -- | DS_SpanExc tspan ⟹ t ∈ tspan
+        | DS_SpanExc SpanExc
+
+        -- -- | DS_SpanExc tspan ⟹ t ∈ tspan
+        -- | DS_SpanExcInc SpanExcInc
+
+        -- -- | DS_SpanExcIncFirstOcc lo  ⟹ t ∈ tspan
+        -- | forall a . DS_SpanExcIncFirstOcc SpanExc (EIx a)
 
 -- Now a natural fist attempt at a solution is obvious: start with an initial
 -- knowledge base and continue evaluating derivations until all terminate or
@@ -215,14 +227,14 @@ module Theory where
         stepDerivation facts derivation = case derivation of
             KnownSpan ttspan seenOcc contDerivation -> case contDerivation of
                 Pure a -> Just $ case (seenOcc, ttspan) of
-                            (True, Left t) -> ([FactMayOcc t (Just a)], [])
+                            (True, DS_Point t) -> ([FactMayOcc t (Just a)], [])
                             -- TODO looks like an invariant that `seenOcc -> ttspan is a point in time (i.e. not a span)`
-                            (True, Right _) -> error "stepDerivation: encountered non-instantaneous event occurrence."
-                            (False, Left t) -> ([FactMayOcc t Nothing], [])
-                            (False, Right tspanSpan) -> ([FactNoOcc tspanSpan], [])
+                            (True, DS_SpanExc _) -> error "stepDerivation: encountered non-instantaneous event occurrence."
+                            (False, DS_Point t) -> ([FactMayOcc t Nothing], [])
+                            (False, DS_SpanExc tspanSpan) -> ([FactNoOcc tspanSpan], [])
                 NoOcc -> Just $ case ttspan of
-                            Left t          -> ([FactMayOcc t Nothing], [])
-                            Right tspanSpan -> ([FactNoOcc tspanSpan], [])
+                            DS_Point t          -> ([FactMayOcc t Nothing], [])
+                            DS_SpanExc tspanSpan -> ([FactNoOcc tspanSpan], [])
                 GetE  eixb mayOccToCont -> case spanLookupEFacts ttspan eixb facts of
                     ([], _) -> Nothing
                     (factsB, unknowns) -> Just $ (
@@ -231,7 +243,7 @@ module Theory where
                             [ case factB of
                                 FactNoOcc subTspan -> let
                                     newCont = mayOccToCont Nothing
-                                    newDer  = KnownSpan (Right subTspan) seenOcc newCont
+                                    newDer  = KnownSpan (DS_SpanExc subTspan) seenOcc newCont
                                     in fromMaybe
                                         ([], [newDer])
                                         -- ^ Couldn't progress further: no new facts, but we've progressed the derivation up to newDer.
@@ -241,13 +253,13 @@ module Theory where
                                     -- This is simmilar to above
                                     Nothing -> let
                                         newCont = mayOccToCont Nothing
-                                        newDer  = KnownSpan (Left t) seenOcc newCont
+                                        newDer  = KnownSpan (DS_Point t) seenOcc newCont
                                         in fromMaybe
                                             ([], [newDer])
                                             (stepDerivation facts newDer)
                                     Just b -> let
                                         newCont = mayOccToCont (Just b)
-                                        newDer  = KnownSpan (Left t) True newCont
+                                        newDer  = KnownSpan (DS_Point t) True newCont
                                         in fromMaybe
                                             ([], [newDer])
                                             (stepDerivation facts newDer)
@@ -268,7 +280,7 @@ module Theory where
                     --         else Nothing
                     case ttspan of
                         -- When looking at a point time, we simply look up the previous event value of eixB.
-                        Left t -> case lookupPrevE t eixB facts of
+                        DS_Point t -> case lookupPrevE t eixB facts of
                             Nothing -> Nothing
                             Just prevEBMay -> let
                                 newCont = mayPrevToCont prevEBMay
@@ -276,8 +288,58 @@ module Theory where
                                 in Just $ fromMaybe
                                     ([], [newDer])
                                     (stepDerivation facts newDer)
-                        -- When looking at a span of time, ????
-                        Right tspan -> _
+
+                        DS_SpanExc tspan -> todo -- TODO
+                            -- For now let's do a simple implementation that doesn't account for self references.
+                            -- We just look for known spans of previous eixB values and case split. This should
+                            -- be quite similar to the GetE implementation above.
+
+                            -- I think the logic will be to use the more
+                            -- complicated implementation started below when
+                            -- this is a self reference. I'm worried about
+                            -- transitive self references, but does that concern
+                            -- make sense? I'll need to describe this exact
+                            -- case.
+
+
+                        -- TODO this is some extra stuff we can do to solve the self reference case.
+
+                        -- When looking at a span of time, we can do a case
+                        -- split on a currently unknown time (the time of the
+                        -- first occurrence of eixB within tspan)
+
+                        -- An important realization here is that we can still
+                        -- make progress if we know the prev eixB at the start
+                        -- of the span, we just know yet how long that prev
+                        -- value is valid for.
+
+                        --    (a,b) = tspan
+                        --    we can now re-express the current derivation as:
+                        --
+                        --          if ∃ c  .  c ∈ tspan
+                        --                     ∧  isJust (lookup c exiB)
+                        --                     ∧  (∀ t'' ∈ tspan, t'' < c  .  lookup t'' exiB == Nothing)
+                        --
+                        --              then ∀ t ∈ (spanExcMinT tspan,  c]  . lookup t eix = deriveEgo t seenOcc (mayPrevToCont (lookupCurr (spanExcMinT tspan) eixB))
+                        --                 ∧ ∀ t ∈ (c,  b)                  . lookup t eix = deriveEgo t seenOcc contDerivation
+                        --
+                        --              else ∀ t ∈ (spanExcMinT tspan,  b)  . lookup t eix = deriveEgo t seenOcc (mayPrevToCont (lookupCurr (spanExcMinT tspan) eixB))
+                        --
+                        --          ∀ t ∈ (spanExcMinT tspan,  c]
+                        --
+                        --    We can now split this into 2 cases/derivations:
+                        --      1:
+                        --          if ∃ c  .  <as above (c is first event time)>
+                        --              then ∀ t ∈ (spanExcMinT tspan,  c]  . lookup t eix = deriveEgo t seenOcc (mayPrevToCont (lookupCurr (spanExcMinT tspan) eixB))
+                        --              else ∀ t ∈ (spanExcMinT tspan,  b)  . lookup t eix = deriveEgo t seenOcc (mayPrevToCont (lookupCurr (spanExcMinT tspan) eixB))
+                        --
+                        --      2:
+                        --          ∃ c  .  <as above (c is first event time)>
+                        --              ⟹ ∀ t ∈ (c,  b)                  . lookup t eix = deriveEgo t seenOcc contDerivation
+
+
+
+
 
     -- | Directly look up the previous event occurrence (strictly before the given time).
     lookupPrevE
@@ -336,13 +398,13 @@ module Theory where
     -- | Directly look up all known facts for a given event and time or time
     -- span.
     spanLookupEFacts
-        :: Either Time SpanExc
+        :: DerivationSpan
         -- ^ Time or span to lookup
         -> EIx a
         -- ^ Event to lookup
         -> [SomeEventFact]
         -- ^ All known facts.
-        -> ([EventFact a], [Either Time SpanExc])
+        -> ([EventFact a], [DerivationSpan])
         -- ^ ( Facts about the given event
         --   , unknown times and time spans )
         --   The union of these facts and times and time spans should exactly
@@ -351,10 +413,10 @@ module Theory where
         facts = factsE' eix allFacts
         knownFacts =
                 [ case (fact, ttspan') of
-                    (FactNoOcc _, Right tspan') -> FactNoOcc tspan'
-                    (FactNoOcc _, Left t'     ) -> FactMayOcc t' Nothing
-                    (FactMayOcc _ _     , Right _) -> error "Intersection between SpanExc and Time must be Just Time or Nothing"
-                    (FactMayOcc _ occMay, Left t') -> FactMayOcc t' occMay
+                    (FactNoOcc _, DS_SpanExc tspan') -> FactNoOcc tspan'
+                    (FactNoOcc _, DS_Point t'     ) -> FactMayOcc t' Nothing
+                    (FactMayOcc _ _     , DS_SpanExc _) -> error "Intersection between SpanExc and Time must be Just Time or Nothing"
+                    (FactMayOcc _ occMay, DS_Point t') -> FactMayOcc t' occMay
                 | fact <- facts
                 , Just ttspan' <- [factTSpan fact `intersect` tspan]
                 ]
@@ -724,3 +786,38 @@ span), we just don't know when the span will end. It ends at the next closest (i
     instance Applicative EventM where
     instance Monad EventM where
 -}
+
+    instance Intersect DerivationSpan Time (Maybe Time) where
+        intersect (DS_Point t) t' = intersect t t'
+        intersect (DS_SpanExc tspan) t = intersect tspan t
+
+    instance Intersect DerivationSpan DerivationSpan (Maybe DerivationSpan) where
+        intersect (DS_Point t)   (DS_Point t')       = DS_Point   <$> intersect t t'
+        intersect (DS_Point t)   (DS_SpanExc tspan)  = DS_Point   <$> intersect t tspan
+        intersect (DS_SpanExc t) (DS_Point t')       = DS_Point   <$> intersect t t'
+        intersect (DS_SpanExc t) (DS_SpanExc tspan)  = DS_SpanExc <$> intersect t tspan
+
+    instance Contains DerivationSpan Time where
+        contains (DS_Point t) t' = contains t t'
+        contains (DS_SpanExc tspan) t = contains tspan t
+
+    instance Difference DerivationSpan DerivationSpan [DerivationSpan] where
+        difference (DS_Point a) (DS_Point b)
+            | a == b = []
+            | otherwise = [DS_Point a]
+        difference (DS_Point a) (DS_SpanExc b) = fmap DS_Point . maybeToList $ a `difference` b
+        difference (DS_SpanExc a) (DS_Point b) = DS_SpanExc <$> a `difference` b
+        difference (DS_SpanExc a) (DS_SpanExc b) = concat
+            [ l ++ r
+            | let (x, y) = a `difference` b
+            , let l = case x of
+                            Nothing -> []
+                            Just (tspan, t) -> [DS_SpanExc tspan, DS_Point t]
+            , let r = case y of
+                            Nothing -> []
+                            Just (t, tspan) -> [DS_SpanExc tspan, DS_Point t]
+            ]
+    instance Difference [DerivationSpan] DerivationSpan [DerivationSpan] where
+        difference a b = concatMap (`difference` b) a
+    instance Difference DerivationSpan [DerivationSpan] [DerivationSpan] where
+        difference a bs = foldl' difference [a] bs
