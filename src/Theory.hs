@@ -436,13 +436,16 @@ module Theory where
         -- ^ All known previous event values (if one exists)
     prevEFacts eix allFacts = concat
         [ case fact of
-            FactNoOcc tspan ->  maybe
-                []
-                (\prevEMay -> (DS_SpanExc tspan, prevEMay) : [(DS_Point nextT, prevEMay) | Just nextT <- [spanExcJustAfter tspan]])
-                $ case spanExcJustBefore tspan of
+            FactNoOcc tspan -> let
+                mayPrevEMay = case spanExcJustBefore tspan of
+                    -- Span starts at -∞ so that's a known Nothing previous event
                     Nothing -> Just Nothing
+                    -- Span starts at a time prevT
                     Just prevT -> lookupCurrE prevT eix allFacts
-            FactMayOcc currT _ -> maybe [] (\prevEMay ->  [(DS_Point currT, prevEMay)]) $ lookupPrevE currT eix allFacts
+                in case mayPrevEMay of
+                        Nothing -> []
+                        Just prevEMay -> (DS_SpanExc tspan, prevEMay) : [(DS_Point nextT, prevEMay) | Just nextT <- [spanExcJustAfter tspan]]
+            FactMayOcc _ _ -> [] -- Point knowledge is handled by the above case
         | fact <- factsE' eix allFacts
         ]
 

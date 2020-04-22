@@ -75,7 +75,7 @@ tests = testGroup "lcTransaction"
         lookupEKB 8 eix3 kb @?= Nothing
 
 
-      , testCase "GetE and PrevE (non-self reference)" $ do
+      , testCase "GetE and PrevE (no self reference)" $ do
         let
           eix1, eix2, eix3 :: EIx Int
           eix1 = EIx 1
@@ -120,6 +120,131 @@ tests = testGroup "lcTransaction"
         lookupEKB 7 eix3 kb @?= Just (Just 183)
         lookupEKB 8 eix3 kb @?= Nothing
         lookupEKB 9 eix3 kb @?= Just (Just 171)
+
+
+      , testCase "GetE and PrevE (with self reference after requireE)" $ do
+        let
+          eix1, eix2 :: EIx Int
+          eix1 = EIx 1
+          eix2 = EIx 2
+
+          kb :: KnowledgeBase
+          kb = solution1
+                -- time: --0--------5-----7-----9--------
+                --------------------3-----1_____5____
+                [ InputEl eix1
+                    (Left [ FactNoOcc (spanExc Nothing (Just 5))
+                          , FactMayOcc 5 (Just 3)
+                          , FactNoOcc (spanExc (Just 5) (Just 7))
+                          , FactMayOcc 7 (Just 1)
+                          , FactMayOcc 9 (Just 5)
+                          ]
+                    )
+                -- time: --0--------5-----7-----9--------
+                --------------------3-----4______________
+                , InputEl eix2
+                    (Right $ do
+                        delta    <- requireE eix1
+                        sumSoFar <- fromMaybe 0 <$> prevE eix2 -- Self reference
+                        return (sumSoFar + delta)
+                    )
+                ]
+
+        -- lookupEKB :: Time -> EIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
+        lookupEKB 0 eix2 kb @?= Just Nothing
+        lookupEKB 5 eix2 kb @?= Just (Just 3)
+        lookupEKB 6 eix2 kb @?= Just Nothing
+        lookupEKB 7 eix2 kb @?= Just (Just 4)
+        lookupEKB 8 eix2 kb @?= Nothing
+        lookupEKB 9 eix2 kb @?= Nothing
+        lookupEKB 10 eix2 kb @?= Nothing
+
+
+      -- | This is the same as the last test, but the order of the GetE and
+      -- PrevE swapped. This is significantly harder for the solver.
+      , testCase "PrevE and GetE (with self reference before requireE)" $ do
+        let
+          eix1, eix2 :: EIx Int
+          eix1 = EIx 1
+          eix2 = EIx 2
+
+          kb :: KnowledgeBase
+          kb = solution1
+                -- time: --0--------5-----7-----9--------
+                --------------------3-----1_____5____
+                [ InputEl eix1
+                    (Left [ FactNoOcc (spanExc Nothing (Just 5))
+                          , FactMayOcc 5 (Just 3)
+                          , FactNoOcc (spanExc (Just 5) (Just 7))
+                          , FactMayOcc 7 (Just 1)
+                          , FactMayOcc 9 (Just 5)
+                          ]
+                    )
+                -- time: --0--------5-----7-----9--------
+                --------------------3-----4______________
+                , InputEl eix2
+                    (Right $ do
+                        sumSoFar <- fromMaybe 0 <$> prevE eix2 -- Self reference
+                        -- Require happens after self reference which disallows
+                        -- short circuiting when eix1 is not occurring.
+                        delta    <- requireE eix1
+                        return (sumSoFar + delta)
+                    )
+                ]
+
+        -- lookupEKB :: Time -> EIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
+        lookupEKB 0 eix2 kb @?= Just Nothing
+        lookupEKB 5 eix2 kb @?= Just (Just 3)
+        lookupEKB 6 eix2 kb @?= Just Nothing
+        lookupEKB 7 eix2 kb @?= Just (Just 4)
+        lookupEKB 8 eix2 kb @?= Nothing
+        lookupEKB 9 eix2 kb @?= Nothing
+        lookupEKB 10 eix2 kb @?= Nothing
+
+
+      , testCase "GetE and PrevE (with self reference after requireE and missing info)" $ do
+        let
+          eix1, eix2 :: EIx Int
+          eix1 = EIx 1
+          eix2 = EIx 2
+
+          kb :: KnowledgeBase
+          kb = solution1
+                -- time: --0--------5-----7-----9--------
+                -----------_--------3-----1_____5____
+                [ InputEl eix1
+                    (Left [ FactNoOcc (spanExc Nothing (Just 0))
+                          -- Missing info at t=5
+                          , FactNoOcc (spanExc (Just 0) (Just 5))
+                          , FactMayOcc 5 (Just 3)
+                          , FactNoOcc (spanExc (Just 5) (Just 7))
+                          , FactMayOcc 7 (Just 1)
+                          , FactMayOcc 9 (Just 5)
+                          ]
+                    )
+                -- time: --0--------5-----7-----9--------
+                -----------_--------_-----_______________
+                -- Note that because of the use of `requireE`, exi2 is not a
+                -- dependency at e.g. t∈{2,6} so we know that the event isn't
+                -- occurring.
+                , InputEl eix2
+                    (Right $ do
+                        delta    <- requireE eix1
+                        sumSoFar <- fromMaybe 0 <$> prevE eix2 -- Self reference
+                        return (sumSoFar + delta)
+                    )
+                ]
+
+        -- lookupEKB :: Time -> EIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
+        lookupEKB (-1) eix2 kb @?= Just Nothing
+        lookupEKB 0 eix2 kb @?= Nothing
+        lookupEKB 1 eix2 kb @?= Just Nothing
+        lookupEKB 5 eix2 kb @?= Nothing
+        lookupEKB 6 eix2 kb @?= Just Nothing
+        lookupEKB 7 eix2 kb @?= Nothing
+        lookupEKB 8 eix2 kb @?= Nothing
+        lookupEKB 9 eix2 kb @?= Nothing
+        lookupEKB 10 eix2 kb @?= Nothing
     ]
   ]
 
