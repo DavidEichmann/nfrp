@@ -28,6 +28,8 @@ module Theory where
     -- import KnowledgeBase.Timeline (FactSpan (..))
     import TimeSpan
 
+
+
     data EventFact a
         = FactNoOcc SpanExc
         | FactMayOcc Time (MaybeOcc a)
@@ -278,21 +280,25 @@ module Theory where
                     --                ∧  (∀ t' < t'' < t  .  lookupE t'' exiB == Nothing)
                     --         then deriveEgo t (cont (lookupE t' exiB))
                     --         else Nothing
-                    case ttspan of
-                        -- When looking at a point time, we simply look up the previous event value of eixB.
-                        DS_Point t -> case lookupPrevE t eixB facts of
-                            Nothing -> Nothing
-                            Just prevEBMay -> let
-                                newCont = mayPrevToCont prevEBMay
-                                newDer = KnownSpan ttspan seenOcc newCont
-                                in Just $ fromMaybe
-                                    ([], [newDer])
-                                    (stepDerivation facts newDer)
-
-                        DS_SpanExc tspan -> todo -- TODO
+                    case spanLookupPrevE ttspan eixB facts of
+                        ([], _) -> Nothing
+                        (factsB, unknowns) -> Just $
                             -- For now let's do a simple implementation that doesn't account for self references.
                             -- We just look for known spans of previous eixB values and case split. This should
                             -- be quite similar to the GetE implementation above.
+                            mconcat
+                                [ let
+                                    newCont = mayPrevToCont prevBMay
+                                    newDer  = KnownSpan factTtspan seenOcc newCont
+                                    in fromMaybe
+                                        ([], [newDer])
+                                        (stepDerivation facts newDer)
+                                | (factTtspan, prevBMay) <- factsB
+                                ]
+                            <>
+                            -- For unknowns, simply split the derivation into the
+                            -- unknown subspans.
+                            ([], [KnownSpan subTspan seenOcc contDerivation | subTspan <- unknowns])
 
                             -- I think the logic will be to use the more
                             -- complicated implementation started below when
@@ -302,40 +308,40 @@ module Theory where
                             -- case.
 
 
-                        -- TODO this is some extra stuff we can do to solve the self reference case.
+                    -- TODO this is some extra stuff we can do to solve the self reference case.
 
-                        -- When looking at a span of time, we can do a case
-                        -- split on a currently unknown time (the time of the
-                        -- first occurrence of eixB within tspan)
+                    -- When looking at a span of time, we can do a case
+                    -- split on a currently unknown time (the time of the
+                    -- first occurrence of eixB within tspan)
 
-                        -- An important realization here is that we can still
-                        -- make progress if we know the prev eixB at the start
-                        -- of the span, we just know yet how long that prev
-                        -- value is valid for.
+                    -- An important realization here is that we can still
+                    -- make progress if we know the prev eixB at the start
+                    -- of the span, we just know yet how long that prev
+                    -- value is valid for.
 
-                        --    (a,b) = tspan
-                        --    we can now re-express the current derivation as:
-                        --
-                        --          if ∃ c  .  c ∈ tspan
-                        --                     ∧  isJust (lookup c exiB)
-                        --                     ∧  (∀ t'' ∈ tspan, t'' < c  .  lookup t'' exiB == Nothing)
-                        --
-                        --              then ∀ t ∈ (spanExcMinT tspan,  c]  . lookup t eix = deriveEgo t seenOcc (mayPrevToCont (lookupCurr (spanExcMinT tspan) eixB))
-                        --                 ∧ ∀ t ∈ (c,  b)                  . lookup t eix = deriveEgo t seenOcc contDerivation
-                        --
-                        --              else ∀ t ∈ (spanExcMinT tspan,  b)  . lookup t eix = deriveEgo t seenOcc (mayPrevToCont (lookupCurr (spanExcMinT tspan) eixB))
-                        --
-                        --          ∀ t ∈ (spanExcMinT tspan,  c]
-                        --
-                        --    We can now split this into 2 cases/derivations:
-                        --      1:
-                        --          if ∃ c  .  <as above (c is first event time)>
-                        --              then ∀ t ∈ (spanExcMinT tspan,  c]  . lookup t eix = deriveEgo t seenOcc (mayPrevToCont (lookupCurr (spanExcMinT tspan) eixB))
-                        --              else ∀ t ∈ (spanExcMinT tspan,  b)  . lookup t eix = deriveEgo t seenOcc (mayPrevToCont (lookupCurr (spanExcMinT tspan) eixB))
-                        --
-                        --      2:
-                        --          ∃ c  .  <as above (c is first event time)>
-                        --              ⟹ ∀ t ∈ (c,  b)                  . lookup t eix = deriveEgo t seenOcc contDerivation
+                    --    (a,b) = tspan
+                    --    we can now re-express the current derivation as:
+                    --
+                    --          if ∃ c  .  c ∈ tspan
+                    --                     ∧  isJust (lookup c exiB)
+                    --                     ∧  (∀ t'' ∈ tspan, t'' < c  .  lookup t'' exiB == Nothing)
+                    --
+                    --              then ∀ t ∈ (spanExcMinT tspan,  c]  . lookup t eix = deriveEgo t seenOcc (mayPrevToCont (lookupCurr (spanExcMinT tspan) eixB))
+                    --                 ∧ ∀ t ∈ (c,  b)                  . lookup t eix = deriveEgo t seenOcc contDerivation
+                    --
+                    --              else ∀ t ∈ (spanExcMinT tspan,  b)  . lookup t eix = deriveEgo t seenOcc (mayPrevToCont (lookupCurr (spanExcMinT tspan) eixB))
+                    --
+                    --          ∀ t ∈ (spanExcMinT tspan,  c]
+                    --
+                    --    We can now split this into 2 cases/derivations:
+                    --      1:
+                    --          if ∃ c  .  <as above (c is first event time)>
+                    --              then ∀ t ∈ (spanExcMinT tspan,  c]  . lookup t eix = deriveEgo t seenOcc (mayPrevToCont (lookupCurr (spanExcMinT tspan) eixB))
+                    --              else ∀ t ∈ (spanExcMinT tspan,  b)  . lookup t eix = deriveEgo t seenOcc (mayPrevToCont (lookupCurr (spanExcMinT tspan) eixB))
+                    --
+                    --      2:
+                    --          ∃ c  .  <as above (c is first event time)>
+                    --              ⟹ ∀ t ∈ (c,  b)                  . lookup t eix = deriveEgo t seenOcc contDerivation
 
 
 
@@ -395,6 +401,51 @@ module Theory where
                 FactMayOcc _ (Just a) -> Just (Just a)
 
 
+    -- | Directly lookup the previous value for an event over a span of time.
+    spanLookupPrevE
+        :: DerivationSpan
+        -- ^ Time or span to lookup
+        -> EIx a
+        -- ^ Event to lookup
+        -> [SomeEventFact]
+        -- ^ All known facts.
+        -> ([(DerivationSpan, Maybe a)], [DerivationSpan])
+        -- ^ ( Known values about the given event
+        --   , unknown times and time spans )
+        --   The union of these times and time spans should exactly
+        --   equal the input time/time span.
+    spanLookupPrevE tspan eix allFacts = let
+        facts = prevEFacts eix allFacts
+        knownFacts =
+                [ (ttspan', aMay)
+                | (factTspan, aMay) <- facts
+                , Just ttspan' <- [factTspan `intersect` tspan]
+                ]
+        knownTSpans = fst <$> knownFacts
+        unknownTSpans = tspan `difference` knownTSpans
+        in (knownFacts, unknownTSpans)
+
+
+    -- | Get all known PervE spans for an event
+    prevEFacts
+        :: EIx a
+        -- ^ Event to lookup
+        -> [SomeEventFact]
+        -- ^ All known facts.
+        -> [(DerivationSpan, Maybe a)]
+        -- ^ All known previous event values (if one exists)
+    prevEFacts eix allFacts = concat
+        [ case fact of
+            FactNoOcc tspan ->  maybe
+                []
+                (\prevEMay -> (DS_SpanExc tspan, prevEMay) : [(DS_Point nextT, prevEMay) | Just nextT <- [spanExcJustAfter tspan]])
+                $ case spanExcJustBefore tspan of
+                    Nothing -> Just Nothing
+                    Just prevT -> lookupCurrE prevT eix allFacts
+            FactMayOcc currT _ -> maybe [] (\prevEMay ->  [(DS_Point currT, prevEMay)]) $ lookupPrevE currT eix allFacts
+        | fact <- factsE' eix allFacts
+        ]
+
     -- | Directly look up all known facts for a given event and time or time
     -- span.
     spanLookupEFacts
@@ -436,7 +487,7 @@ module Theory where
 
     kb :: KnowledgeBase
     kb = solution1
-            [ InputEl (EIx 1 :: EIx Int)
+            [ InputEl eix1
                 (Left [ FactNoOcc (spanExc Nothing (Just 7))
                       , FactMayOcc 7 (Just 9)
                       ]
