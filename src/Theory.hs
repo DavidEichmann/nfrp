@@ -272,7 +272,7 @@ module Theory where
                         -- unknown subspans.
                         ([], [KnownSpan subTspan seenOcc contDerivation | subTspan <- unknowns])
                         )
-                PrevE eixB mayPrevToCont ->
+                PrevE eixB mayPrevToCont | eixB /= eix ->
                     -- For reference:
                     --   deriveEgo t seenOcc (PrevE eixB cont)
                     --     = if ∃ t'  .  t' < t
@@ -300,24 +300,22 @@ module Theory where
                             -- unknown subspans.
                             ([], [KnownSpan subTspan seenOcc contDerivation | subTspan <- unknowns])
 
-                            -- I think the logic will be to use the more
-                            -- complicated implementation started below when
-                            -- this is a self reference. I'm worried about
-                            -- transitive self references, but does that concern
-                            -- make sense? I'll need to describe this exact
-                            -- case.
-
-
-                    -- TODO this is some extra stuff we can do to solve the self reference case.
-
-                    -- When looking at a span of time, we can do a case
-                    -- split on a currently unknown time (the time of the
-                    -- first occurrence of eixB within tspan)
-
-                    -- An important realization here is that we can still
-                    -- make progress if we know the prev eixB at the start
-                    -- of the span, we just know yet how long that prev
-                    -- value is valid for.
+                -- eixB == eix
+                PrevE eixB mayPrevToCont ->
+                    -- If eix == eixB we have a problem: to fill a time span we
+                    -- need to wait for a time span fact, so we deadlock. Since
+                    -- we only depend on *previous* values of self the result is
+                    -- well defined, but how do we make progress here? The main
+                    -- realization is that if we know the previous value at the
+                    -- start of the time span, then we know we can use that
+                    -- value for that start of this time span. We just don't
+                    -- know for how long the value will be valid for. In
+                    -- particular, if we go on to depend on another event that
+                    -- fires within this time span and causes this event to
+                    -- fire, then that changes the previous value of this event.
+                    -- The solution is to split on some unknown time: the time
+                    -- of the first occurrence of this event (eix) within this
+                    -- time span (tspan).
 
                     --    (a,b) = tspan
                     --    we can now re-express the current derivation as:
@@ -326,22 +324,44 @@ module Theory where
                     --                     ∧  isJust (lookup c exiB)
                     --                     ∧  (∀ t'' ∈ tspan, t'' < c  .  lookup t'' exiB == Nothing)
                     --
-                    --              then ∀ t ∈ (spanExcMinT tspan,  c]  . lookup t eix = deriveEgo t seenOcc (mayPrevToCont (lookupCurr (spanExcMinT tspan) eixB))
-                    --                 ∧ ∀ t ∈ (c,  b)                  . lookup t eix = deriveEgo t seenOcc contDerivation
+                    --  (1)         then ∀ t ∈ (spanExcMinT tspan,  c]  . lookup t eix = deriveEgo t seenOcc (mayPrevToCont (lookupCurr (spanExcMinT tspan) eixB))
+                    --  (2)            ∧ ∀ t ∈ (c,  b)                  . lookup t eix = deriveEgo t seenOcc contDerivation
                     --
-                    --              else ∀ t ∈ (spanExcMinT tspan,  b)  . lookup t eix = deriveEgo t seenOcc (mayPrevToCont (lookupCurr (spanExcMinT tspan) eixB))
+                    --  (3)         else ∀ t ∈ (spanExcMinT tspan,  b)  . lookup t eix = deriveEgo t seenOcc (mayPrevToCont (lookupCurr (spanExcMinT tspan) eixB))
                     --
                     --          ∀ t ∈ (spanExcMinT tspan,  c]
                     --
-                    --    We can now split this into 2 cases/derivations:
-                    --      1:
-                    --          if ∃ c  .  <as above (c is first event time)>
-                    --              then ∀ t ∈ (spanExcMinT tspan,  c]  . lookup t eix = deriveEgo t seenOcc (mayPrevToCont (lookupCurr (spanExcMinT tspan) eixB))
-                    --              else ∀ t ∈ (spanExcMinT tspan,  b)  . lookup t eix = deriveEgo t seenOcc (mayPrevToCont (lookupCurr (spanExcMinT tspan) eixB))
+
+                    -- In practice this means we can create a variant of
+                    -- Derivation that adds a single piece of info: "only
+                    -- produce the first event (or no events) in the time span,
+                    -- then continue with the rest of the time span"
+
+                    -- Notice that (1) and (3) are the same except (1) takes a
+                    -- subset of the time span of (3). This means we can assume
+                    -- `c` exists and use (1) to produce facts as long as we
+                    -- maintain a span of no event occurrences at the start
+                    -- (i.e. ensuring that we haven't "gone past c" and used (1)
+                    -- to produce facts in the (c,b) range). Then we either fill
+                    -- the whole tspan with no event occurrences and we're done
+                    -- (c doesn't exist), or we discover the first event
+                    -- occurrence, and hence discover `c`. Then we can continue
+                    -- to use (2) for the (c,b) time span.
+
+                    -- What about when we have events that depend on eachother's previous values:
                     --
-                    --      2:
-                    --          ∃ c  .  <as above (c is first event time)>
-                    --              ⟹ ∀ t ∈ (c,  b)                  . lookup t eix = deriveEgo t seenOcc contDerivation
+                    --      eventA: do
+                    --          prevB <- fromMaybe 0 <$> prevE eventB   -- Depend on eventB's previous value which depends on eventA's previous value.
+                    --          prevA <- fromMaybe 0 <$> prevE eventA
+                    --          incA <- getE incAE
+                    --          swap <- getE swapE
+                    --          return $ case (incA, swap) of
+                    --              (Just (), Nothing) -> prevA + 1
+                    --              (Just (), Just ()) -> prevB + 1 -- swap takes precedence over increment.
+                    --              (Nothing, Nothing) -> error "No events occurring"
+                    --              (Nothing, Just ()) -> prevB
+                    --
+                    --      eventB: <dual to eventB>
 
 
 
