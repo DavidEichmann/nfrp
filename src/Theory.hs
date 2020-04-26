@@ -50,6 +50,8 @@ module Theory where
     newtype EIx (a :: Type) = EIx Int         -- Index of an event
         deriving newtype Eq
 
+    data SomeEIx = forall a . SomeEIx (EIx a)
+
 -- Derived events are expressed with the EventM monad:
 
     data EventM a
@@ -143,17 +145,19 @@ module Theory where
 -- quantified over a range of time.
 
     startDerivationForAllTime :: EventM a -> Derivation a
-    startDerivationForAllTime em = KnownSpan (DS_SpanExc allT) False em
+    startDerivationForAllTime em = Derivation (DS_SpanExc allT) [] False em
 
     -- eix :: Eix a  is implicit
     data Derivation a
-        -- ∀ t ∈ tspan  .  lookup t eix = deriveEgo t seenOcc contDerivation
-        = KnownSpan
+        -- ∀ t ∈ (spanExcJustBefore tspan, c)  .  lookup t eix = deriveEgo t seenOcc contDerivation
+        --   where
+        --      c = "firstOccTimeOf any eixs in their respective SpanExcs" <|> spanExcJustAfter tspan
+        = forall b . Derivation
             { derTspan   :: DerivationSpan
+            , derTillExcFirstOccs :: [(SomeEIx, SpanExc)] -- all spans contain derTspan
             , derSeenOcc :: Bool
             , derContDerivation :: EventM a
             }
-        -- | ???
 
     data DerivationSpan
         -- | DS_Point x ⟹ t < x
@@ -227,7 +231,7 @@ module Theory where
             -> Maybe ([EventFact a], [Derivation a])
             -- ^ Nothing if no progress. Else Just the new facts and new derivations.
         stepDerivation facts derivation = case derivation of
-            KnownSpan ttspan seenOcc contDerivation -> case contDerivation of
+            Derivation ttspan tillExcFirstOccs seenOcc contDerivation -> case contDerivation of
                 Pure a -> Just $ case (seenOcc, ttspan) of
                             (True, DS_Point t) -> ([FactMayOcc t (Just a)], [])
                             -- TODO looks like an invariant that `seenOcc -> ttspan is a point in time (i.e. not a span)`
@@ -245,7 +249,7 @@ module Theory where
                             [ case factB of
                                 FactNoOcc subTspan -> let
                                     newCont = mayOccToCont Nothing
-                                    newDer  = KnownSpan (DS_SpanExc subTspan) seenOcc newCont
+                                    newDer  = Derivation (DS_SpanExc subTspan) tillExcFirstOccs seenOcc newCont
                                     in fromMaybe
                                         ([], [newDer])
                                         -- ^ Couldn't progress further: no new facts, but we've progressed the derivation up to newDer.
@@ -255,13 +259,13 @@ module Theory where
                                     -- This is simmilar to above
                                     Nothing -> let
                                         newCont = mayOccToCont Nothing
-                                        newDer  = KnownSpan (DS_Point t) seenOcc newCont
+                                        newDer  = Derivation (DS_Point t) tillExcFirstOccs seenOcc newCont
                                         in fromMaybe
                                             ([], [newDer])
                                             (stepDerivation facts newDer)
                                     Just b -> let
                                         newCont = mayOccToCont (Just b)
-                                        newDer  = KnownSpan (DS_Point t) True newCont
+                                        newDer  = Derivation (DS_Point t) tillExcFirstOccs True newCont
                                         in fromMaybe
                                             ([], [newDer])
                                             (stepDerivation facts newDer)
@@ -270,9 +274,10 @@ module Theory where
                         <>
                         -- For unknowns, simply split the derivation into the
                         -- unknown subspans.
-                        ([], [KnownSpan subTspan seenOcc contDerivation | subTspan <- unknowns])
+                        ([], [Derivation subTspan tillExcFirstOccs seenOcc contDerivation | subTspan <- unknowns])
                         )
-                PrevE eixB mayPrevToCont | eixB /= eix ->
+
+                PrevE eixB mayPrevToCont -> case ttspan of
                     -- For reference:
                     --   deriveEgo t seenOcc (PrevE eixB cont)
                     --     = if ∃ t'  .  t' < t
@@ -280,90 +285,121 @@ module Theory where
                     --                ∧  (∀ t' < t'' < t  .  lookupE t'' exiB == Nothing)
                     --         then deriveEgo t (cont (lookupE t' exiB))
                     --         else Nothing
-                    case spanLookupPrevE ttspan eixB facts of
-                        ([], _) -> Nothing
-                        (factsB, unknowns) -> Just $
-                            -- For now let's do a simple implementation that doesn't account for self references.
-                            -- We just look for known spans of previous eixB values and case split. This should
-                            -- be quite similar to the GetE implementation above.
-                            mconcat
-                                [ let
-                                    newCont = mayPrevToCont prevBMay
-                                    newDer  = KnownSpan factTtspan seenOcc newCont
-                                    in fromMaybe
-                                        ([], [newDer])
-                                        (stepDerivation facts newDer)
-                                | (factTtspan, prevBMay) <- factsB
-                                ]
-                            <>
-                            -- For unknowns, simply split the derivation into the
-                            -- unknown subspans.
-                            ([], [KnownSpan subTspan seenOcc contDerivation | subTspan <- unknowns])
+                    DS_Point t -> case lookupPrevE t eixB facts of
+                        Nothing -> Nothing
+                        Just prevBMay -> Just $ let
+                            newCont = mayPrevToCont prevBMay
+                            newDer  = Derivation ttspan tillExcFirstOccs seenOcc newCont
+                            in fromMaybe
+                                ([], [newDer])
+                                (stepDerivation facts newDer)
 
-                -- eixB == eix
-                PrevE eixB mayPrevToCont ->
-                    -- If eix == eixB we have a problem: to fill a time span we
-                    -- need to wait for a time span fact, so we deadlock. Since
-                    -- we only depend on *previous* values of self the result is
-                    -- well defined, but how do we make progress here? The main
-                    -- realization is that if we know the previous value at the
-                    -- start of the time span, then we know we can use that
-                    -- value for that start of this time span. We just don't
-                    -- know for how long the value will be valid for. In
-                    -- particular, if we go on to depend on another event that
-                    -- fires within this time span and causes this event to
-                    -- fire, then that changes the previous value of this event.
-                    -- The solution is to split on some unknown time: the time
-                    -- of the first occurrence of this event (eix) within this
-                    -- time span (tspan).
+                    DS_SpanExc tspan -> let
+                        -- Due to (transitive) self references, we will likely
+                        -- deadlock if we just wait for eixB facts. In fact, if
+                        -- we know the prevE value at the start of the current
+                        -- span, then we know this span will start with that
+                        -- value, we just don't know how long it will be valid
+                        -- for. To proceed we split the derivation in 2:
+                        --
+                        -- 1. derA: Quantified from the start of tspan to (and
+                        --    excluding), c, the first occurrence time of eixB
+                        --    in tspan (or the full tspan if c doesn't exists
+                        --    i.e. if there is no eixB occurrence in tspan).
+                        derA = _
 
-                    --    (a,b) = tspan
-                    --    we can now re-express the current derivation as:
-                    --
-                    --          if ∃ c  .  c ∈ tspan
-                    --                     ∧  isJust (lookup c exiB)
-                    --                     ∧  (∀ t'' ∈ tspan, t'' < c  .  lookup t'' exiB == Nothing)
-                    --
-                    --  (1)         then ∀ t ∈ (spanExcMinT tspan,  c]  . lookup t eix = deriveEgo t seenOcc (mayPrevToCont (lookupCurr (spanExcMinT tspan) eixB))
-                    --  (2)            ∧ ∀ t ∈ (c,  b)                  . lookup t eix = deriveEgo t seenOcc contDerivation
-                    --
-                    --  (3)         else ∀ t ∈ (spanExcMinT tspan,  b)  . lookup t eix = deriveEgo t seenOcc (mayPrevToCont (lookupCurr (spanExcMinT tspan) eixB))
-                    --
-                    --          ∀ t ∈ (spanExcMinT tspan,  c]
-                    --
+                        -- 2. derB: Quantified from and including c to the end of
+                        --    tspan (or nothing if c doesn't exist).
+                        derB = _
 
-                    -- In practice this means we can create a variant of
-                    -- Derivation that adds a single piece of info: "only
-                    -- produce the first event (or no events) in the time span,
-                    -- then continue with the rest of the time span"
-
-                    -- Notice that (1) and (3) are the same except (1) takes a
-                    -- subset of the time span of (3). This means we can assume
-                    -- `c` exists and use (1) to produce facts as long as we
-                    -- maintain a span of no event occurrences at the start
-                    -- (i.e. ensuring that we haven't "gone past c" and used (1)
-                    -- to produce facts in the (c,b) range). Then we either fill
-                    -- the whole tspan with no event occurrences and we're done
-                    -- (c doesn't exist), or we discover the first event
-                    -- occurrence, and hence discover `c`. Then we can continue
-                    -- to use (2) for the (c,b) time span.
-
-                    -- What about when we have events that depend on eachother's previous values:
-                    --
-                    --      eventA: do
-                    --          prevB <- fromMaybe 0 <$> prevE eventB   -- Depend on eventB's previous value which depends on eventA's previous value.
-                    --          prevA <- fromMaybe 0 <$> prevE eventA
-                    --          incA <- getE incAE
-                    --          swap <- getE swapE
-                    --          return $ case (incA, swap) of
-                    --              (Just (), Nothing) -> prevA + 1
-                    --              (Just (), Just ()) -> prevB + 1 -- swap takes precedence over increment.
-                    --              (Nothing, Nothing) -> error "No events occurring"
-                    --              (Nothing, Just ()) -> prevB
-                    --
-                    --      eventB: <dual to eventB>
+                        in _
 
 
+                {-
+                case spanLookupPrevE ttspan eixB facts of
+                    ([], _) -> Nothing
+                    (factsB, unknowns) -> Just $
+                        -- For now let's do a simple implementation that doesn't account for self references.
+                        -- We just look for known spans of previous eixB values and case split. This should
+                        -- be quite similar to the GetE implementation above.
+                        mconcat
+                            [ let
+                                newCont = mayPrevToCont prevBMay
+                                newDer  = Derivation factTtspan seenOcc newCont
+                                in fromMaybe
+                                    ([], [newDer])
+                                    (stepDerivation facts newDer)
+                            | (factTtspan, prevBMay) <- factsB
+                            ]
+                        <>
+                        -- For unknowns, simply split the derivation into the
+                        -- unknown subspans.
+                        ([], [Derivation subTspan seenOcc contDerivation | subTspan <- unknowns])
+
+            -- eixB == eix
+            PrevE eixB mayPrevToCont ->
+                -- If eix == eixB we have a problem: to fill a time span we
+                -- need to wait for a time span fact, so we deadlock. Since
+                -- we only depend on *previous* values of self the result is
+                -- well defined, but how do we make progress here? The main
+                -- realization is that if we know the previous value at the
+                -- start of the time span, then we know we can use that
+                -- value for that start of this time span. We just don't
+                -- know for how long the value will be valid for. In
+                -- particular, if we go on to depend on another event that
+                -- fires within this time span and causes this event to
+                -- fire, then that changes the previous value of this event.
+                -- The solution is to split on some unknown time: the time
+                -- of the first occurrence of this event (eix) within this
+                -- time span (tspan).
+
+                --    (a,b) = tspan
+                --    we can now re-express the current derivation as:
+                --
+                --          if ∃ c  .  c ∈ tspan
+                --                     ∧  isJust (lookup c exiB)
+                --                     ∧  (∀ t'' ∈ tspan, t'' < c  .  lookup t'' exiB == Nothing)
+                --
+                --  (1)         then ∀ t ∈ (spanExcMinT tspan,  c]  . lookup t eix = deriveEgo t seenOcc (mayPrevToCont (lookupCurr (spanExcMinT tspan) eixB))
+                --  (2)            ∧ ∀ t ∈ (c,  b)                  . lookup t eix = deriveEgo t seenOcc contDerivation
+                --
+                --  (3)         else ∀ t ∈ (spanExcMinT tspan,  b)  . lookup t eix = deriveEgo t seenOcc (mayPrevToCont (lookupCurr (spanExcMinT tspan) eixB))
+                --
+                --          ∀ t ∈ (spanExcMinT tspan,  c]
+                --
+
+                -- In practice this means we can create a variant of
+                -- Derivation that adds a single piece of info: "only
+                -- produce the first event (or no events) in the time span,
+                -- then continue with the rest of the time span"
+
+                -- Notice that (1) and (3) are the same except (1) takes a
+                -- subset of the time span of (3). This means we can assume
+                -- `c` exists and use (1) to produce facts as long as we
+                -- maintain a span of no event occurrences at the start
+                -- (i.e. ensuring that we haven't "gone past c" and used (1)
+                -- to produce facts in the (c,b) range). Then we either fill
+                -- the whole tspan with no event occurrences and we're done
+                -- (c doesn't exist), or we discover the first event
+                -- occurrence, and hence discover `c`. Then we can continue
+                -- to use (2) for the (c,b) time span.
+
+                -- What about when we have events that depend on eachother's previous values:
+                --
+                --      eventA: do
+                --          prevB <- fromMaybe 0 <$> prevE eventB   -- Depend on eventB's previous value which depends on eventA's previous value.
+                --          prevA <- fromMaybe 0 <$> prevE eventA
+                --          incA <- getE incAE
+                --          swap <- getE swapE
+                --          return $ case (incA, swap) of
+                --              (Just (), Nothing) -> prevA + 1
+                --              (Just (), Just ()) -> prevB + 1 -- swap takes precedence over increment.
+                --              (Nothing, Nothing) -> error "No events occurring"
+                --              (Nothing, Just ()) -> prevB
+                --
+                --      eventB: <dual to eventB>
+
+                -}
 
 
 
