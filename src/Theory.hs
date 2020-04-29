@@ -22,6 +22,7 @@ module Theory where
     import Data.Kind
     import Data.List (find, foldl')
     import Data.Maybe (fromJust, fromMaybe, listToMaybe, mapMaybe, maybeToList)
+    import Safe
     import Unsafe.Coerce
 
     import Time
@@ -150,7 +151,7 @@ module Theory where
     -- eix :: Eix a  is implicit
     data Derivation a
         -- ∀ t ∈ tspan  .  lookup t eix = deriveEgo t seenOcc contDerivation
-        = forall b . Simple
+        = Simple
             { derTspan   :: DerivationSpan
             , derSeenOcc :: Bool  -- Must be False if derTspan is a DS_SpanExc (the reverse implication does NOT hold)
             , derContDerivation :: EventM a
@@ -370,16 +371,90 @@ module Theory where
                     -- event, then we stop, else we need a new DerivePrev derivation for th
                     in _
 
-            DeriveAfterFirstOcc _ _ _ -> _
-                -- Roughly: I think here we just look for either the whole time
-                -- span to be NoOcc (in that case stop), or look for events (in
-                -- that case split into a derivation for after that event since
-                -- we know it it is after the first event), or if we find the
-                -- first event (i.e. all NoOcc then the first event) then we can
-                -- proceed for all of tspan after that first event.
+            DeriveAfterFirstOcc tspan eixB cont -> case searchForFirstEventOcc tspan eixB facts of
+                -- We know the time of the first occurrence, so we can conver to
+                -- a concrete time span again.
+                FirstOccIsAt firstOccTime -> let
+                    -- Safe to use mono-bind here as firstOccTime ∈ tspan
+                    Just concreteTimeSpan = tspan `intersect` RightSpaceExc firstOccTime
+                    newDer = Simple
+                                (DS_SpanExc concreteTimeSpan)
+                                False
+                                cont
+                    in Just ([], [newDer])
+
+                -- We know the right of clearanceTime (exclusive) is definitely
+                -- after the first event.
+                FirstOccIsAtOrBefore clearanceTime -> let
+                    -- NOTE we keep seenOcc as False. This follows from the
+                    -- definition of DeriveAfterFirstOcc. Intuitivelly, we are
+                    -- only dealing with *when* the first event is, not handling
+                    -- the event itself. The event (if one exists) will be
+                    -- handled by the new derivations.
+                    seenOcc = False
+
+                    newDers =
+                        [ let Just tspanBefore = tspan `intersect` LeftSpaceExc clearanceTime
+                           in DeriveAfterFirstOcc tspanBefore eixB cont
+
+                        , Simple (DS_Point clearanceTime) seenOcc cont
+
+                        , let Just tspanAfter = tspan `intersect` RightSpaceExc clearanceTime
+                           in Simple (DS_SpanExc tspanAfter) seenOcc cont
+                        ]
+                    in Just ([], newDers)
+
+                -- There is no first occ, so this derivation covers no time, so
+                -- we stop.
+                NoOccInSpan -> Just ([], [])
+
+                -- We don't know any more info about the first occurrence so we
+                -- cant make any more progress.
+                Other -> Nothing
 
 
 
+    -- | Result of searching for the first event occurence of a specific event
+    -- and time span.
+    data FirstEventOcc
+        -- | Enough information is known such that we can be sure this is the
+        -- first occurrence.
+        = FirstOccIsAt Time
+        -- | Enough information is known such that we can be sure the first
+        -- occurrence is at or before this time. This time will be the first
+        -- *known* event occurence, but there will be some unknown point or span
+        -- of time before this event that may contain the true first event.
+        | FirstOccIsAtOrBefore Time
+        -- | We have full information and know that no event is occurring in the
+        -- searched span.
+        | NoOccInSpan
+        -- | Some facts are missing such that we cant say anything about the
+        -- first occurence.
+        | Other
+
+    searchForFirstEventOcc
+        :: SpanExc
+        -- ^ Time span to lookup
+        -> EIx a
+        -- ^ Event to lookup
+        -> [SomeEventFact]
+        -- ^ All known facts.
+        -> FirstEventOcc
+    searchForFirstEventOcc tspan eix allFacts = let
+        (facts, unknownDSpans) = spanLookupEFacts (DS_SpanExc tspan) eix allFacts
+        firstKnownOccTMay = minimumMay [ t | FactMayOcc t (Just _)  <- facts]
+        in case firstKnownOccTMay of
+            -- No known first occurrence and total knowledge means no occurrence.
+            Nothing -> if null unknownDSpans then NoOccInSpan else Other
+            Just firstKnownOccT -> let
+                -- We know firstKnownOccT ∈ tspan
+                Just spanBeforeFirstKnownOccT = tspan `intersect` RightSpaceExc firstKnownOccT
+                -- First known occ is the true first occ if we have total
+                -- knowledge before that time.
+                isTrueFirstOcc = not $ any (intersects spanBeforeFirstKnownOccT) unknownDSpans
+                in if isTrueFirstOcc
+                    then FirstOccIsAt         firstKnownOccT
+                    else FirstOccIsAtOrBefore firstKnownOccT
 
 
     -- | Directly look up the previous event occurrence (strictly before the given time).
@@ -876,15 +951,19 @@ span), we just don't know when the span will end. It ends at the next closest (i
     instance Monad EventM where
 -}
 
+    instance Intersect DerivationSpan SpanExc (Maybe DerivationSpan) where intersect = flip intersect
+    instance Intersect SpanExc DerivationSpan (Maybe DerivationSpan) where
+        intersect t (DS_Point t')       = DS_Point   <$> intersect t t'
+        intersect t (DS_SpanExc tspan)  = DS_SpanExc <$> intersect t tspan
+
+    instance Intersect Time DerivationSpan (Maybe Time) where intersect = flip intersect
     instance Intersect DerivationSpan Time (Maybe Time) where
-        intersect (DS_Point t) t' = intersect t t'
-        intersect (DS_SpanExc tspan) t = intersect tspan t
+        intersect (DS_Point t)       t' = intersect t t'
+        intersect (DS_SpanExc tspan) t  = intersect tspan t
 
     instance Intersect DerivationSpan DerivationSpan (Maybe DerivationSpan) where
-        intersect (DS_Point t)   (DS_Point t')       = DS_Point   <$> intersect t t'
-        intersect (DS_Point t)   (DS_SpanExc tspan)  = DS_Point   <$> intersect t tspan
-        intersect (DS_SpanExc t) (DS_Point t')       = DS_Point   <$> intersect t t'
-        intersect (DS_SpanExc t) (DS_SpanExc tspan)  = DS_SpanExc <$> intersect t tspan
+        intersect (DS_Point t)       ds = DS_Point <$> intersect t ds
+        intersect (DS_SpanExc tspan) ds = intersect tspan ds
 
     instance Contains DerivationSpan Time where
         contains (DS_Point t) t' = contains t t'
