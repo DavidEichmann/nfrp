@@ -146,36 +146,34 @@ module Theory where
 -- quantified over a range of time.
 
     startDerivationForAllTime :: EventM a -> Derivation a
-    startDerivationForAllTime em = Simple (DS_SpanExc allT) False em
+    startDerivationForAllTime em = Derivation (DS_SpanExc allT) [] False em
 
     -- eix :: Eix a  is implicit
     data Derivation a
-        -- ∀ t ∈ tspan  .  lookup t eix = deriveEgo t seenOcc contDerivation
-        = Simple
-            { derTspan   :: DerivationSpan
-            , derSeenOcc :: Bool  -- Must be False if derTspan is a DS_SpanExc (the reverse implication does NOT hold)
+        -- When `derPrevTspan /= []` we solve in strictly chronological order.
+        --
+        -- ∀ t ∈ ttspan   (t <= min_{p ∈ derPrevDeps} {firstOccTime(p, ttspan)}   when derPrevDeps /= [])
+        --       . lookup t eix = deriveEgo t False contDerivation
+        = Derivation
+            { derTtspan :: DerivationSpan
+            -- ^ Time span/point of jurisdiction.
+            , derPrevDeps :: [SomeEIx]
+            -- ^ dependencies via PrevE
+            , derSeenOcc :: Bool
+            -- ^ Has this derivation observed (and hence may produce) an event.
+            -- Must be False if derTtspan is a DS_SpanExc (the reverse implication does NOT hold).
             , derContDerivation :: EventM a
             }
 
-        -- When we solve for this, we solve in strictly chronological order.
-        --
-        -- ∀ t ∈ tspan   (t <= min_{p ∈ derPrevDeps} {firstOccTime(p, tspan)})
-        --       . lookup t eix = deriveEgo t False contDerivation
-        | DerivePrev
-            { derPrevTspan   :: SpanExc
-            , derPrevDeps    :: [SomeEIx]
-            , derPrevContDerivation :: EventM a
-            }
-
-        -- When we solve for this, we solve in strictly chronological order.
-        --
-        -- ∀ t ∈ tspan ∩ (spanExcJustBefore tspan)   (t <= min_{p ∈ derPrevDeps} {firstOccTime(p, tspan ∩ (spanExcJustBefore tspan))})
-        --       . lookup t eix = deriveEgo t False contDerivation
-        | DerivePrevPoint
-            { derPrevTspan   :: SpanExc  -- Must be a closed interval on the left.
-            , derPrevDeps    :: [SomeEIx]
-            , derPrevContDerivation :: EventM a
-            }
+        -- -- When we solve for this, we solve in strictly chronological order.
+        -- --
+        -- -- ∀ t ∈ tspan ∩ (spanExcJustBefore tspan)   (t <= min_{p ∈ derPrevDeps} {firstOccTime(p, tspan ∩ (spanExcJustBefore tspan))})
+        -- --       . lookup t eix = deriveEgo t False contDerivation
+        -- | DerivePrevPoint
+        --     { derPrevTspan   :: SpanExc  -- Must be a closed interval on the left.
+        --     , derPrevDeps    :: [SomeEIx]
+        --     , derPrevContDerivation :: EventM a
+        --     }
 
         -- ∀ t ∈ tspan (t > firstOccTime(dep, tspan))
         --       . lookup t eix = deriveEgo t False contDerivation
@@ -257,17 +255,22 @@ module Theory where
             -> Maybe ([EventFact a], [Derivation a])
             -- ^ Nothing if no progress. Else Just the new facts and new derivations.
         stepDerivation facts derivation = case derivation of
-            Simple ttspan seenOcc contDerivation -> case contDerivation of
-                Pure a -> Just $ case (seenOcc, ttspan) of
+            Derivation ttspan prevDeps seenOcc contDerivation -> case contDerivation of
+                Pure a -> if null prevDeps
+                    then Just $ case (seenOcc, ttspan) of
                             (True, DS_Point t) -> ([FactMayOcc t (Just a)], [])
                             -- TODO looks like an invariant that `seenOcc -> ttspan is a point in time (i.e. not a span)`
                             (True, DS_SpanExc _) -> error "stepDerivation: encountered non-instantaneous event occurrence."
                             (False, DS_Point t) -> ([FactMayOcc t Nothing], [])
                             (False, DS_SpanExc tspanSpan) -> ([FactNoOcc tspanSpan], [])
-                NoOcc -> Just $ case ttspan of
+                    else stepCompleteWithPrevDeps
+                NoOcc ->  if null prevDeps
+                    then Just $ case ttspan of
                             DS_Point t          -> ([FactMayOcc t Nothing], [])
                             DS_SpanExc tspanSpan -> ([FactNoOcc tspanSpan], [])
-                GetE  eixb mayOccToCont -> case spanLookupEFacts ttspan eixb facts of
+                    else stepCompleteWithPrevDeps
+                GetE eixb mayOccToCont -> if null prevDeps
+                  then case spanLookupEFacts ttspan eixb facts of
                     ([], _) -> Nothing
                     (factsB, unknowns) -> Just $ (
                         -- For knowns, split and try to progress the derivation.
@@ -275,7 +278,7 @@ module Theory where
                             [ case factB of
                                 FactNoOcc subTspan -> let
                                     newCont = mayOccToCont Nothing
-                                    newDer  = Simple (DS_SpanExc subTspan) seenOcc newCont
+                                    newDer  = Derivation (DS_SpanExc subTspan) prevDeps seenOcc newCont
                                     in fromMaybe
                                         ([], [newDer])
                                         -- ^ Couldn't progress further: no new facts, but we've progressed the derivation up to newDer.
@@ -285,13 +288,13 @@ module Theory where
                                     -- This is simmilar to above
                                     Nothing -> let
                                         newCont = mayOccToCont Nothing
-                                        newDer  = Simple (DS_Point t) seenOcc newCont
+                                        newDer  = Derivation (DS_Point t) prevDeps seenOcc newCont
                                         in fromMaybe
                                             ([], [newDer])
                                             (stepDerivation facts newDer)
                                     Just b -> let
                                         newCont = mayOccToCont (Just b)
-                                        newDer  = Simple (DS_Point t) True newCont
+                                        newDer  = Derivation (DS_Point t) prevDeps True newCont
                                         in fromMaybe
                                             ([], [newDer])
                                             (stepDerivation facts newDer)
@@ -300,8 +303,9 @@ module Theory where
                         <>
                         -- For unknowns, simply split the derivation into the
                         -- unknown subspans.
-                        ([], [Simple subTspan seenOcc contDerivation | subTspan <- unknowns])
+                        ([], [Derivation subTspan prevDeps seenOcc contDerivation | subTspan <- unknowns])
                         )
+                  else _
 
                 PrevE eixB mayPrevToCont -> case ttspan of
                     -- For reference:
@@ -315,7 +319,7 @@ module Theory where
                         Nothing -> Nothing
                         Just prevBMay -> Just $ let
                             newCont = mayPrevToCont prevBMay
-                            newDer  = Simple ttspan seenOcc newCont
+                            newDer  = Derivation ttspan (SomeEIx eixB : prevDeps) seenOcc newCont
                             in fromMaybe
                                 ([], [newDer])
                                 (stepDerivation facts newDer)
@@ -324,63 +328,71 @@ module Theory where
                         -- Split into before (inclusive) and after (exclusive)
                         -- the first occurrence of eixB in the span.
                         --
-                        -- We must solve chronologically from the start of the
-                        -- span.
+                        -- NOTE we are not adding eixB to derPrevDeps yet
+                        -- because we are not yet consuming the PrevE
+                        -- constructor, we are *only* splitting the Derivation
+                        -- into 2.
                         Just
                             ( []
-                            , [ DeriveAfterFirstOcc tspan eixB contDerivation
-                              , DerivePrev tspan [] contDerivation
+                            , [ Derivation ttspan prevDeps seenOcc contDerivation
+                              , DeriveAfterFirstOcc tspan eixB contDerivation
                               ]
                             )
 
-            DerivePrev tspan deps contDerivation -> case contDerivation of
-                -- The derivation is "complete" if contDerivation is NoOcc (or
-                -- NoOcc)
-                Pure _ -> onComplete -- | Should not be allowed
-                NoOcc -> onComplete
-                _ -> _
-                where
+              where
+                stepCompleteWithPrevDeps = _
 
-                -- FALSE!!!!!!!!!!!!!!!!!!!!!!!!!!! Yo, this is not quite
-                -- right... Fully connected component is not enough as it
-                -- ignores depenedncies that are not *Fully* connected. Maybe
-                -- it's just all reachable events? That incorporates all
-                -- transitive dependencies.
+            -- DerivePrev tspan deps contDerivation -> case contDerivation of
+            --     -- The derivation is "complete" if contDerivation is NoOcc (or
+            --     -- NoOcc)
+            --     Pure _ -> onComplete -- | Should not be allowed
+            --     NoOcc -> onComplete
+            --     _ -> _
+            --     where
 
-                -- Try to get a fully connected component of completed
-                -- DerivePrev derivations starting at the same time
-                -- (`DerivePrev`s form a directed graph via derPrevDeps) then we
-                -- can take the shortest time span of those derivations and
-                -- output that span as a NoOcc span for all events in the
-                -- connected component. Each event will then need a new
-                -- DerivePrevPoint for the next point in time IFF that falls
-                -- within tspan.
+            --     -- FALSE!!!!!!!!!!!!!!!!!!!!!!!!!!! Yo, this is not quite
+            --     -- right... Fully connected component is not enough as it
+            --     -- ignores depenedncies that are not *Fully* connected. Maybe
+            --     -- it's just all reachable events? That incorporates all
+            --     -- transitive dependencies.
 
-                onComplete = _
+            --     -- Try to get a fully connected component of completed
+            --     -- DerivePrev derivations starting at the same time
+            --     -- (`DerivePrev`s form a directed graph via derPrevDeps) then we
+            --     -- can take the shortest time span of those derivations and
+            --     -- output that span as a NoOcc span for all events in the
+            --     -- connected component. Each event will then need a new
+            --     -- DerivePrevPoint for the next point in time IFF that falls
+            --     -- within tspan.
 
-            DerivePrevPoint tspan deps contDerivation -> case contDerivation of
-                Pure a -> onComplete (Just a) -- | Should not be allowed
-                NoOcc -> onComplete Nothing
-                _ -> _
-                where
-                onComplete occMay = let
-                    t = fromJust (spanExcJustBefore tspan)
+            --     onComplete = _
 
-                    -- Here we know t falls into the interval of this derivation, so
-                    -- we just derive the value directly from the facts. If it's an
-                    -- event, then we stop, else we need a new DerivePrev derivation for th
-                    in _
+            -- DerivePrevPoint tspan deps contDerivation -> case contDerivation of
+            --     Pure a -> onComplete (Just a) -- | Should not be allowed
+            --     NoOcc -> onComplete Nothing
+            --     _ -> _
+            --     where
+            --     onComplete occMay = let
+            --         t = fromJust (spanExcJustBefore tspan)
+
+            --         -- Here we know t falls into the interval of this derivation, so
+            --         -- we just derive the value directly from the facts. If it's an
+            --         -- event, then we stop, else we need a new DerivePrev derivation for th
+            --         in _
 
             DeriveAfterFirstOcc tspan eixB cont -> case searchForFirstEventOcc tspan eixB facts of
-                -- We know the time of the first occurrence, so we can conver to
-                -- a concrete time span again.
+                -- We know the time of the first occurrence, so we can convert
+                -- to a concrete time span again.
                 FirstOccIsAt firstOccTime -> let
                     -- Safe to use mono-bind here as firstOccTime ∈ tspan
                     Just concreteTimeSpan = tspan `intersect` RightSpaceExc firstOccTime
-                    newDer = Simple
-                                (DS_SpanExc concreteTimeSpan)
-                                False
-                                cont
+                    newDer = Derivation
+                        (DS_SpanExc concreteTimeSpan)
+                        []
+                        -- ^ NOTE [DeriveAfterFirstOcc and PrevE deps] There are
+                        -- no PrevE events by denotation of DeriveAfterFirstOcc
+                        False
+                        cont
                     in Just ([], [newDer])
 
                 -- We know the right of clearanceTime (exclusive) is definitely
@@ -397,10 +409,12 @@ module Theory where
                         [ let Just tspanBefore = tspan `intersect` LeftSpaceExc clearanceTime
                            in DeriveAfterFirstOcc tspanBefore eixB cont
 
-                        , Simple (DS_Point clearanceTime) seenOcc cont
+                        , Derivation (DS_Point clearanceTime) [] seenOcc cont
+                        -- See NOTE [DeriveAfterFirstOcc and PrevE deps]
 
                         , let Just tspanAfter = tspan `intersect` RightSpaceExc clearanceTime
-                           in Simple (DS_SpanExc tspanAfter) seenOcc cont
+                           in Derivation (DS_SpanExc tspanAfter) [] seenOcc cont
+                        -- See NOTE [DeriveAfterFirstOcc and PrevE deps]
                         ]
                     in Just ([], newDers)
 
