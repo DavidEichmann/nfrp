@@ -22,6 +22,7 @@ module Theory where
     import Data.Kind
     import Data.List (find, foldl')
     import Data.Maybe (fromJust, fromMaybe, listToMaybe, mapMaybe, maybeToList)
+    import qualified Data.Set as S
     import Safe
     import Unsafe.Coerce
 
@@ -230,7 +231,7 @@ module Theory where
             (kb'facts, kb'derivations, anyChanged) = foldl'
                 (\(facts', derivations', changed)
                   someDerivation@(SomeDerivation eix derivation)
-                  -> case stepDerivation facts' derivation of
+                  -> case stepDerivation eix derivations facts' derivation of
                     Nothing ->
                         ( facts'
                         , someDerivation:derivations'
@@ -248,13 +249,17 @@ module Theory where
         -- This is the important part that should correspond to the `deriveE`
         -- denotation.
         stepDerivation
-            :: [SomeEventFact]
+            :: EIx a
+            -- ^ Event index that the derivation corresponds to.
+            -> [SomeDerivation]
+            -- ^ Current derivations. Used to detect PrevE deadlock.
+            -> [SomeEventFact]
             -- ^ Current facts. Used to query for existing facts
             -> Derivation a
             -- ^ Derivation to step
             -> Maybe ([EventFact a], [Derivation a])
             -- ^ Nothing if no progress. Else Just the new facts and new derivations.
-        stepDerivation facts derivation = case derivation of
+        stepDerivation eix allDerivations facts derivation = case derivation of
             Derivation ttspan prevDeps seenOcc contDerivation -> case contDerivation of
                 Pure a -> if null prevDeps
                     then Just $ case (seenOcc, ttspan) of
@@ -282,7 +287,7 @@ module Theory where
                                     in fromMaybe
                                         ([], [newDer])
                                         -- ^ Couldn't progress further: no new facts, but we've progressed the derivation up to newDer.
-                                        (stepDerivation facts newDer)
+                                        (stepDerivation eix allDerivations facts newDer)
                                         -- ^ Try to progress further.
                                 FactMayOcc t maybeOccB -> case maybeOccB of
                                     -- This is simmilar to above
@@ -291,13 +296,13 @@ module Theory where
                                         newDer  = Derivation (DS_Point t) prevDeps seenOcc newCont
                                         in fromMaybe
                                             ([], [newDer])
-                                            (stepDerivation facts newDer)
+                                            (stepDerivation eix allDerivations facts newDer)
                                     Just b -> let
                                         newCont = mayOccToCont (Just b)
                                         newDer  = Derivation (DS_Point t) prevDeps True newCont
                                         in fromMaybe
                                             ([], [newDer])
-                                            (stepDerivation facts newDer)
+                                            (stepDerivation eix allDerivations facts newDer)
                             | factB <- factsB
                             ]
                         <>
@@ -306,6 +311,9 @@ module Theory where
                         ([], [Derivation subTspan prevDeps seenOcc contDerivation | subTspan <- unknowns])
                         )
                   else _
+                    -- TODO this and the above "then" and also the PrevE cases
+                    -- have very similar code (split on other facts). Try to DRY
+                    -- it.
 
                 PrevE eixB mayPrevToCont -> case ttspan of
                     -- For reference:
@@ -322,63 +330,25 @@ module Theory where
                             newDer  = Derivation ttspan (SomeEIx eixB : prevDeps) seenOcc newCont
                             in fromMaybe
                                 ([], [newDer])
-                                (stepDerivation facts newDer)
+                                (stepDerivation eix allDerivations facts newDer)
 
-                    DS_SpanExc tspan ->
-                        -- Split into before (inclusive) and after (exclusive)
-                        -- the first occurrence of eixB in the span.
-                        --
-                        -- NOTE we are not adding eixB to derPrevDeps yet
-                        -- because we are not yet consuming the PrevE
-                        -- constructor, we are *only* splitting the Derivation
-                        -- into 2.
-                        Just
-                            ( []
-                            , [ Derivation ttspan prevDeps seenOcc contDerivation
-                              , DeriveAfterFirstOcc tspan eixB contDerivation
-                              ]
-                            )
+                    -- !! The Plan
+                    -- !! Try and split on facts about eixB.
+                    DS_SpanExc tspan -> case spanLookupPrevE ttspan eixB facts of
+                    -- !! If there are no such facts, try to detect deadlock via
+                    -- !! eixB. This means that eix is reachable (transitively) via
+                    -- !! the PrevE dependencies of derivations coinciding with the
+                    -- !! start of tspan.
 
-              where
-                stepCompleteWithPrevDeps = _
+                    -- !! If deadlock is detected, proceed by splitting into (1)
+                    -- !! events after the first eixB event in tspan and (2)
+                    -- !! chronologically solving before that event.
+                        ([], _) -> if deadlockedVia (spanExcJustBefore tspan) eix eixB allDerivations
+                            then _
+                            else Nothing
 
-            -- DerivePrev tspan deps contDerivation -> case contDerivation of
-            --     -- The derivation is "complete" if contDerivation is NoOcc (or
-            --     -- NoOcc)
-            --     Pure _ -> onComplete -- | Should not be allowed
-            --     NoOcc -> onComplete
-            --     _ -> _
-            --     where
-
-            --     -- FALSE!!!!!!!!!!!!!!!!!!!!!!!!!!! Yo, this is not quite
-            --     -- right... Fully connected component is not enough as it
-            --     -- ignores depenedncies that are not *Fully* connected. Maybe
-            --     -- it's just all reachable events? That incorporates all
-            --     -- transitive dependencies.
-
-            --     -- Try to get a fully connected component of completed
-            --     -- DerivePrev derivations starting at the same time
-            --     -- (`DerivePrev`s form a directed graph via derPrevDeps) then we
-            --     -- can take the shortest time span of those derivations and
-            --     -- output that span as a NoOcc span for all events in the
-            --     -- connected component. Each event will then need a new
-            --     -- DerivePrevPoint for the next point in time IFF that falls
-            --     -- within tspan.
-
-            --     onComplete = _
-
-            -- DerivePrevPoint tspan deps contDerivation -> case contDerivation of
-            --     Pure a -> onComplete (Just a) -- | Should not be allowed
-            --     NoOcc -> onComplete Nothing
-            --     _ -> _
-            --     where
-            --     onComplete occMay = let
-            --         t = fromJust (spanExcJustBefore tspan)
-
-            --         -- Here we know t falls into the interval of this derivation, so
-            --         -- we just derive the value directly from the facts. If it's an
-            --         -- event, then we stop, else we need a new DerivePrev derivation for th
-            --         in _
+                    -- !! Otherwise we can progress by splitting
+                        (knonwSpansAndValueMays, unknownSpans) -> _
 
             DeriveAfterFirstOcc tspan eixB cont -> case searchForFirstEventOcc tspan eixB facts of
                 -- We know the time of the first occurrence, so we can convert
@@ -427,6 +397,94 @@ module Theory where
                 Other -> Nothing
 
 
+        -- Calculates "clearance time", spits out a NoOcc span up to
+        -- that clearance time, then proceeds chronologically.
+
+        -- Since we only add PrevE deps that deadlock (form part of a
+        -- cycle in the dependency graph), then all PrevE deps are part
+        -- of a cycle, but that does **NOT** imply that that the
+        -- transitive closure of dependencies is a fully connected
+        -- component. Consider this this example:
+        --
+        --       A --> B --> C --> D
+        --       ^   /        ^    |
+        --       | /            \  |
+        --       |v               \v
+        --       E                 F
+        --
+        -- All vertices are part of a cycle, all are reachable from B,
+        -- but there are 2 strongly connected components (SCCs): {A,B,E}
+        -- and {C,D,F}.
+
+        -- ??? Is this true: There must exist at least 1 vertex where
+        -- the transitive closure of deps is strongly connected. I dono?!?!?
+
+        -- I'm starting to think we may not need a SCC, but just the
+        -- transitive closure. I need to get back to it.
+
+
+
+
+        -- We wait for all transitive PrevE deps to be complete, and for
+        -- the transitive closure to be fully connected. If not yet
+        -- fully connected (will that ever happen?), then we can't yet
+        -- calculate clearance time, and we expect further other
+        -- derivations to be stepped and eventually make the
+        -- dependencies fully connected.
+
+        -- as the shortest time span of all
+        -- transitive PrevE derivations' dependencies (having the same
+        -- start time as this tspan). Also must wait for all such
+        -- derivations to be "complete". This is necessary to ensure we
+        -- have the complete list of transitive PrevE dependencies. Note
+        -- that the dependecies can be thought of as a directed graph.
+        -- As we step the derivations we (strictly) add (or perhaps I
+        -- should say "discover") new dependencies (i.e. edges in the
+        -- graph).    that we've only added PrevE deps that caused a
+        -- deadlock. Since we only add new PrevE deps, all direct deps
+        -- will be part of the fully connected component, this is like
+        -- only adding edges to the (directed) dependency graph.
+        stepCompleteWithPrevDeps = _
+
+
+    -- | Try to detect deadlock via a cycle of PrevE dependencies including eixA
+    -- and eixB just after the given time.
+    --
+    -- True means deadlock detected: a cycle of PrevE events was found.
+    --
+    -- False means deadlock may or may not exist: no cycle of PrevE events was
+    -- found.
+    deadlockedVia
+        :: Maybe Time
+        -- ^ Just after time to sample dependencies (Nothing means negative
+        -- infinity)
+        -> EIx a
+        -- ^ eixA must depend on eixB (possible transitively)
+        -> EIx b
+        -- ^ eixB
+        -> [SomeDerivation]
+        -- ^ Known derivations (used to infer dependencies)
+        -> Bool
+    deadlockedVia t (EIx eixA) (EIx eixB) ders = go [eixB] S.empty
+        where
+        -- | DFS to see if eixA is reachable from the starting set
+        go [] _ = False
+        go (x:xs) visited
+            | x == eixA     = True
+            | x `S.member` visited
+                            = go xs visited
+            | otherwise     = go (deps x ++ xs) (S.insert x visited)
+
+        deps x = concat -- We actually expect at most one element.
+            [ [dep | SomeEIx (EIx dep) <- prevDeps]
+            | SomeDerivation (EIx x') (Derivation (DS_SpanExc tspan) prevDeps _ _) <- ders
+            , x == x'
+            -- NOTE we're not looking for "tspan contains t+" as we can only
+            -- infer deadlock when tspan starts exactly on t (otherwise we dont
+            -- actually know when the derivation's jurisdiciton ends due to its
+            -- PrevE deps).
+            , spanExcJustBefore tspan == t
+            ]
 
     -- | Result of searching for the first event occurence of a specific event
     -- and time span.
