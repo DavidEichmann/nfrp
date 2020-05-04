@@ -310,7 +310,7 @@ module Theory where
             -- unknown subspans.
             ([], [Derivation subTspan prevDeps seenOcc contDerivation | subTspan <- unknowns])
             )
-          else _
+          else _ -- chronological version of the above with PrevE deps.
           -- TODO this and the above "then" and also the PrevE cases
           -- have very similar code (split on other facts). Try to DRY
           -- it.
@@ -343,9 +343,28 @@ module Theory where
           -- !! If deadlock is detected, proceed by splitting into (1)
           -- !! events after the first eixB event in tspan and (2)
           -- !! chronologically solving before that event.
-            ([], _) -> if deadlockedVia (spanExcJustBefore tspan) eix eixB allDerivations
-              then _
-              else Nothing
+            ([], _) -> let
+              tspanLo = spanExcJustBefore tspan
+              prevValMayIfKnown = case tspanLo of
+                Nothing -> Just Nothing -- Known: there is no previous value.
+                Just tLo -> lookupCurrE tLo eixB facts
+              in case prevValMayIfKnown of
+                Nothing -> Nothing
+                Just prevValMay -> if deadlockedVia tspanLo eix eixB allDerivations
+                  then Just
+                    ( []
+                    , [ Derivation
+                          ttspan
+                          (SomeEIx eixB : prevDeps)
+                          seenOcc
+                          (mayPrevToCont prevValMay)
+                      , DeriveAfterFirstOcc
+                          tspan
+                          eixB
+                          contDerivation
+                      ]
+                    )
+                  else Nothing
 
           -- !! Otherwise we can progress by splitting
             (knonwSpansAndValueMays, unknownSpans) -> _
