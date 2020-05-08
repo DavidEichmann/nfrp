@@ -21,7 +21,7 @@ module Theory where
   import qualified Control.Monad as M
   import Data.Kind
   import Data.List (find, foldl')
-  import Data.Maybe (fromJust, fromMaybe, listToMaybe, mapMaybe, maybeToList)
+  import Data.Maybe (fromMaybe, listToMaybe, mapMaybe, maybeToList)
   import qualified Data.Set as S
   import Safe
   import Unsafe.Coerce
@@ -274,46 +274,52 @@ module Theory where
               DS_Point t      -> ([FactMayOcc t Nothing], [])
               DS_SpanExc tspanSpan -> ([FactNoOcc tspanSpan], [])
           else stepCompleteWithPrevDeps
-        GetE eixb mayOccToCont -> if null prevDeps
-          then case spanLookupEFacts ttspan eixb facts of
-          ([], _) -> Nothing
-          (factsB, unknowns) -> Just $ (
-            -- For knowns, split and try to progress the derivation.
-            mconcat
-              [ case factB of
-                FactNoOcc subTspan -> let
-                  newCont = mayOccToCont Nothing
-                  newDer  = Derivation (DS_SpanExc subTspan) prevDeps seenOcc newCont
-                  in fromMaybe
-                    ([], [newDer])
-                    -- ^ Couldn't progress further: no new facts, but we've progressed the derivation up to newDer.
-                    (stepDerivation eix allDerivations facts newDer)
-                    -- ^ Try to progress further.
-                FactMayOcc t maybeOccB -> case maybeOccB of
-                  -- This is simmilar to above
-                  Nothing -> let
-                    newCont = mayOccToCont Nothing
-                    newDer  = Derivation (DS_Point t) prevDeps seenOcc newCont
-                    in fromMaybe
-                      ([], [newDer])
-                      (stepDerivation eix allDerivations facts newDer)
-                  Just b -> let
-                    newCont = mayOccToCont (Just b)
-                    newDer  = Derivation (DS_Point t) prevDeps True newCont
-                    in fromMaybe
-                      ([], [newDer])
-                      (stepDerivation eix allDerivations facts newDer)
-              | factB <- factsB
-              ]
-            <>
-            -- For unknowns, simply split the derivation into the
-            -- unknown subspans.
-            ([], [Derivation subTspan prevDeps seenOcc contDerivation | subTspan <- unknowns])
-            )
-          else _ -- chronological version of the above with PrevE deps.
-          -- TODO this and the above "then" and also the PrevE cases
-          -- have very similar code (split on other facts). Try to DRY
-          -- it.
+        GetE eixb mayOccToCont -> let
+          factsBAndUnknownsMay = if null prevDeps
+            then Just (spanLookupEFacts ttspan eixb facts)
+            -- chronological version of the above with PrevE deps.
+            -- TODO this and the above "then" and also the PrevE cases
+            -- have very similar code (split on other facts). Try to DRY
+            -- it.
+            else case find ((ttspan `contains`) . factTSpan) (fst (spanLookupEFacts ttspan eixb facts)) of
+              Nothing -> Nothing
+              Just fact -> Just ([fact], ttspan `difference` factTSpan fact)
+         in case factsBAndUnknownsMay of
+            Nothing -> Nothing
+            Just ([], _) -> Nothing
+            Just (factsB, unknowns) -> Just $ (
+                -- For knowns, split and try to progress the derivation.
+                mconcat
+                  [ case factB of
+                    FactNoOcc subTspan -> let
+                      newCont = mayOccToCont Nothing
+                      newDer  = Derivation (DS_SpanExc subTspan) prevDeps seenOcc newCont
+                      in fromMaybe
+                        ([], [newDer])
+                        -- ^ Couldn't progress further: no new facts, but we've progressed the derivation up to newDer.
+                        (stepDerivation eix allDerivations facts newDer)
+                        -- ^ Try to progress further.
+                    FactMayOcc t maybeOccB -> case maybeOccB of
+                      -- This is simmilar to above
+                      Nothing -> let
+                        newCont = mayOccToCont Nothing
+                        newDer  = Derivation (DS_Point t) prevDeps seenOcc newCont
+                        in fromMaybe
+                          ([], [newDer])
+                          (stepDerivation eix allDerivations facts newDer)
+                      Just b -> let
+                        newCont = mayOccToCont (Just b)
+                        newDer  = Derivation (DS_Point t) prevDeps True newCont
+                        in fromMaybe
+                          ([], [newDer])
+                          (stepDerivation eix allDerivations facts newDer)
+                  | factB <- factsB
+                  ]
+                <>
+                -- For unknowns, simply split the derivation into the
+                -- unknown subspans.
+                ([], [Derivation subTspan prevDeps seenOcc contDerivation | subTspan <- unknowns])
+                )
 
         PrevE eixB mayPrevToCont -> case ttspan of
           -- For reference:
@@ -1055,6 +1061,13 @@ span), we just don't know when the span will end. It ends at the next closest (i
   instance Intersect DerivationSpan DerivationSpan (Maybe DerivationSpan) where
     intersect (DS_Point t)     ds = DS_Point <$> intersect t ds
     intersect (DS_SpanExc tspan) ds = intersect tspan ds
+
+  instance Contains DerivationSpan DerivationSpan where
+    contains (DS_Point a) (DS_Point b) = contains a b
+    contains (DS_Point a) (DS_SpanExc b) = contains a b
+    contains (DS_SpanExc a) (DS_Point b) = contains a b
+    contains (DS_SpanExc a) (DS_SpanExc b) = contains a b
+
 
   instance Contains DerivationSpan Time where
     contains (DS_Point t) t' = contains t t'

@@ -481,6 +481,9 @@ instance Difference a b (Maybe c) => Difference a (AllOr b) (Maybe c) where
     difference _ All = Nothing
     difference a (Or b) = a `difference` b
 
+
+instance Contains Time SpanExc where
+    contains _ _ = False
 instance Contains LeftSpaceExc TimeD where
     contains (LeftSpaceExc a) t = t < toTime a
 instance Contains RightSpaceInc TimeD where
