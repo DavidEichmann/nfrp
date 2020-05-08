@@ -447,54 +447,22 @@ module Theory where
         -- cant make any more progress.
         Other -> Nothing
 
-
-    -- Calculates "clearance time", spits out a NoOcc span up to
-    -- that clearance time, then proceeds chronologically.
-
-    -- Since we only add PrevE deps that deadlock (form part of a
-    -- cycle in the dependency graph), then all PrevE deps are part
-    -- of a cycle, but that does **NOT** imply that that the
-    -- transitive closure of dependencies is a fully connected
-    -- component. Consider this this example:
+    -- TODO what the fuck do I do here?!!?!? This is called when a derivation id
+    -- complete (Pure _ or NoOcc) and there are some PrevE dependencies.
     --
-    --     A --> B --> C --> D
-    --     ^   /        ^    |
-    --     | /            \  |
-    --     |v               \v
-    --     E                 F
+    -- If the ttspan is a point time, then this is easy! Pure x means event
+    -- occurrence with x **iff an event is seen**. NoOcc means NoOcc.
     --
-    -- All vertices are part of a cycle, all are reachable from B,
-    -- but there are 2 strongly connected components (SCCs): {A,B,E}
-    -- and {C,D,F}.
-
-    -- ??? Is this true: There must exist at least 1 vertex where
-    -- the transitive closure of deps is strongly connected. I dono?!?!?
-
-    -- I'm starting to think we may not need a SCC, but just the
-    -- transitive closure. I need to get back to it.
-
-
-
-
-    -- We wait for all transitive PrevE deps to be complete, and for
-    -- the transitive closure to be fully connected. If not yet
-    -- fully connected (will that ever happen?), then we can't yet
-    -- calculate clearance time, and we expect further other
-    -- derivations to be stepped and eventually make the
-    -- dependencies fully connected.
-
-    -- as the shortest time span of all
-    -- transitive PrevE derivations' dependencies (having the same
-    -- start time as this tspan). Also must wait for all such
-    -- derivations to be "complete". This is necessary to ensure we
-    -- have the complete list of transitive PrevE dependencies. Note
-    -- that the dependecies can be thought of as a directed graph.
-    -- As we step the derivations we (strictly) add (or perhaps I
-    -- should say "discover") new dependencies (i.e. edges in the
-    -- graph).  that we've only added PrevE deps that caused a
-    -- deadlock. Since we only add new PrevE deps, all direct deps
-    -- will be part of the fully connected component, this is like
-    -- only adding edges to the (directed) dependency graph.
+    -- If the ttspan is a span, things get more tricky. At this point we need to
+    -- find a "clearance time". This is some time span at the start of ttspan
+    -- where whe know none of the PrevE events are occurring (within the time
+    -- jurisdiction of this Derivation). We do this by finding the transitive
+    -- closure of PrevE dependencies. For each dep we have either facts
+    -- indicating for how long no event is occuring, or complete derivations.
+    -- The clearance time is just the minimum end time of the deps' NoOcc spans
+    -- (from facts) or Derivation spans (from derivations taking the tspan
+    -- directly and ignoring it's PrevE events possibly cutting its jurisdiction
+    -- off early). I have a proof for this that I should document here.
     stepCompleteWithPrevDeps = _
 
 
