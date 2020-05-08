@@ -340,16 +340,18 @@ module Theory where
 
           -- !! The Plan
           -- !! Try and split on facts about eixB.
-          DS_SpanExc tspan -> case spanLookupPrevE ttspan eixB facts of
-          -- !! If there are no such facts, try to detect deadlock via
-          -- !! eixB. This means that eix is reachable (transitively) via
-          -- !! the PrevE dependencies of derivations coinciding with the
-          -- !! start of tspan.
+          DS_SpanExc tspan -> let
+            factsAndUnknownsMay = if null prevDeps
+              then Just (spanLookupPrevE ttspan eixB facts)
+              -- chronological version of the above with PrevE deps.
+              else case find ((tspan `contains`) . fst) (fst (spanLookupPrevE ttspan eixB facts)) of
+                Nothing -> Nothing
+                Just knownSpanAndFact -> Just ([knownSpanAndFact], ttspan `difference` fst knownSpanAndFact)
 
-          -- !! If deadlock is detected, proceed by splitting into (1)
-          -- !! events after the first eixB event in tspan and (2)
-          -- !! chronologically solving before that event.
-            ([], _) -> let
+            -- !! If deadlock is detected, proceed by splitting into (1)
+            -- !! events after the first eixB event in tspan and (2)
+            -- !! chronologically solving before that event.
+            onDeadlock = let
               tspanLo = spanExcJustBefore tspan
               prevValMayIfKnown = case tspanLo of
                 Nothing -> Just Nothing -- Known: there is no previous value.
@@ -371,9 +373,33 @@ module Theory where
                       ]
                     )
                   else Nothing
+            in case factsAndUnknownsMay of
+              -- !! If there are no such facts, try to detect deadlock via
+              -- !! eixB. This means that eix is reachable (transitively) via
+              -- !! the PrevE dependencies of derivations coinciding with the
+              -- !! start of tspan.
+              Nothing -> onDeadlock
+              Just ([], _) -> onDeadlock
 
-          -- !! Otherwise we can progress by splitting
-            (knonwSpansAndValueMays, unknownSpans) -> _
+              -- !! Otherwise we can progress by splitting
+              Just (knownSpansAndValueMays, unknownSpans) -> Just $ (
+                -- For knowns, split and try to progress the derivation.
+                mconcat
+                  [ let
+                    newCont = mayPrevToCont prevEMay
+                    newDer  = Derivation ttspan' prevDeps seenOcc newCont
+                    in fromMaybe
+                      ([], [newDer])
+                      -- ^ Couldn't progress further: no new facts, but we've progressed the derivation up to newDer.
+                      (stepDerivation eix allDerivations facts newDer)
+                      -- ^ Try to progress further.
+                  | (ttspan', prevEMay) <- knownSpansAndValueMays
+                  ]
+                <>
+                -- For unknowns, simply split the derivation into the
+                -- unknown subspans.
+                ([], [Derivation subTspan prevDeps seenOcc contDerivation | subTspan <- unknownSpans])
+                )
 
       DeriveAfterFirstOcc tspan eixB cont -> case searchForFirstEventOcc tspan eixB facts of
         -- We know the time of the first occurrence, so we can convert
@@ -1068,6 +1094,9 @@ span), we just don't know when the span will end. It ends at the next closest (i
     contains (DS_SpanExc a) (DS_Point b) = contains a b
     contains (DS_SpanExc a) (DS_SpanExc b) = contains a b
 
+  instance Contains SpanExc DerivationSpan where
+    contains a (DS_Point b) = contains a b
+    contains a (DS_SpanExc b) = contains a b
 
   instance Contains DerivationSpan Time where
     contains (DS_Point t) t' = contains t t'
