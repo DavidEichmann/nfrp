@@ -268,12 +268,12 @@ module Theory where
               (True, DS_SpanExc _) -> error "stepDerivation: encountered non-instantaneous event occurrence."
               (False, DS_Point t) -> ([FactMayOcc t Nothing], [])
               (False, DS_SpanExc tspanSpan) -> ([FactNoOcc tspanSpan], [])
-          else stepCompleteWithPrevDeps
+          else stepCompleteWithPrevDeps (Just a)
         NoOcc ->  if null prevDeps
           then Just $ case ttspan of
               DS_Point t      -> ([FactMayOcc t Nothing], [])
               DS_SpanExc tspanSpan -> ([FactNoOcc tspanSpan], [])
-          else stepCompleteWithPrevDeps
+          else stepCompleteWithPrevDeps Nothing
         GetE eixb mayOccToCont -> let
           factsBAndUnknownsMay = if null prevDeps
             then Just (spanLookupEFacts ttspan eixb facts)
@@ -374,6 +374,13 @@ module Theory where
                     )
                   else Nothing
             in case factsAndUnknownsMay of
+              -- TODO I think we don't necessarily need to detect deadlock, we
+              -- can always just assume there might be deadlock and derive
+              -- chronologically. We'd need to argue that that will not delay
+              -- the production of facts, but that seems intuitively true: with
+              -- a PrevE dependency, we must solve chronologically (at least
+              -- piecewise after known events occs).
+
               -- !! If there are no such facts, try to detect deadlock via
               -- !! eixB. This means that eix is reachable (transitively) via
               -- !! the PrevE dependencies of derivations coinciding with the
@@ -400,6 +407,46 @@ module Theory where
                 -- unknown subspans.
                 ([], [Derivation subTspan prevDeps seenOcc contDerivation | subTspan <- unknownSpans])
                 )
+
+        where
+        -- This is called when a derivation is complete (Pure _ or NoOcc) and
+        -- there are some PrevE dependencies.
+        --
+        -- If the ttspan is a point time, then this is easy! Pure x means event
+        -- occurrence with x **iff an event is seen**. NoOcc means NoOcc.
+        --
+        -- If the ttspan is a span, things get more tricky. At this point we
+        -- need to find a "clearance time". This is some time span at the start
+        -- of ttspan where whe know none of the PrevE events are occurring
+        -- (within the time jurisdiction of this Derivation). We do this by
+        -- finding the transitive closure of PrevE dependencies. For each dep we
+        -- have either facts indicating for how long no event is occuring, or
+        -- complete derivations. The clearance time is just the minimum end time
+        -- of the deps' NoOcc spans (from facts) or Derivation spans (from
+        -- derivations taking the tspan directly and ignoring it's PrevE events
+        -- possibly cutting its jurisdiction off early). I have a proof for this
+        -- that I should document here.
+        stepCompleteWithPrevDeps occMay = case ttspan of
+          DS_Point t
+            | seenOcc   -> Just ([FactMayOcc t occMay ], [])
+            | otherwise -> Just ([FactMayOcc t Nothing], [])
+          DS_SpanExc tspan -> let
+            tLoMay = spanExcJustBefore tspan
+            ctMay = clearanceTime eix tLoMay
+            in case ctMay of
+              Nothing -> Nothing
+              Just ct -> Just ([FactNoOcc (spanExc tLoMay ct)], [_coverTheRestOfTheJurisdiction])
+                -- !!!!!!!!!!!!!!!!!! I need to make sure that the full djurisdiction is covered. I wonder if I need another Derivation constructor !!!!!!!!!!!!!!!!!!!!
+                -- We need a derivations that says "given that none of the immediate PrevE deps are occuring at time `ct`, continue the chonological derivation for span (ct, spanExcJustAfter tspan)"
+
+        clearanceTime
+          :: EIx a        -- ^ Event in question
+          -> Maybe Time   -- ^ Start time of clearance (start of the span of NoOcc exclusive). Nothing means -Inf.
+          -> Maybe (Maybe Time)
+                          -- ^ Clearance time if greater than the input time (end of the span of NoOcc exclusive). Just Nothing means Inf.
+        clearanceTime ix' tLo = go ix' S.empty
+          where
+          go ix visited = _
 
       DeriveAfterFirstOcc tspan eixB cont -> case searchForFirstEventOcc tspan eixB facts of
         -- We know the time of the first occurrence, so we can convert
@@ -446,24 +493,6 @@ module Theory where
         -- We don't know any more info about the first occurrence so we
         -- cant make any more progress.
         Other -> Nothing
-
-    -- TODO what the fuck do I do here?!!?!? This is called when a derivation id
-    -- complete (Pure _ or NoOcc) and there are some PrevE dependencies.
-    --
-    -- If the ttspan is a point time, then this is easy! Pure x means event
-    -- occurrence with x **iff an event is seen**. NoOcc means NoOcc.
-    --
-    -- If the ttspan is a span, things get more tricky. At this point we need to
-    -- find a "clearance time". This is some time span at the start of ttspan
-    -- where whe know none of the PrevE events are occurring (within the time
-    -- jurisdiction of this Derivation). We do this by finding the transitive
-    -- closure of PrevE dependencies. For each dep we have either facts
-    -- indicating for how long no event is occuring, or complete derivations.
-    -- The clearance time is just the minimum end time of the deps' NoOcc spans
-    -- (from facts) or Derivation spans (from derivations taking the tspan
-    -- directly and ignoring it's PrevE events possibly cutting its jurisdiction
-    -- off early). I have a proof for this that I should document here.
-    stepCompleteWithPrevDeps = _
 
 
   -- | Try to detect deadlock via a cycle of PrevE dependencies including eixA
