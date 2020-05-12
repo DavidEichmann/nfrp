@@ -19,6 +19,7 @@
 module Theory where
 
   import qualified Control.Monad as M
+  import Control.Applicative
   import Data.Kind
   import Data.List (find, foldl')
   import Data.Maybe (fromMaybe, listToMaybe, mapMaybe, maybeToList)
@@ -50,9 +51,12 @@ module Theory where
   type MaybeOcc a = Maybe a
 
   newtype EIx (a :: Type) = EIx Int     -- Index of an event
-    deriving newtype Eq
+    deriving newtype (Eq, Ord)
 
   data SomeEIx = forall a . SomeEIx (EIx a)
+
+  instance Eq SomeEIx where (SomeEIx (EIx a)) == (SomeEIx (EIx b)) = a == b
+  instance Ord SomeEIx where compare (SomeEIx (EIx a)) (SomeEIx (EIx b)) = compare a b
 
 -- Derived events are expressed with the EventM monad:
 
@@ -117,11 +121,14 @@ module Theory where
 
   type MaybeKnown a = Maybe a
   lookupEKB :: Time -> EIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
-  lookupEKB t eix kb = listToMaybe
+  lookupEKB t eix (KnowledgeBase facts _) = lookupE t eix facts
+
+  lookupE :: Time -> EIx a -> [SomeEventFact] -> MaybeKnown (MaybeOcc a)
+  lookupE t eix facts = listToMaybe
     [ case fact of
       FactNoOcc _ -> Nothing
       FactMayOcc _ occMay -> occMay
-    | fact <- factsE eix kb
+    | fact <- factsE' eix facts
     , factTSpan fact `intersects` t
     ]
 
@@ -201,7 +208,7 @@ module Theory where
 -- deadlock:
 
   solution1 :: Inputs -> KnowledgeBase
-  solution1 inputs = go initialKb
+  solution1 inputs = iterateUntilChange initialKb
     where
     initialFacts = concat
       [ SomeEventFact eix <$> eventFacts
@@ -213,10 +220,10 @@ module Theory where
       ]
     initialKb = KnowledgeBase initialFacts initialDerivations
 
-    go :: KnowledgeBase -> KnowledgeBase
-    go kb = let (kb', hasChanged) = stepDerivations kb
+    iterateUntilChange :: KnowledgeBase -> KnowledgeBase
+    iterateUntilChange kb = let (kb', hasChanged) = stepDerivations kb
         in if hasChanged
-            then go kb'
+            then iterateUntilChange kb'
             else kb'
 
     -- Tries to step all derivations once.
@@ -432,7 +439,7 @@ module Theory where
             | otherwise -> Just ([FactMayOcc t Nothing], [])
           DS_SpanExc tspan -> let
             tLoMay = spanExcJustBefore tspan
-            ctMay = clearanceTime eix tLoMay
+            ctMay = clearanceTime (SomeEIx eix) tLoMay
             in case ctMay of
               Nothing -> Nothing
               Just ct -> Just ([FactNoOcc (spanExc tLoMay ct)], [_coverTheRestOfTheJurisdiction])
@@ -440,13 +447,94 @@ module Theory where
                 -- We need a derivations that says "given that none of the immediate PrevE deps are occuring at time `ct`, continue the chonological derivation for span (ct, spanExcJustAfter tspan)"
 
         clearanceTime
-          :: EIx a        -- ^ Event in question
-          -> Maybe Time   -- ^ Start time of clearance (start of the span of NoOcc exclusive). Nothing means -Inf.
+          :: SomeEIx      -- ^ Event in question
+          -> Maybe Time   -- ^ Start time of clearance ((exclusive) start of the span of NoOcc ). Nothing means -Inf.
           -> Maybe (Maybe Time)
-                          -- ^ Clearance time if greater than the input time (end of the span of NoOcc exclusive). Just Nothing means Inf.
-        clearanceTime ix' tLo = go ix' S.empty
+                          -- ^ Clearance time if greater than the input time ((exclusive) end of the span of NoOcc). Just Nothing means Inf.
+        clearanceTime ix' tLo = do
+          -- Get the initial clearance
+          (neighbors, ixClearanceTime) <- neighborsAndClearance ix'
+          go neighbors (S.singleton ix') ixClearanceTime
           where
-          go ix visited = _
+          go
+            :: [SomeEIx] -- ^ stack of events to visit
+            -> S.Set SomeEIx -- ^ visited events
+            -> Maybe Time -- ^ clearance time so far (if any).
+            -> Maybe (Maybe Time) -- ^ clearance time if greater than input time.
+          go [] _ clearance = Just clearance
+          go (ix:ixs) visited clearance
+            | ix `S.member` visited = go ixs visited clearance
+            | otherwise = do
+                (neighbors, ixClearanceTime) <- neighborsAndClearance ix
+                go (neighbors++ixs) (S.insert ix visited) (minClearance ixClearanceTime clearance)
+
+          -- | For clearance time, Nothing means Inf so account for that here.
+          minClearance :: Maybe Time -> Maybe Time -> Maybe Time
+          minClearance Nothing a = a
+          minClearance a Nothing = a
+          minClearance (Just a) (Just b) = Just (min a b)
+
+          -- | Get the neighbors (PrevE deps) and clearance time (ignoring
+          -- neighbors) of a single event.
+          neighborsAndClearance
+            :: SomeEIx
+            -> Maybe ([SomeEIx], Maybe Time)
+          neighborsAndClearance ix
+            = (([],) <$> neighborsAndClearanceFacts ix) -- No PrevE deps if a fact.
+            <|> neighborsAndClearanceDerivation ix
+
+          -- | Get the neighbors (PrevE deps) and clearance time (ignoring
+          -- neighbors) of a single event. Only considers known Facts.
+          neighborsAndClearanceFacts
+            :: SomeEIx
+            -> Maybe (Maybe Time)
+          neighborsAndClearanceFacts ix@(SomeEIx ix_) = findClearanceAfter tLo
+            where
+            findClearanceAfter :: Maybe Time -> Maybe (Maybe Time)
+            findClearanceAfter t = listToMaybe
+              [ case spanExcJustAfter tspan of
+                  Nothing -> Nothing
+                  Just nextT -> findClearanceAt nextT
+              | SomeEventFact ix'' (FactNoOcc tspan) <- facts
+              , ix == SomeEIx ix''
+              , case t of
+                  Nothing -> spanExcJustBefore tspan == Nothing
+                  Just tt -> tspan `contains` tt
+              ]
+
+            findClearanceAt :: Time -> Maybe Time
+            findClearanceAt t = case lookupE t ix_ facts of
+              Nothing -> Just t -- Point gap in knowledge. Stop clearance traversal.
+              Just (Just _) -> Just t -- Event is occurring. Stop clearance traversal.
+              -- No event is occuring at time t. Keep traversing.
+              Just Nothing -> case findClearanceAfter (Just t) of
+                Nothing -> Just t
+                Just clearance -> clearance
+
+          -- | Get the neighbors (PrevE deps) and clearance time (ignoring
+          -- neighbors) of a single event. Only considers active Derivations.
+          neighborsAndClearanceDerivation
+            :: SomeEIx
+            -> Maybe ([SomeEIx], Maybe Time)
+          neighborsAndClearanceDerivation ix = listToMaybe
+            [ (neighbors, spanExcJustAfter tspan)
+            | SomeDerivation
+                ix''
+                (Derivation
+                  (DS_SpanExc tspan)
+                  neighbors
+                  _
+                  cont
+                )
+                <- allDerivations
+            , ix == SomeEIx ix'' -- look up the correct eix
+            , spanExcJustBefore tspan == tLo -- starts at tLo
+            -- derivation is complete
+            , case cont of
+                Pure _ -> True
+                NoOcc  -> True
+                _ -> False
+            ]
 
       DeriveAfterFirstOcc tspan eixB cont -> case searchForFirstEventOcc tspan eixB facts of
         -- We know the time of the first occurrence, so we can convert
