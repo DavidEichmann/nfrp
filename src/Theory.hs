@@ -173,16 +173,6 @@ module Theory where
       , derContDerivation :: EventM a
       }
 
-    -- -- When we solve for this, we solve in strictly chronological order.
-    -- --
-    -- -- ∀ t ∈ tspan ∩ (spanExcJustBefore tspan)   (t <= min_{p ∈ derPrevDeps} {firstOccTime(p, tspan ∩ (spanExcJustBefore tspan))})
-    -- --     . lookup t eix = deriveEgo t False contDerivation
-    -- | DerivePrevPoint
-    --   { derPrevTspan   :: SpanExc  -- Must be a closed interval on the left.
-    --   , derPrevDeps  :: [SomeEIx]
-    --   , derPrevContDerivation :: EventM a
-    --   }
-
     -- ∀ t ∈ tspan (t > firstOccTime(dep, tspan))
     --     . lookup t eix = deriveEgo t False contDerivation
     | forall b . DeriveAfterFirstOcc
