@@ -22,7 +22,7 @@ module Theory where
   import Control.Applicative
   import Data.Kind
   import Data.List (find, foldl')
-  import Data.Maybe (fromMaybe, listToMaybe, mapMaybe, maybeToList)
+  import Data.Maybe (fromMaybe, isNothing, listToMaybe, mapMaybe, maybeToList)
   import qualified Data.Set as S
   import Safe
   import Unsafe.Coerce
@@ -179,6 +179,22 @@ module Theory where
       { derAfterTspan   :: SpanExc
       , derAfterDep   :: EIx b
       , derAfterContDerivation :: EventM a
+      }
+
+    -- This is used after advancing (with a NoOcc fact span) up to (excluding) a
+    -- clearance time. At this point we must decide if the derivation has
+    -- further jurisdiction. We proceed iff none of the immediate PrevE deps are
+    -- occurring at the clearance time.
+    --
+    -- ∀ t ∈ tspan (∀ d ∈ PrevDeps . lookup (spanExcJustBefore tspan) d == Nothing)
+    --     . [[ Derivation (DS_SpanExc tspan) prevDeps False contDerivation ]]
+    | AfterClearanceTime
+      { derClearanceTspan    :: SpanExc
+      -- ^ Must not be open on the left (spanExcJustBefore tspan /= Nothing)
+      -- this follows from the usage where the lower bound is a clearance time
+      -- which cannot be -Inf
+      , derClearancePrevDeps :: [SomeEIx]
+      , derClearanceContDerivation :: EventM a
       }
 
   data DerivationSpan
@@ -429,11 +445,40 @@ module Theory where
             | otherwise -> Just ([FactMayOcc t Nothing], [])
           DS_SpanExc tspan -> let
             tLoMay = spanExcJustBefore tspan
+            -- Clearance time iff after the start of tspan. Note that the
+            -- clearance time must be in tspan or at the time just after tspan.
+            -- This is a natural consequence of the fact that we observer the
+            -- current Derivation as part of the calculation of clearance time.
             ctMay = clearanceTime (SomeEIx eix) tLoMay
             in case ctMay of
               Nothing -> Nothing
-              Just ct -> Just ([FactNoOcc (spanExc tLoMay ct)], [_coverTheRestOfTheJurisdiction])
-                -- !!!!!!!!!!!!!!!!!! I need to make sure that the full djurisdiction is covered. I wonder if I need another Derivation constructor !!!!!!!!!!!!!!!!!!!!
+              Just ct -> Just
+                ( [FactNoOcc (spanExc tLoMay ct)]
+                -- If ct is not Inf (i.e. Nothing) and is within the current
+                -- jurisdiction (i.e. tspan), then we need to cover the
+                -- clearance time at and after ct.
+                , case ct of
+                    Just ctPoint | tspan `contains` ctPoint
+                      -> [ Derivation (DS_Point ctPoint) prevDeps seenOcc contDerivation
+                         , AfterClearanceTime
+                            (spanExc ct (spanExcJustAfter tspan))
+                            prevDeps
+                            contDerivation
+                         ]
+                    _ -> []
+
+
+                -- [ Derivation (DS_Point ctPoint) prevDeps seenOcc contDerivation
+                --   | Just ctPoint <- [ct]
+                --   , tspan `contains` ctPoint
+                --   ] ++
+                --   -- If ct is not the end the tspan, then we need to cover the
+                --   -- rest of the tspan strictly after ct.
+                --   [ _coverAfterCt
+                --   | _
+                --   ]
+                )
+                -- !!!!!!!!!!!!!!!!!! I need to make sure that the full jurisdiction is covered. I wonder if I need another Derivation constructor !!!!!!!!!!!!!!!!!!!!
                 -- We need a derivations that says "given that none of the immediate PrevE deps are occuring at time `ct`, continue the chonological derivation for span (ct, spanExcJustAfter tspan)"
 
         clearanceTime
@@ -572,6 +617,20 @@ module Theory where
         -- cant make any more progress.
         Other -> Nothing
 
+      AfterClearanceTime tspan prevDeps contDer -> case prevDepsAreNotOccurringMay of
+        -- Only when we know that no prevDeps are occuring can we continue.
+        Just True -> Just ([], [Derivation (DS_SpanExc tspan) prevDeps False contDer])
+        Just False -> Nothing
+        Nothing -> Nothing
+        where
+        prevDepsAreNotOccurringMay :: MaybeKnown Bool
+        prevDepsAreNotOccurringMay = not . and <$> (sequence
+          [ isNothing <$> lookupE ct dep facts
+          | SomeEIx dep <- prevDeps
+          ])
+
+        ct :: Time
+        Just ct = spanExcJustBefore tspan
 
   -- | Try to detect deadlock via a cycle of PrevE dependencies including eixA
   -- and eixB just after the given time.
