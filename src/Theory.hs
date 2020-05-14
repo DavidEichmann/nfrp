@@ -9,6 +9,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE PartialTypeSignatures #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -119,12 +120,19 @@ module Theory where
   --     then deriveEgo t (cont (lookupE t' exiB))
   --     else Nothing
 
-  type MaybeKnown a = Maybe a
+  newtype MaybeKnown a = MaybeKnown { maybeKnownToMaybe :: Maybe a }
+    deriving newtype (Eq, Ord, Show, Read, Functor, Applicative, Monad)
+  pattern Known :: a -> MaybeKnown a
+  pattern Known a = MaybeKnown (Just a)
+  pattern Unknown :: MaybeKnown a
+  pattern Unknown = MaybeKnown Nothing
+  {-# COMPLETE Known, Unknown #-}
+
   lookupEKB :: Time -> EIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
   lookupEKB t eix (KnowledgeBase facts _) = lookupE t eix facts
 
   lookupE :: Time -> EIx a -> [SomeEventFact] -> MaybeKnown (MaybeOcc a)
-  lookupE t eix facts = listToMaybe
+  lookupE t eix facts = MaybeKnown $ listToMaybe
     [ case fact of
       FactNoOcc _ -> Nothing
       FactMayOcc _ occMay -> occMay
@@ -343,8 +351,8 @@ module Theory where
           --     then deriveEgo t (cont (lookupE t' exiB))
           --     else Nothing
           DS_Point t -> case lookupPrevE t eixB facts of
-            Nothing -> Nothing
-            Just prevBMay -> Just $ let
+            Unknown -> Nothing
+            Known prevBMay -> Just $ let
               newCont = mayPrevToCont prevBMay
               newDer  = Derivation ttspan (SomeEIx eixB : prevDeps) seenOcc newCont
               in fromMaybe
@@ -367,11 +375,11 @@ module Theory where
             onDeadlock = let
               tspanLo = spanExcJustBefore tspan
               prevValMayIfKnown = case tspanLo of
-                Nothing -> Just Nothing -- Known: there is no previous value.
+                Nothing -> Known Nothing -- Known: there is no previous value.
                 Just tLo -> lookupCurrE tLo eixB facts
               in case prevValMayIfKnown of
-                Nothing -> Nothing
-                Just prevValMay -> if deadlockedVia tspanLo eix eixB allDerivations
+                Unknown -> Nothing
+                Known prevValMay -> if deadlockedVia tspanLo eix eixB allDerivations
                   then Just
                     ( []
                     , [ Derivation
@@ -539,10 +547,10 @@ module Theory where
 
             findClearanceAt :: Time -> Maybe Time
             findClearanceAt t = case lookupE t ix_ facts of
-              Nothing -> Just t -- Point gap in knowledge. Stop clearance traversal.
-              Just (Just _) -> Just t -- Event is occurring. Stop clearance traversal.
+              Unknown -> Just t -- Point gap in knowledge. Stop clearance traversal.
+              Known (Just _) -> Just t -- Event is occurring. Stop clearance traversal.
               -- No event is occuring at time t. Keep traversing.
-              Just Nothing -> case findClearanceAfter (Just t) of
+              Known Nothing -> case findClearanceAfter (Just t) of
                 Nothing -> Just t
                 Just clearance -> clearance
 
@@ -619,9 +627,9 @@ module Theory where
 
       AfterClearanceTime tspan prevDeps contDer -> case prevDepsAreNotOccurringMay of
         -- Only when we know that no prevDeps are occuring can we continue.
-        Just True -> Just ([], [Derivation (DS_SpanExc tspan) prevDeps False contDer])
-        Just False -> Nothing
-        Nothing -> Nothing
+        Known True -> Just ([], [Derivation (DS_SpanExc tspan) prevDeps False contDer])
+        Known False -> Nothing
+        Unknown -> Nothing
         where
         prevDepsAreNotOccurringMay :: MaybeKnown Bool
         prevDepsAreNotOccurringMay = not . and <$> (sequence
@@ -738,9 +746,9 @@ module Theory where
         (\tspan -> tspan `contains` t || Just t == spanExcJustAfter tspan)
         noOccSpans
     in case tspanMay of
-      Nothing -> Nothing
+      Nothing -> Unknown
       Just tspan -> case spanExcJustBefore tspan of
-        Nothing -> Just Nothing
+        Nothing -> Known Nothing
         Just t' -> lookupCurrE t' eix allFacts
 
   -- | Directly look up the current (i.e. latest) event occurrence (equal or before the given time).
@@ -759,13 +767,13 @@ module Theory where
     facts = factsE' eix allFacts
     factMay = find (\f -> factTSpan f `contains` t) facts
     in case factMay of
-      Nothing -> Nothing
+      Nothing -> Unknown
       Just fact -> case fact of
         FactNoOcc tspan -> case spanExcJustBefore tspan of
-          Nothing -> Just Nothing
+          Nothing -> Known Nothing
           Just t' -> lookupCurrE t' eix allFacts
         FactMayOcc _ Nothing -> lookupPrevE t eix allFacts
-        FactMayOcc _ (Just a) -> Just (Just a)
+        FactMayOcc _ (Just a) -> Known (Just a)
 
 
   -- | Directly lookup the previous value for an event over a span of time.
@@ -795,7 +803,8 @@ module Theory where
 
   -- | Get all known PervE spans for an event
   prevEFacts
-    :: EIx a
+    :: forall a
+    .  EIx a
     -- ^ Event to lookup
     -> [SomeEventFact]
     -- ^ All known facts.
@@ -804,14 +813,15 @@ module Theory where
   prevEFacts eix allFacts = concat
     [ case fact of
       FactNoOcc tspan -> let
+        mayPrevEMay :: MaybeKnown (Maybe a)
         mayPrevEMay = case spanExcJustBefore tspan of
           -- Span starts at -∞ so that's a known Nothing previous event
-          Nothing -> Just Nothing
+          Nothing -> Known Nothing
           -- Span starts at a time prevT
           Just prevT -> lookupCurrE prevT eix allFacts
         in case mayPrevEMay of
-            Nothing -> []
-            Just prevEMay -> (DS_SpanExc tspan, prevEMay) : [(DS_Point nextT, prevEMay) | Just nextT <- [spanExcJustAfter tspan]]
+            Unknown -> []
+            Known prevEMay -> (DS_SpanExc tspan, prevEMay) : [(DS_Point nextT, prevEMay) | Just nextT <- [spanExcJustAfter tspan]]
       FactMayOcc _ _ -> [] -- Point knowledge is handled by the above case
     | fact <- factsE' eix allFacts
     ]
