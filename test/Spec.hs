@@ -68,11 +68,48 @@ tests = testGroup "lcTransaction"
                 ]
 
         -- lookupEKB :: Time -> EIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
-        lookupEKB 0 eix3 kb @?= Just Nothing
-        lookupEKB 5 eix3 kb @?= Just (Just 190)
-        lookupEKB 6 eix3 kb @?= Nothing
-        lookupEKB 7 eix3 kb @?= Just (Just 189)
-        lookupEKB 8 eix3 kb @?= Nothing
+        lookupEKB 0 eix3 kb @?= Known Nothing
+        lookupEKB 5 eix3 kb @?= Known (Just 190)
+        lookupEKB 6 eix3 kb @?= Unknown
+        lookupEKB 7 eix3 kb @?= Known (Just 189)
+        lookupEKB 8 eix3 kb @?= Unknown
+
+      , testCase "PrevE Only" $ do
+        let
+          eix1, eix2 :: EIx Int
+          eix1 = EIx 1
+          eix2 = EIx 2
+
+          kb :: KnowledgeBase
+          kb = solution1
+                -- time: --0--------5-----7--------------
+                -----------7--------8_____9______________
+                [ InputEl eix1
+                    (Left [ FactNoOcc (spanExc Nothing (Just 0))
+                          , FactMayOcc 0 (Just 7)
+                          , FactNoOcc (spanExc (Just 0) (Just 5))
+                          , FactMayOcc 5 (Just 8)
+                          , FactMayOcc 7 (Just 9)
+                          ]
+                    )
+                -- time: --0--------5-----7--------------
+                ---------100------107____________________
+                , InputEl eix2
+                    (Right $ do
+                        _ <- requireE eix1
+                        e1 <- fromMaybe 0 <$> prevE eix1
+                        return (e1+100)
+                    )
+                ]
+
+        -- lookupEKB :: Time -> EIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
+        lookupEKB (-1) eix2 kb @?= Known Nothing
+        lookupEKB 0 eix2 kb @?= Known (Just 100)
+        lookupEKB 2 eix2 kb @?= Known Nothing
+        lookupEKB 5 eix2 kb @?= Known (Just 107)
+        lookupEKB 6 eix2 kb @?= Unknown
+        lookupEKB 7 eix2 kb @?= Unknown
+        lookupEKB 8 eix2 kb @?= Unknown
 
 
       , testCase "GetE and PrevE (no self reference)" $ do
@@ -114,12 +151,12 @@ tests = testGroup "lcTransaction"
                 ]
 
         -- lookupEKB :: Time -> EIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
-        lookupEKB 0 eix3 kb @?= Just Nothing
-        lookupEKB 5 eix3 kb @?= Just (Just 190)
-        lookupEKB 6 eix3 kb @?= Nothing
-        lookupEKB 7 eix3 kb @?= Just (Just 183)
-        lookupEKB 8 eix3 kb @?= Nothing
-        lookupEKB 9 eix3 kb @?= Just (Just 171)
+        lookupEKB 0 eix3 kb @?= Known Nothing
+        lookupEKB 5 eix3 kb @?= Known (Just 190)
+        lookupEKB 6 eix3 kb @?= Unknown
+        lookupEKB 7 eix3 kb @?= Known (Just 183)
+        lookupEKB 8 eix3 kb @?= Unknown
+        lookupEKB 9 eix3 kb @?= Known (Just 171)
 
 
       , testCase "GetE and PrevE (with self reference after requireE)" $ do
@@ -151,13 +188,13 @@ tests = testGroup "lcTransaction"
                 ]
 
         -- lookupEKB :: Time -> EIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
-        lookupEKB 0 eix2 kb @?= Just Nothing
-        lookupEKB 5 eix2 kb @?= Just (Just 3)
-        lookupEKB 6 eix2 kb @?= Just Nothing
-        lookupEKB 7 eix2 kb @?= Just (Just 4)
-        lookupEKB 8 eix2 kb @?= Nothing
-        lookupEKB 9 eix2 kb @?= Nothing
-        lookupEKB 10 eix2 kb @?= Nothing
+        lookupEKB 0 eix2 kb @?= Known Nothing
+        lookupEKB 5 eix2 kb @?= Known (Just 3)
+        lookupEKB 6 eix2 kb @?= Known Nothing
+        lookupEKB 7 eix2 kb @?= Known (Just 4)
+        lookupEKB 8 eix2 kb @?= Unknown
+        lookupEKB 9 eix2 kb @?= Unknown
+        lookupEKB 10 eix2 kb @?= Unknown
 
 
       -- | This is the same as the last test, but the order of the GetE and
@@ -193,13 +230,13 @@ tests = testGroup "lcTransaction"
                 ]
 
         -- lookupEKB :: Time -> EIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
-        lookupEKB 0 eix2 kb @?= Just Nothing
-        lookupEKB 5 eix2 kb @?= Just (Just 3)
-        lookupEKB 6 eix2 kb @?= Just Nothing
-        lookupEKB 7 eix2 kb @?= Just (Just 4)
-        lookupEKB 8 eix2 kb @?= Nothing
-        lookupEKB 9 eix2 kb @?= Nothing
-        lookupEKB 10 eix2 kb @?= Nothing
+        lookupEKB 0 eix2 kb @?= Known Nothing
+        lookupEKB 5 eix2 kb @?= Known (Just 3)
+        lookupEKB 6 eix2 kb @?= Known Nothing
+        lookupEKB 7 eix2 kb @?= Known (Just 4)
+        lookupEKB 8 eix2 kb @?= Unknown
+        lookupEKB 9 eix2 kb @?= Unknown         -- This is failing with actual value `Just (Just 9)` I think somwhere I've confused a prevE value of "Unknown" with "No previous occurence"
+        lookupEKB 10 eix2 kb @?= Unknown
 
 
       , testCase "GetE and PrevE (with self reference after requireE and missing info)" $ do
@@ -236,15 +273,15 @@ tests = testGroup "lcTransaction"
                 ]
 
         -- lookupEKB :: Time -> EIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
-        lookupEKB (-1) eix2 kb @?= Just Nothing
-        lookupEKB 0 eix2 kb @?= Nothing
-        lookupEKB 1 eix2 kb @?= Just Nothing
-        lookupEKB 5 eix2 kb @?= Nothing
-        lookupEKB 6 eix2 kb @?= Just Nothing
-        lookupEKB 7 eix2 kb @?= Nothing
-        lookupEKB 8 eix2 kb @?= Nothing
-        lookupEKB 9 eix2 kb @?= Nothing
-        lookupEKB 10 eix2 kb @?= Nothing
+        lookupEKB (-1) eix2 kb @?= Known Nothing
+        lookupEKB 0 eix2 kb @?= Unknown
+        lookupEKB 1 eix2 kb @?= Known Nothing
+        lookupEKB 5 eix2 kb @?= Unknown
+        lookupEKB 6 eix2 kb @?= Known Nothing
+        lookupEKB 7 eix2 kb @?= Unknown
+        lookupEKB 8 eix2 kb @?= Unknown
+        lookupEKB 9 eix2 kb @?= Unknown
+        lookupEKB 10 eix2 kb @?= Unknown
     ]
   ]
 
