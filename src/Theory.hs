@@ -32,6 +32,7 @@ module Theory where
   -- import KnowledgeBase.Timeline (FactSpan (..))
   import TimeSpan
 
+  import Debug.Trace
 
 
   data EventFact a
@@ -52,12 +53,13 @@ module Theory where
   type MaybeOcc a = Maybe a
 
   newtype EIx (a :: Type) = EIx Int     -- Index of an event
-    deriving newtype (Eq, Ord)
+    deriving newtype (Eq, Ord, Show)
 
   data SomeEIx = forall a . SomeEIx (EIx a)
 
   instance Eq SomeEIx where (SomeEIx (EIx a)) == (SomeEIx (EIx b)) = a == b
   instance Ord SomeEIx where compare (SomeEIx (EIx a)) (SomeEIx (EIx b)) = compare a b
+  instance Show SomeEIx where show (SomeEIx eix) = show eix
 
 -- Derived events are expressed with the EventM monad:
 
@@ -210,6 +212,7 @@ module Theory where
     = DS_Point Time
     -- | DS_SpanExc tspan ⟹ t ∈ tspan
     | DS_SpanExc SpanExc
+    deriving (Show)
 
     -- -- | DS_SpanExc tspan ⟹ t ∈ tspan
     -- | DS_SpanExcInc SpanExcInc
@@ -280,7 +283,7 @@ module Theory where
       -- ^ Derivation to step
       -> Maybe ([EventFact a], [Derivation a])
       -- ^ Nothing if no progress. Else Just the new facts and new derivations.
-    stepDerivation eix allDerivations facts derivation = case derivation of
+    stepDerivation eix allDerivations facts derivation = trace derivationDbg $ case derivation of
       Derivation ttspan prevDeps seenOcc contDerivation -> case contDerivation of
         Pure a -> if null prevDeps
           then Just $ case (seenOcc, ttspan) of
@@ -362,6 +365,7 @@ module Theory where
           -- !! The Plan
           -- !! Try and split on facts about eixB.
           DS_SpanExc tspan -> let
+            -- | Nothing means tried chronoloical order, but found no fact.
             factsAndUnknownsMay = if null prevDeps
               then Just (spanLookupPrevE ttspan eixB facts)
               -- chronological version of the above with PrevE deps.
@@ -372,7 +376,7 @@ module Theory where
             -- !! If deadlock is detected, proceed by splitting into (1)
             -- !! events after the first eixB event in tspan and (2)
             -- !! chronologically solving before that event.
-            onDeadlock = let
+            checkDeadlock = let
               tspanLo = spanExcJustBefore tspan
               prevValMayIfKnown = case tspanLo of
                 Nothing -> Known Nothing -- Known: there is no previous value.
@@ -406,8 +410,8 @@ module Theory where
               -- !! eixB. This means that eix is reachable (transitively) via
               -- !! the PrevE dependencies of derivations coinciding with the
               -- !! start of tspan.
-              Nothing -> onDeadlock
-              Just ([], _) -> onDeadlock
+              Nothing -> checkDeadlock
+              Just ([], _) -> checkDeadlock
 
               -- !! Otherwise we can progress by splitting
               Just (knownSpansAndValueMays, unknownSpans) -> Just $ (
@@ -639,6 +643,22 @@ module Theory where
 
         ct :: Time
         Just ct = spanExcJustBefore tspan
+
+      where
+      derivationDbg = (show eix) ++ " " ++ case derivation of
+        Derivation ttspan prevDeps seenOcc _
+          -> "Derivation ("
+          ++ show ttspan ++ ") "
+          ++ show prevDeps ++ " "
+          ++ show seenOcc
+        DeriveAfterFirstOcc tspan dep _
+          -> "DeriveAfterFirstOcc ("
+          ++ show tspan ++ ") ("
+          ++ show dep ++ ")"
+        AfterClearanceTime ct deps _
+          -> "AfterClearanceTime "
+          ++ show ct ++ " "
+          ++ show deps
 
   -- | Try to detect deadlock via a cycle of PrevE dependencies including eixA
   -- and eixB just after the given time.

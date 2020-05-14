@@ -207,17 +207,17 @@ tests = testGroup "lcTransaction"
 
           kb :: KnowledgeBase
           kb = solution1
-                -- time: --0--------5-----7-----9--------
+                -- time: -----------5-----7-----111--------
                 --------------------3-----1_____5____
                 [ InputEl eix1
                     (Left [ FactNoOcc (spanExc Nothing (Just 5))
                           , FactMayOcc 5 (Just 3)
                           , FactNoOcc (spanExc (Just 5) (Just 7))
                           , FactMayOcc 7 (Just 1)
-                          , FactMayOcc 9 (Just 5)
+                          , FactMayOcc 111 (Just 5)
                           ]
                     )
-                -- time: --0--------5-----7-----9--------
+                -- time: -----------5-----7-----111--------
                 --------------------3-----4______________
                 , InputEl eix2
                     (Right $ do
@@ -235,8 +235,8 @@ tests = testGroup "lcTransaction"
         lookupEKB 6 eix2 kb @?= Known Nothing
         lookupEKB 7 eix2 kb @?= Known (Just 4)
         lookupEKB 8 eix2 kb @?= Unknown
-        lookupEKB 9 eix2 kb @?= Unknown         -- This is failing with actual value `Just (Just 9)` I think somwhere I've confused a prevE value of "Unknown" with "No previous occurence"
-        lookupEKB 10 eix2 kb @?= Unknown
+        lookupEKB 111 eix2 kb @?= Unknown         -- This is failing with actual value `Just (Just 9)` I think somwhere I've confused a prevE value of "Unknown" with "No previous occurence"
+        lookupEKB 112 eix2 kb @?= Unknown
 
 
       , testCase "GetE and PrevE (with self reference after requireE and missing info)" $ do
