@@ -135,6 +135,9 @@ spanExcJustAfter :: SpanExc -> Maybe Time
 spanExcJustAfter (SpanExc _ All) = Nothing
 spanExcJustAfter (SpanExc _ (Or (LeftSpaceExc t))) = Just t
 
+spanExcSameLowerBound :: SpanExc -> SpanExc -> Bool
+spanExcSameLowerBound a b = spanExcJustBefore a == spanExcJustBefore b
+
 class Intersect a b c | a b -> c where
     intersect :: a -> b -> c
 

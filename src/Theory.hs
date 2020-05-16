@@ -346,9 +346,18 @@ module Theory where
             -- TODO this and the above "then" and also the PrevE cases
             -- have very similar code (split on other facts). Try to DRY
             -- it.
-            else case find ((ttspan `contains`) . factTSpan) (fst (spanLookupEFacts ttspan eixb facts)) of
+
+            else case find isChronological (fst (spanLookupEFacts ttspan eixb facts)) of
               Nothing -> Nothing
               Just fact -> Just ([fact], ttspan `difference` factTSpan fact)
+
+          isChronological :: EventFact a -> Bool
+          isChronological fact = case ttspan of
+            DS_Point _ -> True  -- we use the assumption that fact is in ttspan
+            DS_SpanExc tspan -> case factTSpan fact of
+              DS_Point _ -> False
+              DS_SpanExc tspan' -> spanExcSameLowerBound tspan tspan'
+
          in case factsBAndUnknownsMay of
             Nothing -> Nothing
             Just ([], _) -> Nothing

@@ -235,7 +235,6 @@ tests = testGroup "lcTransaction"
         lookupEKB 6 eix2 kb @?= Known Nothing
         lookupEKB 7 eix2 kb @?= Known (Just 4)
         lookupEKB 8 eix2 kb @?= Unknown
-        mapM_ (fail . ("\n" ++) . unlines . reverse) (maybeKnownToMaybe $ lookupEKBTrace 111 eix2 kb)
         lookupEKB 111 eix2 kb @?= Unknown         -- This is failing with actual value `Just (Just 9)` I think somwhere I've confused a prevE value of "Unknown" with "No previous occurence"
         lookupEKB 112 eix2 kb @?= Unknown
 
