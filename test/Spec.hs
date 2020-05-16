@@ -21,7 +21,7 @@ import Generics.SOP
 
 -- import NFRP
 -- import FRP
--- import Time
+import Time (Time)
 import TimeSpan
 import Theory
 -- import KnowledgeBase
@@ -235,7 +235,7 @@ tests = testGroup "lcTransaction"
         lookupEKB 6 eix2 kb @?= Known Nothing
         lookupEKB 7 eix2 kb @?= Known (Just 4)
         lookupEKB 8 eix2 kb @?= Unknown
-        lookupEKB 111 eix2 kb @?= Unknown         -- This is failing with actual value `Just (Just 9)` I think somwhere I've confused a prevE value of "Unknown" with "No previous occurence"
+        lookupEKB 111 eix2 kb @?= Unknown
         lookupEKB 112 eix2 kb @?= Unknown
 
 
@@ -251,7 +251,6 @@ tests = testGroup "lcTransaction"
                 -----------_--------3-----1_____5____
                 [ InputEl eix1
                     (Left [ FactNoOcc [] (spanExc Nothing (Just 0))
-                          -- Missing info at t=5
                           , FactNoOcc [] (spanExc (Just 0) (Just 5))
                           , FactMayOcc [] 5 (Just 3)
                           , FactNoOcc [] (spanExc (Just 5) (Just 7))
@@ -282,9 +281,208 @@ tests = testGroup "lcTransaction"
         lookupEKB 8 eix2 kb @?= Unknown
         lookupEKB 9 eix2 kb @?= Unknown
         lookupEKB 10 eix2 kb @?= Unknown
+
+    , testCase "Swap values (transitive self reference)" $ do
+        let
+          swapE :: EIx ()
+          swapE = EIx 1
+
+          a, b :: EIx String
+          a = EIx 2
+          b = EIx 3
+
+          kb :: KnowledgeBase
+          kb = solution1
+                -- time: --0--------5-----7-----9--------
+                --------------------()----()____()_______
+                [ InputEl swapE
+                    (Left [ FactNoOcc [] (spanExc Nothing (Just 5))
+                          , FactMayOcc [] 5 (Just ())
+                          , FactNoOcc [] (spanExc (Just 5) (Just 7))
+                          , FactMayOcc [] 7 (Just ())
+                          , FactMayOcc [] 9 (Just ())
+                          ]
+                    )
+                -- time: --0--------5-----7-----9--------
+                --------------------y-----x_______________
+                , InputEl a
+                    (Right $ do
+                        requireE swapE
+                        bVal <- fromMaybe "y" <$> prevE b
+                        return bVal
+                    )
+                -- time: --0--------5-----7-----9--------
+                --------------------x-----y_______________
+                , InputEl b
+                    (Right $ do
+                        requireE swapE
+                        aVal <- fromMaybe "x" <$> prevE a
+                        return aVal
+                    )
+                ]
+
+        lookupEKB 0  a kb @?= Known Nothing
+        lookupEKB 0  b kb @?= Known Nothing
+        lookupEKB 1  a kb @?= Known Nothing
+        lookupEKB 1  b kb @?= Known Nothing
+        lookupEKB 5  a kb @?= Known (Just "y")
+        lookupEKB 5  b kb @?= Known (Just "x")
+        lookupEKB 6  a kb @?= Known Nothing
+        lookupEKB 6  b kb @?= Known Nothing
+        lookupEKB 7  a kb @?= Known (Just "x")
+        lookupEKB 7  b kb @?= Known (Just "y")
+        lookupEKB 8  a kb @?= Unknown
+        lookupEKB 8  b kb @?= Unknown
+        lookupEKB 9  a kb @?= Unknown
+        lookupEKB 9  b kb @?= Unknown
+        lookupEKB 10 a kb @?= Unknown
+        lookupEKB 10 b kb @?= Unknown
+
+
+    , testCase "Switching" $ do
+        let
+          a, b, c :: EIx Int
+          a      = EIx 1
+          b      = EIx 2
+          c      = EIx 3
+
+          switch :: EIx Int
+          switch = EIx 4
+
+          out :: EIx Int
+          out    = EIx 5
+
+          kb :: KnowledgeBase
+          kb = solution1
+                -- time: --0--2--4--6--8--10-12-14-16---
+                -----------11-12-13-14-15-16-17-18-19---
+                [ InputEl a
+                    (Left [ FactNoOcc [] (spanExc Nothing (Just 0))
+                          , FactMayOcc [] 0 (Just 11)
+                          , FactNoOcc [] (spanExc (Just 0) (Just 2))
+                          , FactMayOcc [] 2 (Just 12)
+                          , FactNoOcc [] (spanExc (Just 0) (Just 4))
+                          , FactMayOcc [] 4 (Just 13)
+                          , FactNoOcc [] (spanExc (Just 4) (Just 6))
+                          , FactMayOcc [] 6 (Just 14)
+                          , FactNoOcc [] (spanExc (Just 6) (Just 8))
+                          , FactMayOcc [] 8 (Just 15)
+                          , FactNoOcc [] (spanExc (Just 8) (Just 10))
+                          , FactMayOcc [] 10 (Just 16)
+                          , FactNoOcc [] (spanExc (Just 10) (Just 12))
+                          , FactMayOcc [] 12 (Just 17)
+                          , FactNoOcc [] (spanExc (Just 12) (Just 14))
+                          , FactMayOcc [] 14 (Just 18)
+                          , FactNoOcc [] (spanExc (Just 14) (Just 16))
+                          , FactMayOcc [] 16 (Just 19)
+                          , FactNoOcc [] (spanExc (Just 16) Nothing)
+                          ]
+                    )
+                -- time: --0--2--4--6--8--10-12-14-16---
+                -----------21-22-23-24-25-26-27-28-29---
+                ,  InputEl b
+                    (Left [ FactNoOcc [] (spanExc Nothing (Just 0))
+                          , FactMayOcc [] 0 (Just 21)
+                          , FactNoOcc [] (spanExc (Just 0) (Just 2))
+                          , FactMayOcc [] 2 (Just 22)
+                          , FactNoOcc [] (spanExc (Just 0) (Just 4))
+                          , FactMayOcc [] 4 (Just 23)
+                          , FactNoOcc [] (spanExc (Just 4) (Just 6))
+                          , FactMayOcc [] 6 (Just 24)
+                          , FactNoOcc [] (spanExc (Just 6) (Just 8))
+                          , FactMayOcc [] 8 (Just 25)
+                          , FactNoOcc [] (spanExc (Just 8) (Just 10))
+                          , FactMayOcc [] 10 (Just 26)
+                          , FactNoOcc [] (spanExc (Just 10) (Just 12))
+                          , FactMayOcc [] 12 (Just 27)
+                          , FactNoOcc [] (spanExc (Just 12) (Just 14))
+                          , FactMayOcc [] 14 (Just 28)
+                          , FactNoOcc [] (spanExc (Just 14) (Just 16))
+                          , FactMayOcc [] 16 (Just 29)
+                          , FactNoOcc [] (spanExc (Just 16) Nothing)
+                          ]
+                    )
+                -- time: --0--2--4--6--8--10-12-14-16---
+                -----------31-32-33-34-35-36-37-38-39---
+                ,  InputEl c
+                    (Left [ FactNoOcc [] (spanExc Nothing (Just 0))
+                          , FactMayOcc [] 0 (Just 31)
+                          , FactNoOcc [] (spanExc (Just 0) (Just 2))
+                          , FactMayOcc [] 2 (Just 32)
+                          , FactNoOcc [] (spanExc (Just 0) (Just 4))
+                          , FactMayOcc [] 4 (Just 33)
+                          , FactNoOcc [] (spanExc (Just 4) (Just 6))
+                          , FactMayOcc [] 6 (Just 34)
+                          , FactNoOcc [] (spanExc (Just 6) (Just 8))
+                          , FactMayOcc [] 8 (Just 35)
+                          , FactNoOcc [] (spanExc (Just 8) (Just 10))
+                          , FactMayOcc [] 10 (Just 36)
+                          , FactNoOcc [] (spanExc (Just 10) (Just 12))
+                          , FactMayOcc [] 12 (Just 37)
+                          , FactNoOcc [] (spanExc (Just 12) (Just 14))
+                          , FactMayOcc [] 14 (Just 38)
+                          , FactNoOcc [] (spanExc (Just 14) (Just 16))
+                          , FactMayOcc [] 16 (Just 39)
+                          , FactNoOcc [] (spanExc (Just 16) Nothing)
+                          ]
+                    )
+                -- time: --0--2--4--6--8--10-12-14-16---
+                -- (1) -------2-----3------1--_--2------
+                ,  InputEl switch
+                    (Left [ FactNoOcc [] (spanExc Nothing (Just 0))
+                          , FactMayOcc [] 0 Nothing
+                          , FactNoOcc [] (spanExc (Just 0) (Just 2))
+                          , FactMayOcc [] 2 (Just 2)
+                          , FactNoOcc [] (spanExc (Just 2) (Just 6))
+                          , FactMayOcc [] 6 (Just 3)
+                          , FactNoOcc [] (spanExc (Just 6) (Just 10))
+                          , FactMayOcc [] 10 (Just 1)
+                          , FactNoOcc [] (spanExc (Just 10) (Just 12))
+                          -- Unknown at t=12
+                          , FactNoOcc [] (spanExc (Just 12) (Just 14))
+                          , FactMayOcc [] 14 (Just 2)
+                          , FactNoOcc [] (spanExc (Just 14) Nothing)
+                          ]
+                    )
+                -- time: --0--2--4--6--8--10-12---14-16---
+                -----------11-12-23-24-35-36-17_____------
+                , InputEl out
+                    (Right $ do
+                        switchVal <- fromMaybe 1 <$> prevE switch
+                        requireE $ case switchVal of
+                            1 -> a
+                            2 -> b
+                            3 -> c
+                            x -> error $ "Unenpected switch value of: " ++ show x
+                    )
+                ]
+
+        lookupEKB (-1) out kb @?= Known Nothing
+        lookupEKB 0  out kb @?= Known (Just 11)
+        lookupEKB 1  out kb @?= Known Nothing
+        lookupEKB 2  out kb @?= Known (Just 12)
+        lookupEKB 3  out kb @?= Known Nothing
+        lookupEKB 4  out kb @?= Known (Just 23)
+        lookupEKB 5  out kb @?= Known Nothing
+        lookupEKB 6  out kb @?= Known (Just 24)
+        lookupEKB 7  out kb @?= Known Nothing
+        lookupEKB 8  out kb @?= Known (Just 35)
+        lookupEKB 9  out kb @?= Known Nothing
+        lookupEKB 10 out kb @?= Known (Just 36)
+        lookupEKB 11 out kb @?= Known Nothing
+        lookupEKB 12 out kb @?= Known (Just 17)
+        lookupEKB 13 out kb @?= Unknown
+        lookupEKB 14 out kb @?= Unknown
+        lookupEKB 15 out kb @?= Known Nothing
+        lookupEKB 16 out kb @?= Known (Just 29)
+        lookupEKB 17 out kb @?= Known Nothing
     ]
   ]
 
+showDerivationStack :: Time -> EIx a -> KnowledgeBase -> String
+showDerivationStack t eix kn = case lookupEKBTrace t eix kn of
+    Unknown -> "Unknown"
+    Known dtrace -> "\n" ++ (unlines $ reverse $ dtrace)
 
 -- tests :: TestTree
 -- tests = testGroup "lcTransaction"
