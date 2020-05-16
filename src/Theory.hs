@@ -32,9 +32,6 @@ module Theory where
   -- import KnowledgeBase.Timeline (FactSpan (..))
   import TimeSpan
 
-  import Debug.Trace
-
-
   type DerivationTraceEl a = String
   type DerivationTrace a = [DerivationTraceEl a]
   appendDerTrace :: DerivationTrace a -> DerivationTraceEl a -> DerivationTrace a
@@ -141,6 +138,9 @@ module Theory where
 
   lookupEKB :: Time -> EIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
   lookupEKB t eix (KnowledgeBase facts _) = lookupE t eix facts
+
+  lookupEKBTrace :: Time -> EIx a -> KnowledgeBase -> MaybeKnown (DerivationTrace a)
+  lookupEKBTrace t eix (KnowledgeBase facts _) = lookupETrace t eix facts
 
   lookupE :: Time -> EIx a -> [SomeEventFact] -> MaybeKnown (MaybeOcc a)
   lookupE t eix facts = fmap
@@ -301,23 +301,43 @@ module Theory where
       -- ^ Derivation to step
       -> Maybe ([EventFact a], [Derivation a])
       -- ^ Nothing if no progress. Else Just the new facts and new derivations.
-    stepDerivation eix allDerivations facts derivation = trace derivationDbg $ case derivation of
+    stepDerivation eix allDerivations facts derivation = case derivation of
       Derivation dtrace ttspan prevDeps seenOcc contDerivation -> case contDerivation of
         Pure a -> if null prevDeps
           then Just $ case (seenOcc, ttspan) of
               (True, DS_Point t) -> let
                 dtrace' = appendDerTrace dtrace $
-                  ""
+                  "Jurisdiction is a point (t=" ++ show t ++ "), we've \
+                  \witnessed some GetE event and EventM is \
+                  \`Pure a`. This means an event is occurring with value a."
                 in ([FactMayOcc dtrace' t (Just a)], [])
               -- TODO looks like an invariant that `seenOcc -> ttspan is a point in time (i.e. not a span)`
               (True, DS_SpanExc _) -> error "stepDerivation: encountered non-instantaneous event occurrence."
-              (False, DS_Point t) -> ([FactMayOcc t Nothing], [])
-              (False, DS_SpanExc tspanSpan) -> ([FactNoOcc tspanSpan], [])
+              (False, DS_Point t) -> let
+                dtrace' = appendDerTrace dtrace $
+                  "Jurisdiction is a point (t=" ++ show t ++ "), we've \
+                  \NOT witnessed any GetE event and EventM is \
+                  \`Pure a` (which is suspect). This means an event is NOT occurring."
+                in ([FactMayOcc dtrace' t Nothing], [])
+              (False, DS_SpanExc tspanSpan) -> let
+                dtrace' = appendDerTrace dtrace $
+                  "Jurisdiction is (" ++ show tspanSpan ++ "), we've NOT\
+                  \witnessed any GetE event and EventM is \
+                  \`Pure a` (which is suspect). This means an event is NOT occurring with ."
+                in ([FactNoOcc dtrace' tspanSpan], [])
           else stepCompleteWithPrevDeps (Just a)
         NoOcc ->  if null prevDeps
           then Just $ case ttspan of
-              DS_Point t      -> ([FactMayOcc t Nothing], [])
-              DS_SpanExc tspanSpan -> ([FactNoOcc tspanSpan], [])
+              DS_Point t      -> let
+                dtrace' = appendDerTrace dtrace $
+                  "Jurisdiction is a poiint (" ++ show ttspan ++ "), we've NOT\
+                  \witnessed any GetE event and EventM is \
+                  \`Pure a` (which is suspect). This means an event is NOT occurring with ."
+                in ([FactMayOcc dtrace' t Nothing], [])
+              DS_SpanExc tspanSpan -> let
+                dtrace' = appendDerTrace dtrace $
+                  "EventM says NoOcc for this span."
+                in ([FactNoOcc dtrace' tspanSpan], [])
           else stepCompleteWithPrevDeps Nothing
         GetE eixb mayOccToCont -> let
           factsBAndUnknownsMay = if null prevDeps
@@ -338,7 +358,9 @@ module Theory where
                   [ case factB of
                     FactNoOcc _ subTspan -> let
                       newCont = mayOccToCont Nothing
-                      newDer  = Derivation (DS_SpanExc subTspan) prevDeps seenOcc newCont
+                      newDer  = Derivation dtrace (DS_SpanExc subTspan) prevDeps seenOcc newCont
+                                  `withDerTrace`
+                                  ("Split on GetE dep (" ++ show eixb ++ ") FactNoOcc")
                       in fromMaybe
                         ([], [newDer])
                         -- ^ Couldn't progress further: no new facts, but we've progressed the derivation up to newDer.
@@ -348,13 +370,17 @@ module Theory where
                       -- This is simmilar to above
                       Nothing -> let
                         newCont = mayOccToCont Nothing
-                        newDer  = Derivation (DS_Point t) prevDeps seenOcc newCont
+                        newDer  = Derivation dtrace (DS_Point t) prevDeps seenOcc newCont
+                                  `withDerTrace`
+                                  ("Split on GetE dep (" ++ show eixb ++ ") FactMayOcc (No Occ)")
                         in fromMaybe
                           ([], [newDer])
                           (stepDerivation eix allDerivations facts newDer)
                       Just b -> let
                         newCont = mayOccToCont (Just b)
-                        newDer  = Derivation (DS_Point t) prevDeps True newCont
+                        newDer  = Derivation dtrace (DS_Point t) prevDeps True newCont
+                                  `withDerTrace`
+                                  ("Split on GetE dep (" ++ show eixb ++ ") FactMayOcc (With Occ)")
                         in fromMaybe
                           ([], [newDer])
                           (stepDerivation eix allDerivations facts newDer)
@@ -363,8 +389,14 @@ module Theory where
                 <>
                 -- For unknowns, simply split the derivation into the
                 -- unknown subspans.
-                ([], [Derivation subTspan prevDeps seenOcc contDerivation | subTspan <- unknowns])
+                ( []
+                , [ Derivation dtrace subTspan prevDeps seenOcc contDerivation
+                    `withDerTrace`
+                    ("Split on GetE dep (" ++ show eixb ++ ") unknown point or span.")
+                  | subTspan <- unknowns
+                  ]
                 )
+              )
 
         PrevE eixB mayPrevToCont -> case ttspan of
           -- For reference:
@@ -378,7 +410,9 @@ module Theory where
             Unknown -> Nothing
             Known prevBMay -> Just $ let
               newCont = mayPrevToCont prevBMay
-              newDer  = Derivation ttspan (SomeEIx eixB : prevDeps) seenOcc newCont
+              newDer  = Derivation dtrace ttspan (SomeEIx eixB : prevDeps) seenOcc newCont
+                    `withDerTrace`
+                    ("Use known PrevE value of dep (" ++ show eixB ++ ")")
               in fromMaybe
                 ([], [newDer])
                 (stepDerivation eix allDerivations facts newDer)
@@ -408,14 +442,23 @@ module Theory where
                   then Just
                     ( []
                     , [ Derivation
+                          dtrace
                           ttspan
                           (SomeEIx eixB : prevDeps)
                           seenOcc
                           (mayPrevToCont prevValMay)
+                        `withDerTrace`
+                          ("Deadlock detected via " ++ show eixB ++ " (at t=" ++ show tspanLo ++ "). Store "
+                          ++ show eixB ++ " as a PrevE dep and solve chronologically")
                       , DeriveAfterFirstOcc
+                          dtrace
                           tspan
                           eixB
                           contDerivation
+                        `withDerTrace`
+                          ("Deadlock detected via " ++ show eixB
+                          ++ " (at t=" ++ show tspanLo ++ "). Wait for first occ of " ++ show eixB
+                          ++ " and solve for the rest of the time span if any.")
                       ]
                     )
                   else Nothing
@@ -440,7 +483,9 @@ module Theory where
                 mconcat
                   [ let
                     newCont = mayPrevToCont prevEMay
-                    newDer  = Derivation ttspan' prevDeps seenOcc newCont
+                    newDer  = Derivation dtrace ttspan' prevDeps seenOcc newCont
+                        `withDerTrace`
+                          ("Split on known facts")
                     in fromMaybe
                       ([], [newDer])
                       -- ^ Couldn't progress further: no new facts, but we've progressed the derivation up to newDer.
@@ -451,7 +496,10 @@ module Theory where
                 <>
                 -- For unknowns, simply split the derivation into the
                 -- unknown subspans.
-                ([], [Derivation subTspan prevDeps seenOcc contDerivation | subTspan <- unknownSpans])
+                ([], [Derivation dtrace subTspan prevDeps seenOcc contDerivation
+                        `withDerTrace`
+                          ("Split on unknown span or point")
+                      | subTspan <- unknownSpans])
                 )
 
         where
@@ -474,8 +522,15 @@ module Theory where
         -- that I should document here.
         stepCompleteWithPrevDeps occMay = case ttspan of
           DS_Point t
-            | seenOcc   -> Just ([FactMayOcc t occMay ], [])
-            | otherwise -> Just ([FactMayOcc t Nothing], [])
+            | seenOcc   -> let
+              dtrace' = appendDerTrace dtrace $ case occMay of
+                Nothing -> "EventM is NoOcc so output no event."
+                Just _ -> "EventM is (Pure _) and we've witnessed an event so output an event."
+              in Just ([FactMayOcc dtrace' t occMay ], [])
+            | otherwise ->  let
+              dtrace' = appendDerTrace dtrace $
+                "EventM is complete but we'ven not witnessed an event so output no event."
+              in Just ([FactMayOcc dtrace' t Nothing], [])
           DS_SpanExc tspan -> let
             tLoMay = spanExcJustBefore tspan
             -- Clearance time iff after the start of tspan. Note that the
@@ -485,18 +540,27 @@ module Theory where
             ctMay = clearanceTime (SomeEIx eix) tLoMay
             in case ctMay of
               Nothing -> Nothing
-              Just ct -> Just
-                ( [FactNoOcc (spanExc tLoMay ct)]
+              Just ct ->  let
+                msgCt = "Found clearance time ct=" ++ show ct ++ "."
+                dtraceF = appendDerTrace dtrace $
+                  msgCt ++ " This means no events are happening up to at least that time."
+                in Just
+                ( [FactNoOcc dtraceF (spanExc tLoMay ct)]
                 -- If ct is not Inf (i.e. Nothing) and is within the current
                 -- jurisdiction (i.e. tspan), then we need to cover the
                 -- clearance time at and after ct.
                 , case ct of
                     Just ctPoint | tspan `contains` ctPoint
-                      -> [ Derivation _ (DS_Point ctPoint) prevDeps seenOcc contDerivation
+                      -> [ Derivation dtrace (DS_Point ctPoint) prevDeps seenOcc contDerivation
+                            `withDerTrace`
+                              (msgCt ++ " Solve at the clearance time.")
                          , AfterClearanceTime
+                            dtrace
                             (spanExc ct (spanExcJustAfter tspan))
                             prevDeps
                             contDerivation
+                            `withDerTrace`
+                              (msgCt ++ " Solve for after the clearance time")
                          ]
                     _ -> []
 
@@ -612,12 +676,15 @@ module Theory where
           -- Safe to use mono-bind here as firstOccTime ∈ tspan
           Just concreteTimeSpan = tspan `intersect` RightSpaceExc firstOccTime
           newDer = Derivation
+            dtrace
             (DS_SpanExc concreteTimeSpan)
             []
             -- ^ NOTE [DeriveAfterFirstOcc and PrevE deps] There are
             -- no PrevE events by denotation of DeriveAfterFirstOcc
             False
             cont
+              `withDerTrace`
+              ("Found first occ at t=" ++ show firstOccTime)
           in Just ([], [newDer])
 
         -- We know the right of clearanceTime (exclusive) is definitely
@@ -632,13 +699,22 @@ module Theory where
 
           newDers =
             [ let Just tspanBefore = tspan `intersect` LeftSpaceExc clearanceTime
-               in DeriveAfterFirstOcc tspanBefore eixB cont
+               in DeriveAfterFirstOcc dtrace tspanBefore eixB cont
+                  `withDerTrace`
+                  ("First occ is at or before " ++ show clearanceTime
+                  ++ ". Continue looking for first event before that time.")
 
-            , Derivation (DS_Point clearanceTime) [] seenOcc cont
+            , Derivation dtrace (DS_Point clearanceTime) [] seenOcc cont
+                  `withDerTrace`
+                  ("First occ is at or before " ++ show clearanceTime
+                  ++ ". Solve at that time.")
             -- See NOTE [DeriveAfterFirstOcc and PrevE deps]
 
             , let Just tspanAfter = tspan `intersect` RightSpaceExc clearanceTime
-               in Derivation (DS_SpanExc tspanAfter) [] seenOcc cont
+               in Derivation dtrace (DS_SpanExc tspanAfter) [] seenOcc cont
+                  `withDerTrace`
+                  ("First occ is at or before " ++ show clearanceTime
+                  ++ ". Solve after that time.")
             -- See NOTE [DeriveAfterFirstOcc and PrevE deps]
             ]
           in Just ([], newDers)
@@ -653,7 +729,9 @@ module Theory where
 
       AfterClearanceTime dtrace tspan prevDeps contDer -> case prevDepsAreNotOccurringMay of
         -- Only when we know that no prevDeps are occuring can we continue.
-        Known True -> Just ([], [Derivation (DS_SpanExc tspan) prevDeps False contDer])
+        Known True -> Just ([], [Derivation dtrace(DS_SpanExc tspan) prevDeps False contDer
+          `withDerTrace` ("All PrevE deps are known to NOT occur. Continue solving chronologically.")
+          ])
         Known False -> Nothing
         Unknown -> Nothing
         where
@@ -666,21 +744,21 @@ module Theory where
         ct :: Time
         Just ct = spanExcJustBefore tspan
 
-      where
-      derivationDbg = (show eix) ++ " " ++ case derivation of
-        Derivation _ ttspan prevDeps seenOcc _
-          -> "Derivation ("
-          ++ show ttspan ++ ") "
-          ++ show prevDeps ++ " "
-          ++ show seenOcc
-        DeriveAfterFirstOcc _ tspan dep _
-          -> "DeriveAfterFirstOcc ("
-          ++ show tspan ++ ") ("
-          ++ show dep ++ ")"
-        AfterClearanceTime _ ct deps _
-          -> "AfterClearanceTime "
-          ++ show ct ++ " "
-          ++ show deps
+      -- where
+      -- derivationDbg = (show eix) ++ " " ++ case derivation of
+      --   Derivation _ ttspan prevDeps seenOcc _
+      --     -> "Derivation ("
+      --     ++ show ttspan ++ ") "
+      --     ++ show prevDeps ++ " "
+      --     ++ show seenOcc
+      --   DeriveAfterFirstOcc _ tspan dep _
+      --     -> "DeriveAfterFirstOcc ("
+      --     ++ show tspan ++ ") ("
+      --     ++ show dep ++ ")"
+      --   AfterClearanceTime _ ct deps _
+      --     -> "AfterClearanceTime "
+      --     ++ show ct ++ " "
+      --     ++ show deps
 
   -- | Try to detect deadlock via a cycle of PrevE dependencies including eixA
   -- and eixB just after the given time.
@@ -886,10 +964,10 @@ module Theory where
     facts = factsE' eix allFacts
     knownFacts =
         [ case (fact, ttspan') of
-          (FactNoOcc _ _, DS_SpanExc tspan') -> FactNoOcc tspan'
-          (FactNoOcc _ _, DS_Point t'   ) -> FactMayOcc t' Nothing
+          (FactNoOcc dtrace _, DS_SpanExc tspan') -> FactNoOcc dtrace tspan'
+          (FactNoOcc dtrace _, DS_Point t'   ) -> FactMayOcc dtrace t' Nothing
           (FactMayOcc _ _ _   , DS_SpanExc _) -> error "Intersection between SpanExc and Time must be Just Time or Nothing"
-          (FactMayOcc _ _ occMay, DS_Point t') -> FactMayOcc t' occMay
+          (FactMayOcc dtrace _ occMay, DS_Point t') -> FactMayOcc dtrace t' occMay
         | fact <- facts
         , Just ttspan' <- [factTSpan fact `intersect` tspan]
         ]
@@ -1308,3 +1386,47 @@ span), we just don't know when the span will end. It ends at the next closest (i
     difference a b = concatMap (`difference` b) a
   instance Difference DerivationSpan [DerivationSpan] [DerivationSpan] where
     difference a bs = foldl' difference [a] bs
+
+  withDerTrace
+    :: Derivation a
+    -- ^ Derivation (without a trace entry for the latest step) trace
+    -> String
+    -- ^ Msg describing most recent step taken in derivation.
+    -> Derivation a
+    -- ^ Derivation with added traced entry.
+  withDerTrace d msg = case d of
+    Derivation oldTrace ttspan prevDeps occSeen cont
+      -> let dMsg = "Derivation "
+                  ++ showTtspan ttspan ++ " "
+                  ++ (if null prevDeps
+                      then ""
+                      else "(t ≤ first occ of " ++ show prevDeps ++ ") ")
+                  ++ (if occSeen then "OccSeen " else " ")
+                  ++ "cont=" ++ showPeakEventM cont
+                  ++ ": " ++ msg
+          in Derivation (oldTrace `appendDerTrace` dMsg) ttspan prevDeps occSeen cont
+
+    DeriveAfterFirstOcc oldTrace tspan dep cont
+      -> let dMsg = "After first occ of " ++ show dep
+                  ++ " s.t. t∈" ++ show tspan ++ " "
+                  ++ "cont=" ++ showPeakEventM cont
+                  ++ ": " ++ msg
+          in DeriveAfterFirstOcc (oldTrace `appendDerTrace` dMsg) tspan dep cont
+
+    AfterClearanceTime oldTrace tspan prevDeps cont
+      -> let
+          dMsg = "If no PrevE deps " ++ show prevDeps ++ " occur at t=" ++ show ct ++ ": "
+                  ++ show tspan
+                  ++ "cont=" ++ showPeakEventM cont
+                  ++ ": " ++ msg
+          Just ct = spanExcJustBefore tspan
+          in AfterClearanceTime (oldTrace `appendDerTrace` dMsg) tspan prevDeps cont
+    where
+    showTtspan (DS_Point t) = "t=" ++ show t
+    showTtspan (DS_SpanExc tspan) = "t∈" ++ show tspan
+
+    showPeakEventM :: EventM a -> String
+    showPeakEventM (Pure _) = "Pure{}"
+    showPeakEventM NoOcc = "NoOcc"
+    showPeakEventM (GetE ix _) = "(GetE " ++ show ix ++ " _)"
+    showPeakEventM (PrevE ix _) = "(PrevE " ++ show ix ++ " _)"

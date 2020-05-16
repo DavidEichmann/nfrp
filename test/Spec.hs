@@ -45,16 +45,16 @@ tests = testGroup "lcTransaction"
                 -- time: --0--------5-----7--------------
                 --------------------------9______________
                 [ InputEl eix1
-                    (Left [ FactNoOcc (spanExc Nothing (Just 7))
-                          , FactMayOcc 7 (Just 9)
+                    (Left [ FactNoOcc [] (spanExc Nothing (Just 7))
+                          , FactMayOcc [] 7 (Just 9)
                           ]
                     )
                 -- time: --0--------5-----7--------------
                 -------------------90____80______________
                 , InputEl eix2
-                    (Left [ FactNoOcc (spanExc Nothing (Just 5))
-                          , FactMayOcc 5 (Just 90)
-                          , FactMayOcc 7 (Just 80)
+                    (Left [ FactNoOcc [] (spanExc Nothing (Just 5))
+                          , FactMayOcc [] 5 (Just 90)
+                          , FactMayOcc [] 7 (Just 80)
                           ]
                     )
                 -- time: --0--------5-----7--------------
@@ -85,11 +85,11 @@ tests = testGroup "lcTransaction"
                 -- time: --0--------5-----7--------------
                 -----------7--------8_____9______________
                 [ InputEl eix1
-                    (Left [ FactNoOcc (spanExc Nothing (Just 0))
-                          , FactMayOcc 0 (Just 7)
-                          , FactNoOcc (spanExc (Just 0) (Just 5))
-                          , FactMayOcc 5 (Just 8)
-                          , FactMayOcc 7 (Just 9)
+                    (Left [ FactNoOcc [] (spanExc Nothing (Just 0))
+                          , FactMayOcc [] 0 (Just 7)
+                          , FactNoOcc [] (spanExc (Just 0) (Just 5))
+                          , FactMayOcc [] 5 (Just 8)
+                          , FactMayOcc [] 7 (Just 9)
                           ]
                     )
                 -- time: --0--------5-----7--------------
@@ -124,20 +124,20 @@ tests = testGroup "lcTransaction"
                 -- time: --0--------5-----7-----9--------
                 --------------------3-----1----__________
                 [ InputEl eix1
-                    (Left [ FactNoOcc (spanExc Nothing (Just 5))
-                          , FactMayOcc 5 (Just 3)
-                          , FactNoOcc (spanExc (Just 5) (Just 7))
-                          , FactMayOcc 7 (Just 1)
-                          , FactNoOcc (spanExc (Just 7) (Just 9))
+                    (Left [ FactNoOcc [] (spanExc Nothing (Just 5))
+                          , FactMayOcc [] 5 (Just 3)
+                          , FactNoOcc [] (spanExc (Just 5) (Just 7))
+                          , FactMayOcc [] 7 (Just 1)
+                          , FactNoOcc [] (spanExc (Just 7) (Just 9))
                           ]
                     )
                 -- time: --0--------5-----7-----9--------
                 -------------------90____80____70________
                 , InputEl eix2
-                    (Left [ FactNoOcc (spanExc Nothing (Just 5))
-                          , FactMayOcc 5 (Just 90)
-                          , FactMayOcc 7 (Just 80)
-                          , FactMayOcc 9 (Just 70)
+                    (Left [ FactNoOcc [] (spanExc Nothing (Just 5))
+                          , FactMayOcc [] 5 (Just 90)
+                          , FactMayOcc [] 7 (Just 80)
+                          , FactMayOcc [] 9 (Just 70)
                           ]
                     )
                 -- time: --0--------5-----7-----9--------
@@ -170,11 +170,11 @@ tests = testGroup "lcTransaction"
                 -- time: --0--------5-----7-----9--------
                 --------------------3-----1_____5____
                 [ InputEl eix1
-                    (Left [ FactNoOcc (spanExc Nothing (Just 5))
-                          , FactMayOcc 5 (Just 3)
-                          , FactNoOcc (spanExc (Just 5) (Just 7))
-                          , FactMayOcc 7 (Just 1)
-                          , FactMayOcc 9 (Just 5)
+                    (Left [ FactNoOcc [] (spanExc Nothing (Just 5))
+                          , FactMayOcc [] 5 (Just 3)
+                          , FactNoOcc [] (spanExc (Just 5) (Just 7))
+                          , FactMayOcc [] 7 (Just 1)
+                          , FactMayOcc [] 9 (Just 5)
                           ]
                     )
                 -- time: --0--------5-----7-----9--------
@@ -210,11 +210,11 @@ tests = testGroup "lcTransaction"
                 -- time: -----------5-----7-----111--------
                 --------------------3-----1_____5____
                 [ InputEl eix1
-                    (Left [ FactNoOcc (spanExc Nothing (Just 5))
-                          , FactMayOcc 5 (Just 3)
-                          , FactNoOcc (spanExc (Just 5) (Just 7))
-                          , FactMayOcc 7 (Just 1)
-                          , FactMayOcc 111 (Just 5)
+                    (Left [ FactNoOcc [] (spanExc Nothing (Just 5))
+                          , FactMayOcc [] 5 (Just 3)
+                          , FactNoOcc [] (spanExc (Just 5) (Just 7))
+                          , FactMayOcc [] 7 (Just 1)
+                          , FactMayOcc [] 111 (Just 5)
                           ]
                     )
                 -- time: -----------5-----7-----111--------
@@ -235,6 +235,7 @@ tests = testGroup "lcTransaction"
         lookupEKB 6 eix2 kb @?= Known Nothing
         lookupEKB 7 eix2 kb @?= Known (Just 4)
         lookupEKB 8 eix2 kb @?= Unknown
+        mapM_ (fail . ("\n" ++) . unlines . reverse) (maybeKnownToMaybe $ lookupEKBTrace 111 eix2 kb)
         lookupEKB 111 eix2 kb @?= Unknown         -- This is failing with actual value `Just (Just 9)` I think somwhere I've confused a prevE value of "Unknown" with "No previous occurence"
         lookupEKB 112 eix2 kb @?= Unknown
 
@@ -250,13 +251,13 @@ tests = testGroup "lcTransaction"
                 -- time: --0--------5-----7-----9--------
                 -----------_--------3-----1_____5____
                 [ InputEl eix1
-                    (Left [ FactNoOcc (spanExc Nothing (Just 0))
+                    (Left [ FactNoOcc [] (spanExc Nothing (Just 0))
                           -- Missing info at t=5
-                          , FactNoOcc (spanExc (Just 0) (Just 5))
-                          , FactMayOcc 5 (Just 3)
-                          , FactNoOcc (spanExc (Just 5) (Just 7))
-                          , FactMayOcc 7 (Just 1)
-                          , FactMayOcc 9 (Just 5)
+                          , FactNoOcc [] (spanExc (Just 0) (Just 5))
+                          , FactMayOcc [] 5 (Just 3)
+                          , FactNoOcc [] (spanExc (Just 5) (Just 7))
+                          , FactMayOcc [] 7 (Just 1)
+                          , FactMayOcc [] 9 (Just 5)
                           ]
                     )
                 -- time: --0--------5-----7-----9--------
