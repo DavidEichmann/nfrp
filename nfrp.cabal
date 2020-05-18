@@ -23,6 +23,7 @@ library
         , KnowledgeBase.Timeline
         , KnowledgeBase.Ix
         , Lazy
+        , Reactor
         , Theory
         , Time
         , TimeSpan

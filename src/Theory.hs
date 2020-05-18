@@ -29,7 +29,6 @@ module Theory where
   import Unsafe.Coerce
 
   import Time
-  -- import KnowledgeBase.Timeline (FactSpan (..))
   import TimeSpan
 
   type DerivationTraceEl a = String
