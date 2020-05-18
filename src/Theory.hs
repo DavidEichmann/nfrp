@@ -429,7 +429,7 @@ module Theory where
           -- !! The Plan
           -- !! Try and split on facts about eixB.
           DS_SpanExc tspan -> let
-            -- | Nothing means tried chronoloical order, but found no fact.
+            -- | Nothing means tried chronological order, but found no fact.
             factsAndUnknownsMay = if null prevDeps
               then Just (spanLookupPrevE ttspan eixB facts)
               -- chronological version of the above with PrevE deps.
@@ -437,18 +437,25 @@ module Theory where
                 Nothing -> Nothing
                 Just knownSpanAndFact -> Just ([knownSpanAndFact], ttspan `difference` fst knownSpanAndFact)
 
-            -- !! If deadlock is detected, proceed by splitting into (1)
-            -- !! events after the first eixB event in tspan and (2)
-            -- !! chronologically solving before that event.
-            checkDeadlock = let
+            -- !! Split into (1) events after the first eixB event in tspan and
+            -- !! (2) chronologically solving before that event.
+            -- Previously we checked for deadlock and only started solving
+            -- chronologically if deadlocked via eixB. This is not necessary, we
+            -- can just always solve chronologically. It seems like this would
+            -- fail to produce knowable facts that are not chronological, but that
+            -- problem is solved by a second derivation with jurisdiction after
+            -- the first occurrence of eixB. Since the previous (PrevE) value is
+            -- only known for spans of NoOcc after an event occurrence, we know
+            -- that chronological before the first occurrence of eixB will be
+            -- productive (produce facts as soon as they are knowable).
+            tryChonologicalSplit = let
               tspanLo = spanExcJustBefore tspan
               prevValMayIfKnown = case tspanLo of
                 Nothing -> Known Nothing -- Known: there is no previous value.
                 Just tLo -> lookupCurrE tLo eixB facts
               in case prevValMayIfKnown of
                 Unknown -> Nothing
-                Known prevValMay -> if deadlockedVia tspanLo eix eixB allDerivations
-                  then Just
+                Known prevValMay -> Just
                     ( []
                     , [ Derivation
                           dtrace
@@ -470,7 +477,6 @@ module Theory where
                           ++ " and solve for the rest of the time span if any.")
                       ]
                     )
-                  else Nothing
             in case factsAndUnknownsMay of
               -- TODO I think we don't necessarily need to detect deadlock, we
               -- can always just assume there might be deadlock and derive
@@ -483,8 +489,8 @@ module Theory where
               -- !! eixB. This means that eix is reachable (transitively) via
               -- !! the PrevE dependencies of derivations coinciding with the
               -- !! start of tspan.
-              Nothing -> checkDeadlock
-              Just ([], _) -> checkDeadlock
+              Nothing -> tryChonologicalSplit
+              Just ([], _) -> tryChonologicalSplit
 
               -- !! Otherwise we can progress by splitting
               Just (knownSpansAndValueMays, unknownSpans) -> Just $ (
@@ -768,45 +774,6 @@ module Theory where
       --     -> "AfterClearanceTime "
       --     ++ show ct ++ " "
       --     ++ show deps
-
-  -- | Try to detect deadlock via a cycle of PrevE dependencies including eixA
-  -- and eixB just after the given time.
-  --
-  -- True means deadlock detected: a cycle of PrevE events was found.
-  --
-  -- False means deadlock may or may not exist: no cycle of PrevE events was
-  -- found.
-  deadlockedVia
-    :: Maybe Time
-    -- ^ Just after time to sample dependencies (Nothing means negative
-    -- infinity)
-    -> EIx a
-    -- ^ eixA must depend on eixB (possible transitively)
-    -> EIx b
-    -- ^ eixB
-    -> [SomeDerivation]
-    -- ^ Known derivations (used to infer dependencies)
-    -> Bool
-  deadlockedVia t (EIx eixA) (EIx eixB) ders = go [eixB] S.empty
-    where
-    -- | DFS to see if eixA is reachable from the starting set
-    go [] _ = False
-    go (x:xs) visited
-      | x == eixA   = True
-      | x `S.member` visited
-              = go xs visited
-      | otherwise   = go (deps x ++ xs) (S.insert x visited)
-
-    deps x = concat -- We actually expect at most one element.
-      [ [dep | SomeEIx (EIx dep) <- prevDeps]
-      | SomeDerivation (EIx x') (Derivation _ (DS_SpanExc tspan) prevDeps _ _) <- ders
-      , x == x'
-      -- NOTE we're not looking for "tspan contains t+" as we can only
-      -- infer deadlock when tspan starts exactly on t (otherwise we dont
-      -- actually know when the derivation's jurisdiciton ends due to its
-      -- PrevE deps).
-      , spanExcJustBefore tspan == t
-      ]
 
   -- | Result of searching for the first event occurence of a specific event
   -- and time span.
