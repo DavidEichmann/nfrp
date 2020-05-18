@@ -21,6 +21,7 @@ module Theory where
 
   import qualified Control.Monad as M
   import Control.Applicative
+  import Data.Hashable
   import Data.Kind
   import Data.List (find, foldl')
   import Data.Maybe (fromMaybe, isNothing, listToMaybe, mapMaybe, maybeToList)
@@ -58,13 +59,16 @@ module Theory where
   type MaybeOcc a = Maybe a
 
   newtype EIx (a :: Type) = EIx Int     -- Index of an event
-    deriving newtype (Eq, Ord, Show)
+    deriving newtype (Eq, Ord, Show, Hashable)
 
   data SomeEIx = forall a . SomeEIx (EIx a)
 
   instance Eq SomeEIx where (SomeEIx (EIx a)) == (SomeEIx (EIx b)) = a == b
   instance Ord SomeEIx where compare (SomeEIx (EIx a)) (SomeEIx (EIx b)) = compare a b
   instance Show SomeEIx where show (SomeEIx eix) = show eix
+  instance Hashable SomeEIx where
+    hash (SomeEIx a) = hash a
+    hashWithSalt i (SomeEIx a) = hashWithSalt i a
 
 -- Derived events are expressed with the EventM monad:
 
