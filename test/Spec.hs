@@ -45,16 +45,16 @@ tests = testGroup "lcTransaction"
                 -- time: --0--------5-----7--------------
                 --------------------------9______________
                 [ InputEl eix1
-                    (Left [ Fact_SpanExc [] (spanExc Nothing (Just 7)) Nothing
-                          , Fact_Point   [] 7 (Just 9)
+                    (Left [ Fact_SpanExc [] (spanExc Nothing (Just 7)) NoOcc
+                          , Fact_Point   [] 7 (Occ 9)
                           ]
                     )
                 -- time: --0--------5-----7--------------
                 -------------------90____80______________
                 , InputEl eix2
-                    (Left [ Fact_SpanExc [] (spanExc Nothing (Just 5)) Nothing
-                          , Fact_Point   [] 5 (Just 90)
-                          , Fact_Point   [] 7 (Just 80)
+                    (Left [ Fact_SpanExc [] (spanExc Nothing (Just 5)) NoOcc
+                          , Fact_Point   [] 5 (Occ 90)
+                          , Fact_Point   [] 7 (Occ 80)
                           ]
                     )
                 -- time: --0--------5-----7--------------
@@ -64,18 +64,18 @@ tests = testGroup "lcTransaction"
                         e1 <- getV eix1
                         e2 <- getV eix2
                         return $ case (e1, e2) of
-                            (Nothing, Nothing) -> Nothing
-                            _ -> Just $ 100
-                                        + fromMaybe 0 e1
-                                        + fromMaybe 0 e2
+                            (NoOcc, NoOcc) -> NoOcc
+                            _ -> Occ $ 100
+                                        + fromMaybe 0 (maybeOccToMaybe e1)
+                                        + fromMaybe 0 (maybeOccToMaybe e2)
                     )
                 ]
 
         -- lookupVKB :: Time -> VIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
-        lookupVKB 0 eix3 kb @?= Known Nothing
-        lookupVKB 5 eix3 kb @?= Known (Just 190)
+        lookupVKB 0 eix3 kb @?= Known NoOcc
+        lookupVKB 5 eix3 kb @?= Known (Occ 190)
         lookupVKB 6 eix3 kb @?= Unknown
-        lookupVKB 7 eix3 kb @?= Known (Just 189)
+        lookupVKB 7 eix3 kb @?= Known (Occ 189)
         lookupVKB 8 eix3 kb @?= Unknown
 
       , testCase "PrevV Only" $ do
@@ -89,28 +89,28 @@ tests = testGroup "lcTransaction"
                 -- time: --0--------5-----7--------------
                 -----------7--------8_____9______________
                 [ InputEl eix1
-                    (Left [ Fact_SpanExc [] (spanExc Nothing (Just 0)) Nothing
-                          , Fact_Point   [] 0 (Just 7)
-                          , Fact_SpanExc [] (spanExc (Just 0) (Just 5)) Nothing
-                          , Fact_Point   [] 5 (Just 8)
-                          , Fact_Point   [] 7 (Just 9)
+                    (Left [ Fact_SpanExc [] (spanExc Nothing (Just 0)) NoOcc
+                          , Fact_Point   [] 0 (Occ 7)
+                          , Fact_SpanExc [] (spanExc (Just 0) (Just 5)) NoOcc
+                          , Fact_Point   [] 5 (Occ 8)
+                          , Fact_Point   [] 7 (Occ 9)
                           ]
                     )
                 -- time: --0--------5-----7--------------
                 ---------100------107____________________
                 , InputEl eix2
                     (Right $ do
-                        requireE eix1 $ \_ -> do
+                        onEvent eix1 $ \_ -> do
                             e1 <- prevE 0 eix1
                             return (e1+100)
                     )
                 ]
 
         -- lookupVKB :: Time -> VIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
-        lookupVKB (-1) eix2 kb @?= Known Nothing
-        lookupVKB 0 eix2 kb @?= Known (Just 100)
-        lookupVKB 2 eix2 kb @?= Known Nothing
-        lookupVKB 5 eix2 kb @?= Known (Just 107)
+        lookupVKB (-1) eix2 kb @?= Known NoOcc
+        lookupVKB 0 eix2 kb @?= Known (Occ 100)
+        lookupVKB 2 eix2 kb @?= Known NoOcc
+        lookupVKB 5 eix2 kb @?= Known (Occ 107)
         lookupVKB 6 eix2 kb @?= Unknown
         lookupVKB 7 eix2 kb @?= Unknown
         lookupVKB 8 eix2 kb @?= Unknown
@@ -128,20 +128,20 @@ tests = testGroup "lcTransaction"
                 -- time: --0--------5-----7-----9--------
                 --------------------3-----1----__________
                 [ InputEl eix1
-                    (Left [ Fact_SpanExc [] (spanExc Nothing (Just 5)) Nothing
-                          , Fact_Point   [] 5 (Just 3)
-                          , Fact_SpanExc [] (spanExc (Just 5) (Just 7)) Nothing
-                          , Fact_Point   [] 7 (Just 1)
-                          , Fact_SpanExc [] (spanExc (Just 7) (Just 9)) Nothing
+                    (Left [ Fact_SpanExc [] (spanExc Nothing (Just 5)) NoOcc
+                          , Fact_Point   [] 5 (Occ 3)
+                          , Fact_SpanExc [] (spanExc (Just 5) (Just 7)) NoOcc
+                          , Fact_Point   [] 7 (Occ 1)
+                          , Fact_SpanExc [] (spanExc (Just 7) (Just 9)) NoOcc
                           ]
                     )
                 -- time: --0--------5-----7-----9--------
                 -------------------90____80____70________
                 , InputEl eix2
-                    (Left [ Fact_SpanExc [] (spanExc Nothing (Just 5)) Nothing
-                          , Fact_Point   [] 5 (Just 90)
-                          , Fact_Point   [] 7 (Just 80)
-                          , Fact_Point   [] 9 (Just 70)
+                    (Left [ Fact_SpanExc [] (spanExc Nothing (Just 5)) NoOcc
+                          , Fact_Point   [] 5 (Occ 90)
+                          , Fact_Point   [] 7 (Occ 80)
+                          , Fact_Point   [] 9 (Occ 70)
                           ]
                     )
                 -- time: --0--------5-----7-----9--------
@@ -151,21 +151,21 @@ tests = testGroup "lcTransaction"
                         e1 <- prevE 0 eix1
                         e2May <- getV eix2
                         return $ case e2May of
-                            Nothing -> Nothing
-                            Just e2 -> Just (e1+e2+100)
+                            NoOcc -> NoOcc
+                            Occ e2 -> Occ (e1+e2+100)
                     )
                 ]
 
         -- lookupVKB :: Time -> VIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
-        lookupVKB 0 eix3 kb @?= Known Nothing
-        lookupVKB 5 eix3 kb @?= Known (Just 190)
+        lookupVKB 0 eix3 kb @?= Known NoOcc
+        lookupVKB 5 eix3 kb @?= Known (Occ 190)
         lookupVKB 6 eix3 kb @?= Unknown
-        lookupVKB 7 eix3 kb @?= Known (Just 183)
+        lookupVKB 7 eix3 kb @?= Known (Occ 183)
         lookupVKB 8 eix3 kb @?= Unknown
-        lookupVKB 9 eix3 kb @?= Known (Just 171)
+        lookupVKB 9 eix3 kb @?= Known (Occ 171)
 
 
-      , testCase "GetV and PrevV (with self reference after requireE)" $ do
+      , testCase "GetV and PrevV (with self reference after onEvent)" $ do
         let
           eix1, eix2 :: VIx (MaybeOcc Int)
           eix1 = VIx 1
@@ -176,28 +176,28 @@ tests = testGroup "lcTransaction"
                 -- time: --0--------5-----7-----9--------
                 --------------------3-----1_____5____
                 [ InputEl eix1
-                    (Left [ Fact_SpanExc [] (spanExc Nothing (Just 5)) Nothing
-                          , Fact_Point   [] 5 (Just 3)
-                          , Fact_SpanExc [] (spanExc (Just 5) (Just 7)) Nothing
-                          , Fact_Point   [] 7 (Just 1)
-                          , Fact_Point   [] 9 (Just 5)
+                    (Left [ Fact_SpanExc [] (spanExc Nothing (Just 5)) NoOcc
+                          , Fact_Point   [] 5 (Occ 3)
+                          , Fact_SpanExc [] (spanExc (Just 5) (Just 7)) NoOcc
+                          , Fact_Point   [] 7 (Occ 1)
+                          , Fact_Point   [] 9 (Occ 5)
                           ]
                     )
                 -- time: --0--------5-----7-----9--------
                 --------------------3-----4______________
                 , InputEl eix2
                     (Right $ do
-                        requireE eix1 $ \delta -> do
+                        onEvent eix1 $ \delta -> do
                             sumSoFar <- prevE 0 eix2 -- Self reference
                             return (sumSoFar + delta)
                     )
                 ]
 
         -- lookupVKB :: Time -> VIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
-        lookupVKB 0 eix2 kb @?= Known Nothing
-        lookupVKB 5 eix2 kb @?= Known (Just 3)
-        lookupVKB 6 eix2 kb @?= Known Nothing
-        lookupVKB 7 eix2 kb @?= Known (Just 4)
+        lookupVKB 0 eix2 kb @?= Known NoOcc
+        lookupVKB 5 eix2 kb @?= Known (Occ 3)
+        lookupVKB 6 eix2 kb @?= Known NoOcc
+        lookupVKB 7 eix2 kb @?= Known (Occ 4)
         lookupVKB 8 eix2 kb @?= Unknown
         lookupVKB 9 eix2 kb @?= Unknown
         lookupVKB 10 eix2 kb @?= Unknown
@@ -205,7 +205,7 @@ tests = testGroup "lcTransaction"
 
       -- | This is the same as the last test, but the order of the GetV and
       -- PrevV swapped. This is significantly harder for the solver.
-      , testCase "PrevV and GetV (with self reference before requireE)" $ do
+      , testCase "PrevV and GetV (with self reference before onEvent)" $ do
         let
           eix1, eix2 :: VIx (MaybeOcc Int)
           eix1 = VIx 1
@@ -216,11 +216,11 @@ tests = testGroup "lcTransaction"
                 -- time: -----------5-----7-----111--------
                 --------------------3-----1_____5____
                 [ InputEl eix1
-                    (Left [ Fact_SpanExc [] (spanExc Nothing (Just 5)) Nothing
-                          , Fact_Point   [] 5 (Just 3)
-                          , Fact_SpanExc [] (spanExc (Just 5) (Just 7)) Nothing
-                          , Fact_Point   [] 7 (Just 1)
-                          , Fact_Point   [] 111 (Just 5)
+                    (Left [ Fact_SpanExc [] (spanExc Nothing (Just 5)) NoOcc
+                          , Fact_Point   [] 5 (Occ 3)
+                          , Fact_SpanExc [] (spanExc (Just 5) (Just 7)) NoOcc
+                          , Fact_Point   [] 7 (Occ 1)
+                          , Fact_Point   [] 111 (Occ 5)
                           ]
                     )
                 -- time: -----------5-----7-----111--------
@@ -230,22 +230,22 @@ tests = testGroup "lcTransaction"
                         sumSoFar <- prevE 0 eix2 -- Self reference
                         -- Require happens after self reference which disallows
                         -- short circuiting when eix1 is not occurring.
-                        requireE eix1 $ \delta ->
+                        onEvent eix1 $ \delta ->
                             return (sumSoFar + delta)
                     )
                 ]
 
         -- lookupVKB :: Time -> VIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
-        lookupVKB 0 eix2 kb @?= Known Nothing
-        lookupVKB 5 eix2 kb @?= Known (Just 3)
-        lookupVKB 6 eix2 kb @?= Known Nothing
-        lookupVKB 7 eix2 kb @?= Known (Just 4)
+        lookupVKB 0 eix2 kb @?= Known NoOcc
+        lookupVKB 5 eix2 kb @?= Known (Occ 3)
+        lookupVKB 6 eix2 kb @?= Known NoOcc
+        lookupVKB 7 eix2 kb @?= Known (Occ 4)
         lookupVKB 8 eix2 kb @?= Unknown
         lookupVKB 111 eix2 kb @?= Unknown
         lookupVKB 112 eix2 kb @?= Unknown
 
 
-      , testCase "GetV and PrevV (with self reference after requireE and missing info)" $ do
+      , testCase "GetV and PrevV (with self reference after onEvent and missing info)" $ do
         let
           eix1, eix2 :: VIx (MaybeOcc Int)
           eix1 = VIx 1
@@ -256,33 +256,33 @@ tests = testGroup "lcTransaction"
                 -- time: --0--------5-----7-----9--------
                 -----------_--------3-----1_____5____
                 [ InputEl eix1
-                    (Left [ Fact_SpanExc [] (spanExc Nothing (Just 0)) Nothing
-                          , Fact_SpanExc [] (spanExc (Just 0) (Just 5)) Nothing
-                          , Fact_Point   [] 5 (Just 3)
-                          , Fact_SpanExc [] (spanExc (Just 5) (Just 7)) Nothing
-                          , Fact_Point   [] 7 (Just 1)
-                          , Fact_Point   [] 9 (Just 5)
+                    (Left [ Fact_SpanExc [] (spanExc Nothing (Just 0)) NoOcc
+                          , Fact_SpanExc [] (spanExc (Just 0) (Just 5)) NoOcc
+                          , Fact_Point   [] 5 (Occ 3)
+                          , Fact_SpanExc [] (spanExc (Just 5) (Just 7)) NoOcc
+                          , Fact_Point   [] 7 (Occ 1)
+                          , Fact_Point   [] 9 (Occ 5)
                           ]
                     )
                 -- time: --0--------5-----7-----9--------
                 -----------_--------_-----_______________
-                -- Note that because of the use of `requireE`, exi2 is not a
+                -- Note that because of the use of `onEvent`, exi2 is not a
                 -- dependency at e.g. t∈{2,6} so we know that the event isn't
                 -- occurring.
                 , InputEl eix2
                     (Right $ do
-                        requireE eix1 $ \delta -> do
+                        onEvent eix1 $ \delta -> do
                             sumSoFar <- prevE 0 eix2 -- Self reference
                             return (sumSoFar + delta)
                     )
                 ]
 
         -- lookupVKB :: Time -> VIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
-        lookupVKB (-1) eix2 kb @?= Known Nothing
+        lookupVKB (-1) eix2 kb @?= Known NoOcc
         lookupVKB 0 eix2 kb @?= Unknown
-        lookupVKB 1 eix2 kb @?= Known Nothing
+        lookupVKB 1 eix2 kb @?= Known NoOcc
         lookupVKB 5 eix2 kb @?= Unknown
-        lookupVKB 6 eix2 kb @?= Known Nothing
+        lookupVKB 6 eix2 kb @?= Known NoOcc
         lookupVKB 7 eix2 kb @?= Unknown
         lookupVKB 8 eix2 kb @?= Unknown
         lookupVKB 9 eix2 kb @?= Unknown
@@ -302,18 +302,18 @@ tests = testGroup "lcTransaction"
                 -- time: --0--------5-----7-----9--------
                 --------------------()----()____()_______
                 [ InputEl swapE
-                    (Left [ Fact_SpanExc [] (spanExc Nothing (Just 5)) Nothing
-                          , Fact_Point   [] 5 (Just ())
-                          , Fact_SpanExc [] (spanExc (Just 5) (Just 7)) Nothing
-                          , Fact_Point   [] 7 (Just ())
-                          , Fact_Point   [] 9 (Just ())
+                    (Left [ Fact_SpanExc [] (spanExc Nothing (Just 5)) NoOcc
+                          , Fact_Point   [] 5 (Occ ())
+                          , Fact_SpanExc [] (spanExc (Just 5) (Just 7)) NoOcc
+                          , Fact_Point   [] 7 (Occ ())
+                          , Fact_Point   [] 9 (Occ ())
                           ]
                     )
                 -- time: --0--------5-----7-----9--------
                 --------------------y-----x_______________
                 , InputEl a
                     (Right $ do
-                        requireE swapE $ \() -> do
+                        onEvent swapE $ \() -> do
                             bVal <- prevE "y" b
                             return bVal
                     )
@@ -321,22 +321,22 @@ tests = testGroup "lcTransaction"
                 --------------------x-----y_______________
                 , InputEl b
                     (Right $ do
-                        requireE swapE $ \() -> do
+                        onEvent swapE $ \() -> do
                             aVal <- prevE "x" a
                             return aVal
                     )
                 ]
 
-        lookupVKB 0  a kb @?= Known Nothing
-        lookupVKB 0  b kb @?= Known Nothing
-        lookupVKB 1  a kb @?= Known Nothing
-        lookupVKB 1  b kb @?= Known Nothing
-        lookupVKB 5  a kb @?= Known (Just "y")
-        lookupVKB 5  b kb @?= Known (Just "x")
-        lookupVKB 6  a kb @?= Known Nothing
-        lookupVKB 6  b kb @?= Known Nothing
-        lookupVKB 7  a kb @?= Known (Just "x")
-        lookupVKB 7  b kb @?= Known (Just "y")
+        lookupVKB 0  a kb @?= Known NoOcc
+        lookupVKB 0  b kb @?= Known NoOcc
+        lookupVKB 1  a kb @?= Known NoOcc
+        lookupVKB 1  b kb @?= Known NoOcc
+        lookupVKB 5  a kb @?= Known (Occ "y")
+        lookupVKB 5  b kb @?= Known (Occ "x")
+        lookupVKB 6  a kb @?= Known NoOcc
+        lookupVKB 6  b kb @?= Known NoOcc
+        lookupVKB 7  a kb @?= Known (Occ "x")
+        lookupVKB 7  b kb @?= Known (Occ "y")
         lookupVKB 8  a kb @?= Unknown
         lookupVKB 8  b kb @?= Unknown
         lookupVKB 9  a kb @?= Unknown
@@ -363,91 +363,91 @@ tests = testGroup "lcTransaction"
                 -- time: --0--2--4--6--8--10-12-14-16---
                 -----------11-12-13-14-15-16-17-18-19---
                 [ InputEl a
-                    (Left [ Fact_SpanExc [] (spanExc Nothing (Just 0)) Nothing
-                          , Fact_Point [] 0 (Just 11)
-                          , Fact_SpanExc [] (spanExc (Just 0) (Just 2)) Nothing
-                          , Fact_Point [] 2 (Just 12)
-                          , Fact_SpanExc [] (spanExc (Just 0) (Just 4)) Nothing
-                          , Fact_Point [] 4 (Just 13)
-                          , Fact_SpanExc [] (spanExc (Just 4) (Just 6)) Nothing
-                          , Fact_Point [] 6 (Just 14)
-                          , Fact_SpanExc [] (spanExc (Just 6) (Just 8)) Nothing
-                          , Fact_Point [] 8 (Just 15)
-                          , Fact_SpanExc [] (spanExc (Just 8) (Just 10)) Nothing
-                          , Fact_Point [] 10 (Just 16)
-                          , Fact_SpanExc [] (spanExc (Just 10) (Just 12)) Nothing
-                          , Fact_Point [] 12 (Just 17)
-                          , Fact_SpanExc [] (spanExc (Just 12) (Just 14)) Nothing
-                          , Fact_Point [] 14 (Just 18)
-                          , Fact_SpanExc [] (spanExc (Just 14) (Just 16)) Nothing
-                          , Fact_Point [] 16 (Just 19)
-                          , Fact_SpanExc [] (spanExc (Just 16) Nothing) Nothing
+                    (Left [ Fact_SpanExc [] (spanExc Nothing (Just 0)) NoOcc
+                          , Fact_Point [] 0 (Occ 11)
+                          , Fact_SpanExc [] (spanExc (Just 0) (Just 2)) NoOcc
+                          , Fact_Point [] 2 (Occ 12)
+                          , Fact_SpanExc [] (spanExc (Just 0) (Just 4)) NoOcc
+                          , Fact_Point [] 4 (Occ 13)
+                          , Fact_SpanExc [] (spanExc (Just 4) (Just 6)) NoOcc
+                          , Fact_Point [] 6 (Occ 14)
+                          , Fact_SpanExc [] (spanExc (Just 6) (Just 8)) NoOcc
+                          , Fact_Point [] 8 (Occ 15)
+                          , Fact_SpanExc [] (spanExc (Just 8) (Just 10)) NoOcc
+                          , Fact_Point [] 10 (Occ 16)
+                          , Fact_SpanExc [] (spanExc (Just 10) (Just 12)) NoOcc
+                          , Fact_Point [] 12 (Occ 17)
+                          , Fact_SpanExc [] (spanExc (Just 12) (Just 14)) NoOcc
+                          , Fact_Point [] 14 (Occ 18)
+                          , Fact_SpanExc [] (spanExc (Just 14) (Just 16)) NoOcc
+                          , Fact_Point [] 16 (Occ 19)
+                          , Fact_SpanExc [] (spanExc (Just 16) Nothing) NoOcc
                           ]
                     )
                 -- time: --0--2--4--6--8--10-12-14-16---
                 -----------21-22-23-24-25-26-27-28-29---
                 ,  InputEl b
-                    (Left [ Fact_SpanExc [] (spanExc Nothing (Just 0)) Nothing
-                          , Fact_Point [] 0 (Just 21)
-                          , Fact_SpanExc [] (spanExc (Just 0) (Just 2)) Nothing
-                          , Fact_Point [] 2 (Just 22)
-                          , Fact_SpanExc [] (spanExc (Just 0) (Just 4)) Nothing
-                          , Fact_Point [] 4 (Just 23)
-                          , Fact_SpanExc [] (spanExc (Just 4) (Just 6)) Nothing
-                          , Fact_Point [] 6 (Just 24)
-                          , Fact_SpanExc [] (spanExc (Just 6) (Just 8)) Nothing
-                          , Fact_Point [] 8 (Just 25)
-                          , Fact_SpanExc [] (spanExc (Just 8) (Just 10)) Nothing
-                          , Fact_Point [] 10 (Just 26)
-                          , Fact_SpanExc [] (spanExc (Just 10) (Just 12)) Nothing
-                          , Fact_Point [] 12 (Just 27)
-                          , Fact_SpanExc [] (spanExc (Just 12) (Just 14)) Nothing
-                          , Fact_Point [] 14 (Just 28)
-                          , Fact_SpanExc [] (spanExc (Just 14) (Just 16)) Nothing
-                          , Fact_Point [] 16 (Just 29)
-                          , Fact_SpanExc [] (spanExc (Just 16) Nothing) Nothing
+                    (Left [ Fact_SpanExc [] (spanExc Nothing (Just 0)) NoOcc
+                          , Fact_Point [] 0 (Occ 21)
+                          , Fact_SpanExc [] (spanExc (Just 0) (Just 2)) NoOcc
+                          , Fact_Point [] 2 (Occ 22)
+                          , Fact_SpanExc [] (spanExc (Just 0) (Just 4)) NoOcc
+                          , Fact_Point [] 4 (Occ 23)
+                          , Fact_SpanExc [] (spanExc (Just 4) (Just 6)) NoOcc
+                          , Fact_Point [] 6 (Occ 24)
+                          , Fact_SpanExc [] (spanExc (Just 6) (Just 8)) NoOcc
+                          , Fact_Point [] 8 (Occ 25)
+                          , Fact_SpanExc [] (spanExc (Just 8) (Just 10)) NoOcc
+                          , Fact_Point [] 10 (Occ 26)
+                          , Fact_SpanExc [] (spanExc (Just 10) (Just 12)) NoOcc
+                          , Fact_Point [] 12 (Occ 27)
+                          , Fact_SpanExc [] (spanExc (Just 12) (Just 14)) NoOcc
+                          , Fact_Point [] 14 (Occ 28)
+                          , Fact_SpanExc [] (spanExc (Just 14) (Just 16)) NoOcc
+                          , Fact_Point [] 16 (Occ 29)
+                          , Fact_SpanExc [] (spanExc (Just 16) Nothing) NoOcc
                           ]
                     )
                 -- time: --0--2--4--6--8--10-12-14-16---
                 -----------31-32-33-34-35-36-37-38-39---
                 ,  InputEl c
-                    (Left [ Fact_SpanExc [] (spanExc Nothing (Just 0)) Nothing
-                          , Fact_Point [] 0 (Just 31)
-                          , Fact_SpanExc [] (spanExc (Just 0) (Just 2)) Nothing
-                          , Fact_Point [] 2 (Just 32)
-                          , Fact_SpanExc [] (spanExc (Just 0) (Just 4)) Nothing
-                          , Fact_Point [] 4 (Just 33)
-                          , Fact_SpanExc [] (spanExc (Just 4) (Just 6)) Nothing
-                          , Fact_Point [] 6 (Just 34)
-                          , Fact_SpanExc [] (spanExc (Just 6) (Just 8)) Nothing
-                          , Fact_Point [] 8 (Just 35)
-                          , Fact_SpanExc [] (spanExc (Just 8) (Just 10)) Nothing
-                          , Fact_Point [] 10 (Just 36)
-                          , Fact_SpanExc [] (spanExc (Just 10) (Just 12)) Nothing
-                          , Fact_Point [] 12 (Just 37)
-                          , Fact_SpanExc [] (spanExc (Just 12) (Just 14)) Nothing
-                          , Fact_Point [] 14 (Just 38)
-                          , Fact_SpanExc [] (spanExc (Just 14) (Just 16)) Nothing
-                          , Fact_Point [] 16 (Just 39)
-                          , Fact_SpanExc [] (spanExc (Just 16) Nothing) Nothing
+                    (Left [ Fact_SpanExc [] (spanExc Nothing (Just 0)) NoOcc
+                          , Fact_Point [] 0 (Occ 31)
+                          , Fact_SpanExc [] (spanExc (Just 0) (Just 2)) NoOcc
+                          , Fact_Point [] 2 (Occ 32)
+                          , Fact_SpanExc [] (spanExc (Just 0) (Just 4)) NoOcc
+                          , Fact_Point [] 4 (Occ 33)
+                          , Fact_SpanExc [] (spanExc (Just 4) (Just 6)) NoOcc
+                          , Fact_Point [] 6 (Occ 34)
+                          , Fact_SpanExc [] (spanExc (Just 6) (Just 8)) NoOcc
+                          , Fact_Point [] 8 (Occ 35)
+                          , Fact_SpanExc [] (spanExc (Just 8) (Just 10)) NoOcc
+                          , Fact_Point [] 10 (Occ 36)
+                          , Fact_SpanExc [] (spanExc (Just 10) (Just 12)) NoOcc
+                          , Fact_Point [] 12 (Occ 37)
+                          , Fact_SpanExc [] (spanExc (Just 12) (Just 14)) NoOcc
+                          , Fact_Point [] 14 (Occ 38)
+                          , Fact_SpanExc [] (spanExc (Just 14) (Just 16)) NoOcc
+                          , Fact_Point [] 16 (Occ 39)
+                          , Fact_SpanExc [] (spanExc (Just 16) Nothing) NoOcc
                           ]
                     )
                 -- time: --0--2--4--6--8--10-12-14-16---
                 -- (1) -------2-----3------1--_--2------
                 ,  InputEl switch
-                    (Left [ Fact_SpanExc [] (spanExc Nothing (Just 0)) Nothing
-                          , Fact_Point [] 0 Nothing
-                          , Fact_SpanExc [] (spanExc (Just 0) (Just 2)) Nothing
-                          , Fact_Point [] 2 (Just 2)
-                          , Fact_SpanExc [] (spanExc (Just 2) (Just 6)) Nothing
-                          , Fact_Point [] 6 (Just 3)
-                          , Fact_SpanExc [] (spanExc (Just 6) (Just 10)) Nothing
-                          , Fact_Point [] 10 (Just 1)
-                          , Fact_SpanExc [] (spanExc (Just 10) (Just 12)) Nothing
+                    (Left [ Fact_SpanExc [] (spanExc Nothing (Just 0)) NoOcc
+                          , Fact_Point [] 0 NoOcc
+                          , Fact_SpanExc [] (spanExc (Just 0) (Just 2)) NoOcc
+                          , Fact_Point [] 2 (Occ 2)
+                          , Fact_SpanExc [] (spanExc (Just 2) (Just 6)) NoOcc
+                          , Fact_Point [] 6 (Occ 3)
+                          , Fact_SpanExc [] (spanExc (Just 6) (Just 10)) NoOcc
+                          , Fact_Point [] 10 (Occ 1)
+                          , Fact_SpanExc [] (spanExc (Just 10) (Just 12)) NoOcc
                           -- Unknown at t=12
-                          , Fact_SpanExc [] (spanExc (Just 12) (Just 14)) Nothing
-                          , Fact_Point [] 14 (Just 2)
-                          , Fact_SpanExc [] (spanExc (Just 14) Nothing) Nothing
+                          , Fact_SpanExc [] (spanExc (Just 12) (Just 14)) NoOcc
+                          , Fact_Point [] 14 (Occ 2)
+                          , Fact_SpanExc [] (spanExc (Just 14) Nothing) NoOcc
                           ]
                     )
                 -- time: --0--2--4--6--8--10-12---14-16---
@@ -463,25 +463,25 @@ tests = testGroup "lcTransaction"
                     )
                 ]
 
-        lookupVKB (-1) out kb @?= Known Nothing
-        lookupVKB 0  out kb @?= Known (Just 11)
-        lookupVKB 1  out kb @?= Known Nothing
-        lookupVKB 2  out kb @?= Known (Just 12)
-        lookupVKB 3  out kb @?= Known Nothing
-        lookupVKB 4  out kb @?= Known (Just 23)
-        lookupVKB 5  out kb @?= Known Nothing
-        lookupVKB 6  out kb @?= Known (Just 24)
-        lookupVKB 7  out kb @?= Known Nothing
-        lookupVKB 8  out kb @?= Known (Just 35)
-        lookupVKB 9  out kb @?= Known Nothing
-        lookupVKB 10 out kb @?= Known (Just 36)
-        lookupVKB 11 out kb @?= Known Nothing
-        lookupVKB 12 out kb @?= Known (Just 17)
+        lookupVKB (-1) out kb @?= Known NoOcc
+        lookupVKB 0  out kb @?= Known (Occ 11)
+        lookupVKB 1  out kb @?= Known NoOcc
+        lookupVKB 2  out kb @?= Known (Occ 12)
+        lookupVKB 3  out kb @?= Known NoOcc
+        lookupVKB 4  out kb @?= Known (Occ 23)
+        lookupVKB 5  out kb @?= Known NoOcc
+        lookupVKB 6  out kb @?= Known (Occ 24)
+        lookupVKB 7  out kb @?= Known NoOcc
+        lookupVKB 8  out kb @?= Known (Occ 35)
+        lookupVKB 9  out kb @?= Known NoOcc
+        lookupVKB 10 out kb @?= Known (Occ 36)
+        lookupVKB 11 out kb @?= Known NoOcc
+        lookupVKB 12 out kb @?= Known (Occ 17)
         lookupVKB 13 out kb @?= Unknown
         lookupVKB 14 out kb @?= Unknown
-        lookupVKB 15 out kb @?= Known Nothing
-        lookupVKB 16 out kb @?= Known (Just 29)
-        lookupVKB 17 out kb @?= Known Nothing
+        lookupVKB 15 out kb @?= Known NoOcc
+        lookupVKB 16 out kb @?= Known (Occ 29)
+        lookupVKB 17 out kb @?= Known NoOcc
     ]
 
   , testGroup "Model - Behavior"
@@ -539,21 +539,21 @@ tests = testGroup "lcTransaction"
                 -- time: --0--2-----6-----10-20-25---30--
                 -- (1) -------2-----3------1--_--2----1--
                 ,  InputEl switch
-                    (Left [ Fact_SpanExc [] (spanExc Nothing (Just 0))    Nothing
-                          , Fact_Point   [] 0                             Nothing
-                          , Fact_SpanExc [] (spanExc (Just 0) (Just 2))   Nothing
-                          , Fact_Point   [] 2                             (Just 2)
-                          , Fact_SpanExc [] (spanExc (Just 2) (Just 6))   Nothing
-                          , Fact_Point   [] 6                             (Just 3)
-                          , Fact_SpanExc [] (spanExc (Just 6) (Just 10))  Nothing
-                          , Fact_Point   [] 10                            (Just 1)
-                          , Fact_SpanExc [] (spanExc (Just 10) (Just 20)) Nothing
+                    (Left [ Fact_SpanExc [] (spanExc Nothing (Just 0))    NoOcc
+                          , Fact_Point   [] 0                             NoOcc
+                          , Fact_SpanExc [] (spanExc (Just 0) (Just 2))   NoOcc
+                          , Fact_Point   [] 2                             (Occ 2)
+                          , Fact_SpanExc [] (spanExc (Just 2) (Just 6))   NoOcc
+                          , Fact_Point   [] 6                             (Occ 3)
+                          , Fact_SpanExc [] (spanExc (Just 6) (Just 10))  NoOcc
+                          , Fact_Point   [] 10                            (Occ 1)
+                          , Fact_SpanExc [] (spanExc (Just 10) (Just 20)) NoOcc
                           -- Unknown at t=20
-                          , Fact_SpanExc [] (spanExc (Just 20) (Just 25)) Nothing
-                          , Fact_Point   [] 25                            (Just 2)
-                          , Fact_SpanExc [] (spanExc (Just 25) (Just 30)) Nothing
-                          , Fact_Point   [] 30                            (Just 1)
-                          , Fact_SpanExc [] (spanExc (Just 30) Nothing)   Nothing
+                          , Fact_SpanExc [] (spanExc (Just 20) (Just 25)) NoOcc
+                          , Fact_Point   [] 25                            (Occ 2)
+                          , Fact_SpanExc [] (spanExc (Just 25) (Just 30)) NoOcc
+                          , Fact_Point   [] 30                            (Occ 1)
+                          , Fact_SpanExc [] (spanExc (Just 30) Nothing)   NoOcc
                           ]
                     )
                 -- time:   0       2         5         6         7        10       20      25        30

@@ -59,7 +59,13 @@ module Theory where
   data InputEl = forall a . InputEl (VIx a) (Either [ValueFact a] (ValueM a))
   type Inputs = [InputEl]
 
-  type MaybeOcc a = Maybe a
+  newtype MaybeOcc a = MaybeOcc { maybeOccToMaybe :: Maybe a }
+    deriving newtype (Eq, Ord, Show, Read, Functor, Applicative, Monad)
+  pattern Occ :: a -> MaybeOcc a
+  pattern Occ a = MaybeOcc (Just a)
+  pattern NoOcc :: MaybeOcc a
+  pattern NoOcc = MaybeOcc Nothing
+  {-# COMPLETE Occ, NoOcc #-}
 
   newtype VIx (a :: Type) = VIx Int     -- Index of an event
     deriving newtype (Eq, Ord, Show, Hashable)
@@ -109,18 +115,18 @@ module Theory where
   -- | Previous event occurrence (with initial value).
   prevE :: a -> VIx (MaybeOcc a) -> ValueM a
   prevE val0 eix = do
-    prevValMay <- prevVWhere eix id
+    prevValMay <- prevVWhere eix maybeOccToMaybe
     return (fromMaybe val0 prevValMay)
 
 
 -- and a useful helper: TODO or we can just use MonadFail and a mono local bind
 
-  requireE :: VIx (MaybeOcc a) -> (a -> ValueM b) -> ValueM (MaybeOcc b)
-  requireE eix withA = do
+  onEvent :: VIx (MaybeOcc a) -> (a -> ValueM b) -> ValueM (MaybeOcc b)
+  onEvent eix withA = do
     mayE <- getV eix
     case mayE of
-      Nothing -> return Nothing
-      Just a -> Just <$> withA a
+      NoOcc -> return NoOcc
+      Occ a -> Occ <$> withA a
 
 -- Give some `inputs :: Inputs`, we have this denotation for an event/ValueM:
 
