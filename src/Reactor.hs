@@ -18,6 +18,10 @@
 {-# LANGUAGE TypeInType #-}
 
 module Reactor where
+{-
+
+I started an STM implementation, but
+
 
 import Control.Concurrent.STM
 import Control.Monad (ap, liftM)
@@ -27,7 +31,6 @@ import Data.Void (Void)
 import Data.Coerce
 import qualified StmContainers.Map as SM
 import Unsafe.Coerce
-{-
 import Theory
   ( DerivationSpan(..)
   , EIx(..)
