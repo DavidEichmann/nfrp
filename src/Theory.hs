@@ -50,7 +50,7 @@ module Theory where
   factTrace (FactMayOcc tr _ _) = tr
 
 -- We have some set of `EIx`s, 𝔼, and a definition for each: either a source
--- event or derived event and we want to calculate all facts about the derived
+-- event or derived event. We want to calculate all facts about the derived
 -- events from the source events.
 
   data InputEl = forall a . InputEl (EIx a) (Either [EventFact a] (EventM a))
@@ -120,7 +120,7 @@ module Theory where
   -- deriveEgo :: Time -> Bool -> EventM a -> MaybeOcc a
   -- deriveEgo t False (Pure _) = Nothing
   -- deriveEgo t True  (Pure a) = Just a
-  -- deriveEgo t _   NoOcc  = Nothing
+  -- deriveEgo t _   NoOcc      = Nothing
   -- deriveEgo t seenOcc (GetE eixB cont) = case lookupE inputs t eixB of
   --   Nothing -> deriveEgo t seenOcc (cont Nothing)
   --   Just b  -> deriveEgo t True  (cont (Just b))
