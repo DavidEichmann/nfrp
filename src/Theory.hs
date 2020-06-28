@@ -23,8 +23,9 @@ module Theory where
   import Control.Applicative
   import Data.Hashable
   import Data.Kind
-  import Data.List (find, foldl')
-  import Data.Maybe (fromMaybe, isNothing, listToMaybe, mapMaybe, maybeToList)
+  import Data.List (find, foldl', sortBy)
+  import Data.Function (on)
+  import Data.Maybe (fromMaybe, listToMaybe, mapMaybe, maybeToList, fromJust)
   import qualified Data.Set as S
   import Safe
   import Unsafe.Coerce
@@ -37,98 +38,108 @@ module Theory where
   appendDerTrace :: DerivationTrace a -> DerivationTraceEl a -> DerivationTrace a
   appendDerTrace = flip (:)
 
-  data EventFact a
-    = FactNoOcc (DerivationTrace a) SpanExc
-    | FactMayOcc (DerivationTrace a) Time (MaybeOcc a)
+  data ValueFact a
+    = Fact_SpanExc (DerivationTrace a) SpanExc a
+    | Fact_Point   (DerivationTrace a) Time    a
 
-  factTSpan :: EventFact a -> DerivationSpan
-  factTSpan (FactNoOcc _ tspan) = DS_SpanExc tspan
-  factTSpan (FactMayOcc _ t _) = DS_Point t
+  -- type EventFact a = ValueFact (MaybeOcc a)  -- ^ Invariant: all Fact_SpanExc have `Nothing` values.
 
-  factTrace :: EventFact a -> DerivationTrace a
-  factTrace (FactNoOcc tr _) = tr
-  factTrace (FactMayOcc tr _ _) = tr
+  factTSpan :: ValueFact a -> DerivationSpan
+  factTSpan (Fact_SpanExc _ tspan _) = DS_SpanExc tspan
+  factTSpan (Fact_Point _ t _) = DS_Point t
 
--- We have some set of `EIx`s, 𝔼, and a definition for each: either a source
+  factTrace :: ValueFact a -> DerivationTrace a
+  factTrace (Fact_SpanExc tr _ _) = tr
+  factTrace (Fact_Point tr _ _) = tr
+
+-- We have some set of `VIx`s, 𝔼, and a definition for each: either a source
 -- event or derived event. We want to calculate all facts about the derived
 -- events from the source events.
 
-  data InputEl = forall a . InputEl (EIx a) (Either [EventFact a] (EventM a))
+  data InputEl = forall a . InputEl (VIx a) (Either [ValueFact a] (ValueM a))
   type Inputs = [InputEl]
 
   type MaybeOcc a = Maybe a
 
-  newtype EIx (a :: Type) = EIx Int     -- Index of an event
+  newtype VIx (a :: Type) = VIx Int     -- Index of an event
     deriving newtype (Eq, Ord, Show, Hashable)
 
-  data SomeEIx = forall a . SomeEIx (EIx a)
+  data SomeVIx = forall a . SomeVIx (VIx a)
 
-  instance Eq SomeEIx where (SomeEIx (EIx a)) == (SomeEIx (EIx b)) = a == b
-  instance Ord SomeEIx where compare (SomeEIx (EIx a)) (SomeEIx (EIx b)) = compare a b
-  instance Show SomeEIx where show (SomeEIx eix) = show eix
-  instance Hashable SomeEIx where
-    hash (SomeEIx a) = hash a
-    hashWithSalt i (SomeEIx a) = hashWithSalt i a
+  instance Eq SomeVIx where (SomeVIx (VIx a)) == (SomeVIx (VIx b)) = a == b
+  instance Ord SomeVIx where compare (SomeVIx (VIx a)) (SomeVIx (VIx b)) = compare a b
+  instance Show SomeVIx where show (SomeVIx eix) = show eix
+  instance Hashable SomeVIx where
+    hash (SomeVIx a) = hash a
+    hashWithSalt i (SomeVIx a) = hashWithSalt i a
 
--- Derived events are expressed with the EventM monad:
+-- Derived events are expressed with the ValueM monad:
 
-  data EventM a
+  data ValueM a
     = Pure a
-    | NoOcc
-    | forall b . GetE  (EIx b) (MaybeOcc b -> EventM a)
-    | forall b . PrevE (EIx b) (Maybe  b -> EventM a)
+    | forall b   . GetV  (VIx b)
+                         (b -> ValueM a)
+    | forall b c . PrevV (VIx b)
+                         (b -> Maybe c)  -- ^ Predicate / projection.
+                         (Maybe c -> ValueM a)
 
-  deriving instance Functor EventM
+  deriving instance Functor ValueM
 
-  instance Applicative EventM where
+  instance Applicative ValueM where
     (<*>) = M.ap
     pure = return
 
-  instance Monad EventM where
+  instance Monad ValueM where
     return = Pure
     fa >>= fmb = case fa of
       Pure a -> fmb a
-      NoOcc -> NoOcc
-      GetE  eixb mayOccToCont  -> GetE  eixb ((>>= fmb) . mayOccToCont)
-      PrevE eixb mayPrevToCont -> PrevE eixb ((>>= fmb) . mayPrevToCont)
+      GetV  eixb cont -> GetV  eixb ((>>= fmb) . cont)
+      PrevV eixb predicate mayPrevToCont -> PrevV eixb predicate ((>>= fmb) . mayPrevToCont)
 
-  getE :: EIx a -> EventM (MaybeOcc a)
-  getE eix = GetE eix Pure
+  getV :: VIx a -> ValueM a
+  getV eix = GetV eix Pure
 
-  prevE :: EIx a -> EventM (Maybe a)
-  prevE eix = PrevE eix Pure
+  -- | Note that this returns Nothing at time -Inf
+  prevV :: VIx a -> ValueM (Maybe a)
+  prevV eix = prevVWhere eix Just
+
+  prevVWhere :: VIx a -> (a -> Maybe b) -> ValueM (Maybe b)
+  prevVWhere eix predicate = PrevV eix predicate Pure
+
+  -- | Previous event occurrence (with initial value).
+  prevE :: a -> VIx (MaybeOcc a) -> ValueM a
+  prevE val0 eix = do
+    prevValMay <- prevVWhere eix id
+    return (fromMaybe val0 prevValMay)
+
 
 -- and a useful helper: TODO or we can just use MonadFail and a mono local bind
 
-  requireE :: EIx a -> EventM a
-  requireE eix = do
-    mayE <- getE eix
+  requireE :: VIx (MaybeOcc a) -> (a -> ValueM b) -> ValueM (MaybeOcc b)
+  requireE eix withA = do
+    mayE <- getV eix
     case mayE of
-      Nothing -> NoOcc
-      Just e -> return e
+      Nothing -> return Nothing
+      Just a -> Just <$> withA a
 
--- Give some `inputs :: Inputs`, we have this denotation for an event/EventM:
+-- Give some `inputs :: Inputs`, we have this denotation for an event/ValueM:
 
-  -- lookupE :: Time -> EIx a -> MaybeOcc a
-  -- lookupE t eix = case inputs eix of
+  -- lookupV :: Time -> VIx a -> MaybeOcc a
+  -- lookupV t eix = case inputs eix of
   --   Left lookupSourceE -> lookupSourceE t
   --   Right eventM -> deriveE t eventM
 
-  -- deriveE :: forall a . Inputs -> Time -> EventM a -> MaybeOcc a
-  -- deriveE t eventM = deriveEgo False eventM
+  -- deriveE :: forall a . Time -> ValueM a -> MaybeOcc a
+  -- deriveE t eventM = deriveEgo t eventM
   --
-  -- deriveEgo :: Time -> Bool -> EventM a -> MaybeOcc a
-  -- deriveEgo t False (Pure _) = Nothing
-  -- deriveEgo t True  (Pure a) = Just a
-  -- deriveEgo t _   NoOcc      = Nothing
-  -- deriveEgo t seenOcc (GetE eixB cont) = case lookupE inputs t eixB of
-  --   Nothing -> deriveEgo t seenOcc (cont Nothing)
-  --   Just b  -> deriveEgo t True  (cont (Just b))
-  -- deriveEgo t seenOcc (PrevE eixB cont)
+  -- deriveEgo :: Time -> ValueM a -> a
+  -- deriveEgo t (Pure a) = a
+  -- deriveEgo t (GetV eixB cont) = deriveEgo t (cont (lookupV t eixB))
+  -- deriveEgo t (PrevV eixB predicate cont) =
   --   = if ∃ t'  .  t' < t
-  --        ∧  isJust (lookupE t' exiB)
-  --        ∧  (∀ t' < t'' < t  .  lookupE t'' exiB == Nothing)
-  --     then deriveEgo t (cont (lookupE t' exiB))
+  --        ∧  isJust (predicate (lookupV t' exiB))
+  --        ∧  (∀ t' < t'' < t  .  predicate (lookupV t'' exiB) == Nothing)
+  --     then deriveEgo t (cont (lookupV t' exiB))
   --     else Nothing
 
   newtype MaybeKnown a = MaybeKnown { maybeKnownToMaybe :: Maybe a }
@@ -139,93 +150,73 @@ module Theory where
   pattern Unknown = MaybeKnown Nothing
   {-# COMPLETE Known, Unknown #-}
 
-  lookupEKB :: Time -> EIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
-  lookupEKB t eix (KnowledgeBase facts _) = lookupE t eix facts
+  lookupVKB :: Time -> VIx a -> KnowledgeBase -> MaybeKnown a
+  lookupVKB t eix (KnowledgeBase facts _) = lookupV t eix facts
 
-  lookupEKBTrace :: Time -> EIx a -> KnowledgeBase -> MaybeKnown (DerivationTrace a)
-  lookupEKBTrace t eix (KnowledgeBase facts _) = lookupETrace t eix facts
+  lookupVKBTrace :: Time -> VIx a -> KnowledgeBase -> MaybeKnown (DerivationTrace a)
+  lookupVKBTrace t eix (KnowledgeBase facts _) = lookupVTrace t eix facts
 
-  lookupE :: Time -> EIx a -> [SomeEventFact] -> MaybeKnown (MaybeOcc a)
-  lookupE t eix facts = fmap
+  lookupV :: Time -> VIx a -> [SomeValueFact] -> MaybeKnown a
+  lookupV t eix facts = fmap
     (\case
-      FactNoOcc _ _ -> Nothing
-      FactMayOcc _ _ occMay -> occMay
+      Fact_SpanExc _ _ v -> v
+      Fact_Point   _ _ v -> v
     )
-    (lookupEFact t eix facts)
+    (lookupVFact t eix facts)
 
-  lookupETrace :: Time -> EIx a -> [SomeEventFact] -> MaybeKnown (DerivationTrace a)
-  lookupETrace t eix facts = factTrace <$> lookupEFact t eix facts
+  lookupVTrace :: Time -> VIx a -> [SomeValueFact] -> MaybeKnown (DerivationTrace a)
+  lookupVTrace t eix facts = factTrace <$> lookupVFact t eix facts
 
-  lookupEFact :: Time -> EIx a -> [SomeEventFact] -> MaybeKnown (EventFact a)
-  lookupEFact t eix facts = MaybeKnown $ listToMaybe $
-    filter ((`intersects` t) . factTSpan) (factsE' eix facts)
+  lookupVFact :: Time -> VIx a -> [SomeValueFact] -> MaybeKnown (ValueFact a)
+  lookupVFact t eix facts = MaybeKnown $ listToMaybe $
+    filter ((`intersects` t) . factTSpan) (factsV' eix facts)
 
 -- We store a knowledge base:
 
-  data SomeEventFact = forall a . SomeEventFact (EIx a) (EventFact a)
-  data SomeDerivation = forall a . SomeDerivation (EIx a) (Derivation a)
+  data SomeValueFact = forall a . SomeValueFact (VIx a) (ValueFact a)
+  data SomeDerivation = forall a . SomeDerivation (VIx a) (Derivation a)
 
-  data KnowledgeBase = KnowledgeBase [SomeEventFact] [SomeDerivation]
+  data KnowledgeBase = KnowledgeBase [SomeValueFact] [SomeDerivation]
 
-  factsE :: EIx a -> KnowledgeBase -> [EventFact a]
-  factsE eix (KnowledgeBase es _)
-    = factsE' eix es
+  factsV :: VIx a -> KnowledgeBase -> [ValueFact a]
+  factsV eix (KnowledgeBase es _)
+    = factsV' eix es
 
-  factsE' :: EIx a -> [SomeEventFact] -> [EventFact a]
-  factsE' (EIx eix) es
+  factsV' :: VIx a -> [SomeValueFact] -> [ValueFact a]
+  factsV' (VIx eix) es
     = [ unsafeCoerce fact
-      | SomeEventFact (EIx eix') fact <- es
+      | SomeValueFact (VIx eix') fact <- es
       , eix == eix'
       ]
 
 -- A derivation is a partial evaluation of the `deriveE` function, universally
 -- quantified over a range of time.
 
-  startDerivationForAllTime :: EventM a -> Derivation a
-  startDerivationForAllTime em = Derivation [] (DS_SpanExc allT) [] False em
+  startDerivationForAllTime :: ValueM a -> Derivation a
+  startDerivationForAllTime em = Derivation [] (DS_SpanExc allT) [] em
 
   -- eix :: Eix a  is implicit
   data Derivation a
     -- When `derPrevTspan /= []` we solve in strictly chronological order.
     --
-    -- ∀ t ∈ ttspan   (t <= min_{p ∈ derPrevDeps} {firstOccTime(p, ttspan)}   when derPrevDeps /= [])
-    --     . lookup t eix = deriveEgo t False contDerivation
+    -- ∀ t ∈ ttspan   (t <= min_{p ∈ derPrevDeps} {firstChangeTime(p, ttspan)}   when derPrevDeps /= [])
+    --     . lookup t eix = deriveEgo t contDerivation
     = Derivation
       { derTrace :: DerivationTrace a
       , derTtspan :: DerivationSpan
       -- ^ Time span/point of jurisdiction.
-      , derPrevDeps :: [SomeEIx]
-      -- ^ dependencies via PrevE
-      , derSeenOcc :: Bool
-      -- ^ Has this derivation observed (and hence may produce) an event.
-      -- Must be False if derTtspan is a DS_SpanExc (the reverse implication does NOT hold).
-      , derContDerivation :: EventM a
+      , derPrevDeps :: [SomeVIx]
+      -- ^ dependencies via PrevV
+      , derContDerivation :: ValueM a
       }
 
-    -- ∀ t ∈ tspan (t > firstOccTime(dep, tspan))
-    --     . lookup t eix = deriveEgo t False contDerivation
-    | forall b . DeriveAfterFirstOcc
+    -- ∀ t ∈ tspan (t > firstChangeTime(dep, tspan))
+    --     . lookup t eix = deriveEgo t contDerivation
+    | forall b . DeriveAfterFirstChange
       { derTrace :: DerivationTrace a
       , derAfterTspan   :: SpanExc
-      , derAfterDep   :: EIx b
-      , derAfterContDerivation :: EventM a
-      }
-
-    -- This is used after advancing (with a NoOcc fact span) up to (excluding) a
-    -- clearance time. At this point we must decide if the derivation has
-    -- further jurisdiction. We proceed iff none of the immediate PrevE deps are
-    -- occurring at the clearance time.
-    --
-    -- ∀ t ∈ tspan (∀ d ∈ PrevDeps . lookup (spanExcJustBefore tspan) d == Nothing)
-    --     . [[ Derivation (DS_SpanExc tspan) prevDeps False contDerivation ]]
-    | AfterClearanceTime
-      { derTrace :: DerivationTrace a
-      , derClearanceTspan    :: SpanExc
-      -- ^ Must not be open on the left (spanExcJustBefore tspan /= Nothing)
-      -- this follows from the usage where the lower bound is a clearance time
-      -- which cannot be -Inf
-      , derClearancePrevDeps :: [SomeEIx]
-      , derClearanceContDerivation :: EventM a
+      , derAfterDep   :: VIx b
+      , derAfterContDerivation :: ValueM a
       }
 
   data DerivationSpan
@@ -239,7 +230,7 @@ module Theory where
     -- | DS_SpanExcInc SpanExcInc
 
     -- -- | DS_SpanExcIncFirstOcc lo  ⟹ t ∈ tspan
-    -- | forall a . DS_SpanExcIncFirstOcc SpanExc (EIx a)
+    -- | forall a . DS_SpanExcIncFirstOcc SpanExc (VIx a)
 
 -- Now a natural fist attempt at a solution is obvious: start with an initial
 -- knowledge base and continue evaluating derivations until all terminate or
@@ -249,7 +240,7 @@ module Theory where
   solution1 inputs = iterateUntilChange initialKb
     where
     initialFacts = concat
-      [ SomeEventFact eix <$> eventFacts
+      [ SomeValueFact eix <$> eventFacts
       | InputEl eix (Left eventFacts) <- inputs
       ]
     initialDerivations =
@@ -283,7 +274,7 @@ module Theory where
             , changed
             )
           Just (newFacts, newDerivations) ->
-            ( (SomeEventFact eix <$> newFacts) ++ facts'
+            ( (SomeValueFact eix <$> newFacts) ++ facts'
             , (SomeDerivation eix <$> newDerivations) ++ derivations'
             , True
             )
@@ -294,67 +285,44 @@ module Theory where
     -- This is the important part that should correspond to the `deriveE`
     -- denotation.
     stepDerivation
-      :: EIx a
+      :: forall a
+      .  VIx a
       -- ^ Event index that the derivation corresponds to.
       -> [SomeDerivation]
-      -- ^ Current derivations. Used to detect PrevE deadlock.
-      -> [SomeEventFact]
+      -- ^ Current derivations. Used to detect PrevV deadlock.
+      -> [SomeValueFact]
       -- ^ Current facts. Used to query for existing facts
       -> Derivation a
       -- ^ Derivation to step
-      -> Maybe ([EventFact a], [Derivation a])
+      -> Maybe ([ValueFact a], [Derivation a])
       -- ^ Nothing if no progress. Else Just the new facts and new derivations.
     stepDerivation eix allDerivations facts derivation = case derivation of
-      Derivation dtrace ttspan prevDeps seenOcc contDerivation -> case contDerivation of
+      Derivation dtrace ttspan prevDeps contDerivation -> case contDerivation of
         Pure a -> if null prevDeps
-          then Just $ case (seenOcc, ttspan) of
-              (True, DS_Point t) -> let
-                dtrace' = appendDerTrace dtrace $
-                  "Jurisdiction is a point (t=" ++ show t ++ "), we've \
-                  \witnessed some GetE event and EventM is \
-                  \`Pure a`. This means an event is occurring with value a."
-                in ([FactMayOcc dtrace' t (Just a)], [])
-              -- TODO looks like an invariant that `seenOcc -> ttspan is a point in time (i.e. not a span)`
-              (True, DS_SpanExc _) -> error "stepDerivation: encountered non-instantaneous event occurrence."
-              (False, DS_Point t) -> let
-                dtrace' = appendDerTrace dtrace $
-                  "Jurisdiction is a point (t=" ++ show t ++ "), we've \
-                  \NOT witnessed any GetE event and EventM is \
-                  \`Pure a` (which is suspect). This means an event is NOT occurring."
-                in ([FactMayOcc dtrace' t Nothing], [])
-              (False, DS_SpanExc tspanSpan) -> let
-                dtrace' = appendDerTrace dtrace $
-                  "Jurisdiction is (" ++ show tspanSpan ++ "), we've NOT\
-                  \witnessed any GetE event and EventM is \
-                  \`Pure a` (which is suspect). This means an event is NOT occurring with ."
-                in ([FactNoOcc dtrace' tspanSpan], [])
-          else stepCompleteWithPrevDeps (Just a)
-        NoOcc ->  if null prevDeps
           then Just $ case ttspan of
-              DS_Point t      -> let
+              DS_Point t -> let
                 dtrace' = appendDerTrace dtrace $
-                  "Jurisdiction is a poiint (" ++ show ttspan ++ "), we've NOT\
-                  \witnessed any GetE event and EventM is \
-                  \`Pure a` (which is suspect). This means an event is NOT occurring with ."
-                in ([FactMayOcc dtrace' t Nothing], [])
+                  "Jurisdiction is a point (t=" ++ show t ++ "), ValueM is `Pure a`."
+                in ([Fact_Point dtrace' t a], [])
+
               DS_SpanExc tspanSpan -> let
                 dtrace' = appendDerTrace dtrace $
-                  "EventM says NoOcc for this span."
-                in ([FactNoOcc dtrace' tspanSpan], [])
-          else stepCompleteWithPrevDeps Nothing
-        GetE eixb mayOccToCont -> let
+                  "Jurisdiction is (" ++ show tspanSpan ++ "), ValueM is `Pure a`."
+                in ([Fact_SpanExc dtrace' tspanSpan a], [])
+          else stepCompleteWithPrevDeps a
+        GetV eixb cont -> let
           factsBAndUnknownsMay = if null prevDeps
-            then Just (spanLookupEFacts ttspan eixb facts)
-            -- chronological version of the above with PrevE deps.
-            -- TODO this and the above "then" and also the PrevE cases
+            then Just (spanLookupVFacts ttspan eixb facts)
+            -- chronological version of the above with PrevV deps.
+            -- TODO this and the above "then" and also the PrevV cases
             -- have very similar code (split on other facts). Try to DRY
             -- it.
 
-            else case find isChronological (fst (spanLookupEFacts ttspan eixb facts)) of
+            else case find isChronological (fst (spanLookupVFacts ttspan eixb facts)) of
               Nothing -> Nothing
               Just fact -> Just ([fact], ttspan `difference` factTSpan fact)
 
-          isChronological :: EventFact a -> Bool
+          isChronological :: ValueFact b -> Bool
           isChronological fact = case ttspan of
             DS_Point _ -> True  -- we use the assumption that fact is in ttspan
             DS_SpanExc tspan -> case factTSpan fact of
@@ -368,31 +336,21 @@ module Theory where
                 -- For knowns, split and try to progress the derivation.
                 mconcat
                   [ case factB of
-                    FactNoOcc _ subTspan -> let
-                      newCont = mayOccToCont Nothing
-                      newDer  = Derivation dtrace (DS_SpanExc subTspan) prevDeps seenOcc newCont
+                    Fact_SpanExc _ subTspan valB -> let
+                      newCont = cont valB
+                      newDer  = Derivation dtrace (DS_SpanExc subTspan) prevDeps newCont
                                   `withDerTrace`
-                                  ("Split on GetE dep (" ++ show eixb ++ ") FactNoOcc")
+                                  ("Split on GetV dep (" ++ show eixb ++ ") Fact_SpanExc")
                       in fromMaybe
                         ([], [newDer])
                         -- ^ Couldn't progress further: no new facts, but we've progressed the derivation up to newDer.
                         (stepDerivation eix allDerivations facts newDer)
                         -- ^ Try to progress further.
-                    FactMayOcc _ t maybeOccB -> case maybeOccB of
-                      -- This is simmilar to above
-                      Nothing -> let
-                        newCont = mayOccToCont Nothing
-                        newDer  = Derivation dtrace (DS_Point t) prevDeps seenOcc newCont
+                    Fact_Point _ t valB -> let
+                        newCont = cont valB
+                        newDer  = Derivation dtrace (DS_Point t) prevDeps newCont
                                   `withDerTrace`
-                                  ("Split on GetE dep (" ++ show eixb ++ ") FactMayOcc (No Occ)")
-                        in fromMaybe
-                          ([], [newDer])
-                          (stepDerivation eix allDerivations facts newDer)
-                      Just b -> let
-                        newCont = mayOccToCont (Just b)
-                        newDer  = Derivation dtrace (DS_Point t) prevDeps True newCont
-                                  `withDerTrace`
-                                  ("Split on GetE dep (" ++ show eixb ++ ") FactMayOcc (With Occ)")
+                                  ("Split on GetV dep (" ++ show eixb ++ ") Fact_Point")
                         in fromMaybe
                           ([], [newDer])
                           (stepDerivation eix allDerivations facts newDer)
@@ -402,29 +360,29 @@ module Theory where
                 -- For unknowns, simply split the derivation into the
                 -- unknown subspans.
                 ( []
-                , [ Derivation dtrace subTspan prevDeps seenOcc contDerivation
+                , [ Derivation dtrace subTspan prevDeps contDerivation
                     `withDerTrace`
-                    ("Split on GetE dep (" ++ show eixb ++ ") unknown point or span.")
+                    ("Split on GetV dep (" ++ show eixb ++ ") unknown point or span.")
                   | subTspan <- unknowns
                   ]
                 )
               )
 
-        PrevE eixB mayPrevToCont -> case ttspan of
+        PrevV eixB predicate mayPrevToCont -> case ttspan of
           -- For reference:
-          --   deriveEgo t seenOcc (PrevE eixB cont)
+          --   deriveEgo t (PrevV eixB cont)
           --   = if ∃ t'  .  t' < t
-          --        ∧  isJust (lookupE t' exiB)
-          --        ∧  (∀ t' < t'' < t  .  lookupE t'' exiB == Nothing)
-          --     then deriveEgo t (cont (lookupE t' exiB))
+          --        ∧  isJust (lookupV t' exiB)
+          --        ∧  (∀ t' < t'' < t  .  lookupV t'' exiB == Nothing)
+          --     then deriveEgo t (cont (lookupV t' exiB))
           --     else Nothing
-          DS_Point t -> case lookupPrevE t eixB facts of
+          DS_Point t -> case lookupPrevV t eixB predicate facts of
             Unknown -> Nothing
             Known prevBMay -> Just $ let
               newCont = mayPrevToCont prevBMay
-              newDer  = Derivation dtrace ttspan (SomeEIx eixB : prevDeps) seenOcc newCont
+              newDer  = Derivation dtrace ttspan (SomeVIx eixB : prevDeps) newCont
                     `withDerTrace`
-                    ("Use known PrevE value of dep (" ++ show eixB ++ ")")
+                    ("Use known PrevV value of dep (" ++ show eixB ++ ")")
               in fromMaybe
                 ([], [newDer])
                 (stepDerivation eix allDerivations facts newDer)
@@ -432,11 +390,12 @@ module Theory where
           -- !! The Plan
           -- !! Try and split on facts about eixB.
           DS_SpanExc tspan -> let
+            prevVSpans = spanLookupPrevV ttspan eixB predicate facts
             -- | Nothing means tried chronological order, but found no fact.
             factsAndUnknownsMay = if null prevDeps
-              then Just (spanLookupPrevE ttspan eixB facts)
-              -- chronological version of the above with PrevE deps.
-              else case find ((tspan `contains`) . fst) (fst (spanLookupPrevE ttspan eixB facts)) of
+              then Just prevVSpans
+              -- chronological version of the above with PrevV deps.
+              else case find ((tspan `contains`) . fst) (fst prevVSpans) of
                 Nothing -> Nothing
                 Just knownSpanAndFact -> Just ([knownSpanAndFact], ttspan `difference` fst knownSpanAndFact)
 
@@ -447,7 +406,7 @@ module Theory where
             -- can just always solve chronologically. It seems like this would
             -- fail to produce knowable facts that are not chronological, but that
             -- problem is solved by a second derivation with jurisdiction after
-            -- the first occurrence of eixB. Since the previous (PrevE) value is
+            -- the first occurrence of eixB. Since the previous (PrevV) value is
             -- only known for spans of NoOcc after an event occurrence, we know
             -- that chronological before the first occurrence of eixB will be
             -- productive (produce facts as soon as they are knowable).
@@ -455,7 +414,7 @@ module Theory where
               tspanLo = spanExcJustBefore tspan
               prevValMayIfKnown = case tspanLo of
                 Nothing -> Known Nothing -- Known: there is no previous value.
-                Just tLo -> lookupCurrE tLo eixB facts
+                Just tLo -> lookupCurrE tLo eixB predicate facts
               in case prevValMayIfKnown of
                 Unknown -> Nothing
                 Known prevValMay -> Just
@@ -463,13 +422,12 @@ module Theory where
                     , [ Derivation
                           dtrace
                           ttspan
-                          (SomeEIx eixB : prevDeps)
-                          seenOcc
+                          (SomeVIx eixB : prevDeps)
                           (mayPrevToCont prevValMay)
                         `withDerTrace`
                           ("Deadlock detected via " ++ show eixB ++ " (at t=" ++ show tspanLo ++ "). Store "
-                          ++ show eixB ++ " as a PrevE dep and solve chronologically")
-                      , DeriveAfterFirstOcc
+                          ++ show eixB ++ " as a PrevV dep and solve chronologically")
+                      , DeriveAfterFirstChange
                           dtrace
                           tspan
                           eixB
@@ -485,12 +443,12 @@ module Theory where
               -- can always just assume there might be deadlock and derive
               -- chronologically. We'd need to argue that that will not delay
               -- the production of facts, but that seems intuitively true: with
-              -- a PrevE dependency, we must solve chronologically (at least
+              -- a PrevV dependency, we must solve chronologically (at least
               -- piecewise after known events occs).
 
               -- !! If there are no such facts, try to detect deadlock via
               -- !! eixB. This means that eix is reachable (transitively) via
-              -- !! the PrevE dependencies of derivations coinciding with the
+              -- !! the PrevV dependencies of derivations coinciding with the
               -- !! start of tspan.
               Nothing -> tryChonologicalSplit
               Just ([], _) -> tryChonologicalSplit
@@ -500,8 +458,8 @@ module Theory where
                 -- For knowns, split and try to progress the derivation.
                 mconcat
                   [ let
-                    newCont = mayPrevToCont prevEMay
-                    newDer  = Derivation dtrace ttspan' prevDeps seenOcc newCont
+                    newCont = mayPrevToCont prevVMay
+                    newDer  = Derivation dtrace ttspan' prevDeps newCont
                         `withDerTrace`
                           ("Split on known facts")
                     in fromMaybe
@@ -509,12 +467,12 @@ module Theory where
                       -- ^ Couldn't progress further: no new facts, but we've progressed the derivation up to newDer.
                       (stepDerivation eix allDerivations facts newDer)
                       -- ^ Try to progress further.
-                  | (ttspan', prevEMay) <- knownSpansAndValueMays
+                  | (ttspan', prevVMay) <- knownSpansAndValueMays
                   ]
                 <>
                 -- For unknowns, simply split the derivation into the
                 -- unknown subspans.
-                ([], [Derivation dtrace subTspan prevDeps seenOcc contDerivation
+                ([], [Derivation dtrace subTspan prevDeps contDerivation
                         `withDerTrace`
                           ("Split on unknown span or point")
                       | subTspan <- unknownSpans])
@@ -522,95 +480,81 @@ module Theory where
 
         where
         -- This is called when a derivation is complete (Pure _ or NoOcc) and
-        -- there are some PrevE dependencies.
-        --
-        -- If the ttspan is a point time, then this is easy! Pure x means event
-        -- occurrence with x **iff an event is seen**. NoOcc means NoOcc.
-        --
-        -- If the ttspan is a span, things get more tricky. At this point we
-        -- need to find a "clearance time". This is some time span at the start
-        -- of ttspan where whe know none of the PrevE events are occurring
-        -- (within the time jurisdiction of this Derivation). We do this by
-        -- finding the transitive closure of PrevE dependencies. For each dep we
-        -- have either facts indicating for how long no event is occuring, or
-        -- complete derivations. The clearance time is just the minimum end time
-        -- of the deps' NoOcc spans (from facts) or Derivation spans (from
-        -- derivations taking the tspan directly and ignoring it's PrevE events
-        -- possibly cutting its jurisdiction off early). I have a proof for this
-        -- that I should document here.
-        stepCompleteWithPrevDeps occMay = case ttspan of
-          DS_Point t
-            | seenOcc   -> let
-              dtrace' = appendDerTrace dtrace $ case occMay of
-                Nothing -> "EventM is NoOcc so output no event."
-                Just _ -> "EventM is (Pure _) and we've witnessed an event so output an event."
-              in Just ([FactMayOcc dtrace' t occMay ], [])
-            | otherwise ->  let
+        -- there are some PrevV dependencies.
+        stepCompleteWithPrevDeps
+          :: a
+            -- ^ The derived value (The derivation must have ended with some `Pure a`).
+          -> Maybe ([ValueFact a], [Derivation a])
+            -- ^ Taking into account the PrevV deps, if progress can be made,
+            -- return the new ValueFact(s) and any new Derivation(s)
+        stepCompleteWithPrevDeps val = case ttspan of
+
+          -- If the ttspan is a point time, then this is easy! Pure x means x.
+          DS_Point t -> let
               dtrace' = appendDerTrace dtrace $
-                "EventM is complete but we'ven not witnessed an event so output no event."
-              in Just ([FactMayOcc dtrace' t Nothing], [])
+                "ValueM is (Pure _). As jurisdiction is a point, we can ignore PrevV deps."
+              in Just ([Fact_Point dtrace' t val], [])
+
+          -- If the ttspan is a span, things get more tricky. At this point we
+          -- need to find a "clearance time". This is some time span at the
+          -- start of ttspan where whe know none of the PrevV deps are changing
+          -- (within the time jurisdiction of this Derivation). We do this by
+          -- finding the transitive closure of PrevV dependencies. For each dep
+          -- we have either facts indicating for how long no there is no change,
+          -- or a complete derivation, or an incomplete derivation.
           DS_SpanExc tspan -> let
             tLoMay = spanExcJustBefore tspan
             -- Clearance time iff after the start of tspan. Note that the
             -- clearance time must be in tspan or at the time just after tspan.
-            -- This is a natural consequence of the fact that we observer the
+            -- This is a natural consequence of the fact that we observe the
             -- current Derivation as part of the calculation of clearance time.
-            ctMay = clearanceTime (SomeEIx eix) tLoMay
+            ctMay = clearanceTime (SomeVIx eix) tLoMay
             in case ctMay of
+              -- We don't know the clearance time, so return Nothing.
               Nothing -> Nothing
               Just ct ->  let
                 msgCt = "Found clearance time ct=" ++ show ct ++ "."
                 dtraceF = appendDerTrace dtrace $
-                  msgCt ++ " This means no events are happening up to at least that time."
+                  msgCt ++ " This means no value changes are occuring up to at least that time."
                 in Just
-                ( [FactNoOcc dtraceF (spanExc tLoMay ct)]
-                -- If ct is not Inf (i.e. Nothing) and is within the current
-                -- jurisdiction (i.e. tspan), then we need to cover the
-                -- clearance time at and after ct.
-                , case ct of
-                    Just ctPoint | tspan `contains` ctPoint
-                      -> [ Derivation dtrace (DS_Point ctPoint) prevDeps seenOcc contDerivation
-                            `withDerTrace`
-                              (msgCt ++ " Solve at the clearance time.")
-                         , AfterClearanceTime
-                            dtrace
-                            (spanExc ct (spanExcJustAfter tspan))
-                            prevDeps
-                            contDerivation
-                            `withDerTrace`
-                              (msgCt ++ " Solve for after the clearance time")
-                         ]
-                    _ -> []
+                  ( [Fact_SpanExc dtraceF (spanExc tLoMay ct) val]
+                  -- If ct is not Inf (i.e. Nothing) and is within the current
+                  -- jurisdiction (i.e. tspan), then we need to cover the
+                  -- clearance time at and after ct.
+                  , case ct of
+                      Just ctPoint | tspan `contains` ctPoint
+                        -> [ Derivation dtrace (DS_Point ctPoint) prevDeps contDerivation
+                              `withDerTrace`
+                                (msgCt ++ " Solve at the clearance time.")
+                           ]
+                      _ -> []
+                  )
 
-
-                -- [ Derivation (DS_Point ctPoint) prevDeps seenOcc contDerivation
-                --   | Just ctPoint <- [ct]
-                --   , tspan `contains` ctPoint
-                --   ] ++
-                --   -- If ct is not the end the tspan, then we need to cover the
-                --   -- rest of the tspan strictly after ct.
-                --   [ _coverAfterCt
-                --   | _
-                --   ]
-                )
-                -- !!!!!!!!!!!!!!!!!! I need to make sure that the full jurisdiction is covered. I wonder if I need another Derivation constructor !!!!!!!!!!!!!!!!!!!!
-                -- We need a derivations that says "given that none of the immediate PrevE deps are occuring at time `ct`, continue the chonological derivation for span (ct, spanExcJustAfter tspan)"
-
+        -- | Clearance time is some known time up to which we know the value of
+        -- SomeVIx will not change. In practice the value may not change even
+        -- longer, so clearance time is a conservative value based on current
+        -- knowledge and derivations.
         clearanceTime
-          :: SomeEIx      -- ^ Event in question
+          :: SomeVIx      -- ^ Event in question
           -> Maybe Time   -- ^ Start time of clearance ((exclusive) start of the span of NoOcc ). Nothing means -Inf.
           -> Maybe (Maybe Time)
                           -- ^ Clearance time if greater than the input time ((exclusive) end of the span of NoOcc). Just Nothing means Inf.
         clearanceTime ix' tLo = do
-          -- Get the initial clearance
+          -- Get the initial "local" clearance.
+          -- local clearance is the clearance assuming that prevV dependencies never change.
+          -- The clearance is min{local clearance, clearance of dependencies}
           (neighbors, ixClearanceTime) <- neighborsAndClearance ix'
           go neighbors (S.singleton ix') ixClearanceTime
           where
           go
-            :: [SomeEIx] -- ^ stack of events to visit
-            -> S.Set SomeEIx -- ^ visited events
-            -> Maybe Time -- ^ clearance time so far (if any).
-            -> Maybe (Maybe Time) -- ^ clearance time if greater than input time.
+            :: [SomeVIx]
+              -- ^ Stack of `VIx`s to visit
+            -> S.Set SomeVIx
+              -- ^ visited `VIx`s
+            -> Maybe Time
+              -- ^ clearance time so far (if any).
+            -> Maybe (Maybe Time)
+              -- ^ clearance time if greater than input time.
           go [] _ clearance = Just clearance
           go (ix:ixs) visited clearance
             | ix `S.member` visited = go ixs visited clearance
@@ -624,49 +568,42 @@ module Theory where
           minClearance a Nothing = a
           minClearance (Just a) (Just b) = Just (min a b)
 
-          -- | Get the neighbors (PrevE deps) and clearance time (ignoring
-          -- neighbors) of a single event.
+          -- | Get the neighbors (PrevV deps) and local clearance time of a
+          -- single VIx.
           neighborsAndClearance
-            :: SomeEIx
-            -> Maybe ([SomeEIx], Maybe Time)
+            :: SomeVIx
+            -> Maybe ([SomeVIx], Maybe Time)
           neighborsAndClearance ix
-            = (([],) <$> neighborsAndClearanceFacts ix) -- No PrevE deps if a fact.
-            <|> neighborsAndClearanceDerivation ix
+            = (([],) <$> neighborsAndClearanceByFacts ix) -- No PrevV deps if a fact.
+            <|> neighborsAndClearanceByDerivation ix
 
-          -- | Get the neighbors (PrevE deps) and clearance time (ignoring
-          -- neighbors) of a single event. Only considers known Facts.
-          neighborsAndClearanceFacts
-            :: SomeEIx
+          -- | Get the clearance time (ignoring neighbors) of a single value
+          -- by looking for a fact spanning the time just after tLo.
+          --
+          -- Nothing: No fact spanning the time.
+          -- Just Nothing: Fact found that goes to infinity
+          -- Just t: Fact found that ends at time t (exclusive)
+          neighborsAndClearanceByFacts
+            :: SomeVIx
             -> Maybe (Maybe Time)
-          neighborsAndClearanceFacts ix@(SomeEIx ix_) = findClearanceAfter tLo
+          neighborsAndClearanceByFacts ix = findClearanceAfter tLo
             where
             findClearanceAfter :: Maybe Time -> Maybe (Maybe Time)
             findClearanceAfter t = listToMaybe
-              [ case spanExcJustAfter tspan of
-                  Nothing -> Nothing
-                  Just nextT -> findClearanceAt nextT
-              | SomeEventFact ix'' (FactNoOcc _ tspan) <- facts
-              , ix == SomeEIx ix''
+              [ spanExcJustAfter tspan
+              | SomeValueFact ix'' (Fact_SpanExc _ tspan _) <- facts
+              , ix == SomeVIx ix''
               , case t of
                   Nothing -> spanExcJustBefore tspan == Nothing
                   Just tt -> tspan `contains` tt
               ]
 
-            findClearanceAt :: Time -> Maybe Time
-            findClearanceAt t = case lookupE t ix_ facts of
-              Unknown -> Just t -- Point gap in knowledge. Stop clearance traversal.
-              Known (Just _) -> Just t -- Event is occurring. Stop clearance traversal.
-              -- No event is occuring at time t. Keep traversing.
-              Known Nothing -> case findClearanceAfter (Just t) of
-                Nothing -> Just t
-                Just clearance -> clearance
-
-          -- | Get the neighbors (PrevE deps) and clearance time (ignoring
-          -- neighbors) of a single event. Only considers active Derivations.
-          neighborsAndClearanceDerivation
-            :: SomeEIx
-            -> Maybe ([SomeEIx], Maybe Time)
-          neighborsAndClearanceDerivation ix = listToMaybe
+          -- | Get the neighbors (PrevV deps) and local clearance time of a
+          -- single VIx. Only considers active Derivations, not facts.
+          neighborsAndClearanceByDerivation
+            :: SomeVIx
+            -> Maybe ([SomeVIx], Maybe Time)
+          neighborsAndClearanceByDerivation ix = listToMaybe
             [ (neighbors, spanExcJustAfter tspan)
             | SomeDerivation
                 ix''
@@ -674,222 +611,215 @@ module Theory where
                   _
                   (DS_SpanExc tspan)
                   neighbors
-                  _
                   cont
                 )
                 <- allDerivations
-            , ix == SomeEIx ix'' -- look up the correct eix
+            , ix == SomeVIx ix'' -- look up the correct eix
             , spanExcJustBefore tspan == tLo -- starts at tLo
             -- derivation is complete
             , case cont of
                 Pure _ -> True
-                NoOcc  -> True
                 _ -> False
             ]
 
-      DeriveAfterFirstOcc dtrace tspan eixB cont -> case searchForFirstEventOcc tspan eixB facts of
+      DeriveAfterFirstChange dtrace tspan eixB cont -> case searchForFirstChange tspan eixB facts of
         -- We know the time of the first occurrence, so we can convert
         -- to a concrete time span again.
-        FirstOccIsAt firstOccTime -> let
-          -- Safe to use mono-bind here as firstOccTime ∈ tspan
-          Just concreteTimeSpan = tspan `intersect` RightSpaceExc firstOccTime
+        FirstChangeIsAt firstChangeTime -> let
+          -- Safe to use mono-bind here as firstChangeTime ∈ tspan
+          Just concreteTimeSpan = tspan `intersect` RightSpaceExc firstChangeTime
           newDer = Derivation
             dtrace
             (DS_SpanExc concreteTimeSpan)
             []
-            -- ^ NOTE [DeriveAfterFirstOcc and PrevE deps] There are
-            -- no PrevE events by denotation of DeriveAfterFirstOcc
-            False
+            -- ^ NOTE [DeriveAfterFirstChange and PrevV deps] There are
+            -- no PrevV events by denotation of DeriveAfterFirstChange
             cont
               `withDerTrace`
-              ("Found first occ at t=" ++ show firstOccTime)
+              ("Found first occ at t=" ++ show firstChangeTime)
           in Just ([], [newDer])
 
         -- We know the right of clearanceTime (exclusive) is definitely
         -- after the first event.
-        FirstOccIsAtOrBefore clearanceTime -> let
-          -- NOTE we keep seenOcc as False. This follows from the
-          -- definition of DeriveAfterFirstOcc. Intuitivelly, we are
-          -- only dealing with *when* the first event is, not handling
-          -- the event itself. The event (if one exists) will be
-          -- handled by the new derivations.
-          seenOcc = False
-
+        FirstChangeIsAtOrBefore clearanceTime -> let
           newDers =
             [ let Just tspanBefore = tspan `intersect` LeftSpaceExc clearanceTime
-               in DeriveAfterFirstOcc dtrace tspanBefore eixB cont
+               in DeriveAfterFirstChange dtrace tspanBefore eixB cont
                   `withDerTrace`
                   ("First occ is at or before " ++ show clearanceTime
                   ++ ". Continue looking for first event before that time.")
 
-            , Derivation dtrace (DS_Point clearanceTime) [] seenOcc cont
+            , Derivation dtrace (DS_Point clearanceTime) [] cont
                   `withDerTrace`
                   ("First occ is at or before " ++ show clearanceTime
                   ++ ". Solve at that time.")
-            -- See NOTE [DeriveAfterFirstOcc and PrevE deps]
+            -- See NOTE [DeriveAfterFirstChange and PrevV deps]
 
             , let Just tspanAfter = tspan `intersect` RightSpaceExc clearanceTime
-               in Derivation dtrace (DS_SpanExc tspanAfter) [] seenOcc cont
+               in Derivation dtrace (DS_SpanExc tspanAfter) [] cont
                   `withDerTrace`
                   ("First occ is at or before " ++ show clearanceTime
                   ++ ". Solve after that time.")
-            -- See NOTE [DeriveAfterFirstOcc and PrevE deps]
+            -- See NOTE [DeriveAfterFirstChange and PrevV deps]
             ]
           in Just ([], newDers)
 
         -- There is no first occ, so this derivation covers no time, so
         -- we stop.
-        NoOccInSpan -> Just ([], [])
+        NoChangeInSpan -> Just ([], [])
 
         -- We don't know any more info about the first occurrence so we
         -- cant make any more progress.
         Other -> Nothing
 
-      AfterClearanceTime dtrace tspan prevDeps contDer -> case prevDepsAreNotOccurringMay of
-        -- Only when we know that no prevDeps are occuring can we continue.
-        Known True -> Just ([], [Derivation dtrace(DS_SpanExc tspan) prevDeps False contDer
-          `withDerTrace` ("All PrevE deps are known to NOT occur. Continue solving chronologically.")
-          ])
-        Known False -> Nothing
-        Unknown -> Nothing
-        where
-        prevDepsAreNotOccurringMay :: MaybeKnown Bool
-        prevDepsAreNotOccurringMay = not . and <$> (sequence
-          [ isNothing <$> lookupE ct dep facts
-          | SomeEIx dep <- prevDeps
-          ])
-
-        ct :: Time
-        Just ct = spanExcJustBefore tspan
-
-      -- where
-      -- derivationDbg = (show eix) ++ " " ++ case derivation of
-      --   Derivation _ ttspan prevDeps seenOcc _
-      --     -> "Derivation ("
-      --     ++ show ttspan ++ ") "
-      --     ++ show prevDeps ++ " "
-      --     ++ show seenOcc
-      --   DeriveAfterFirstOcc _ tspan dep _
-      --     -> "DeriveAfterFirstOcc ("
-      --     ++ show tspan ++ ") ("
-      --     ++ show dep ++ ")"
-      --   AfterClearanceTime _ ct deps _
-      --     -> "AfterClearanceTime "
-      --     ++ show ct ++ " "
-      --     ++ show deps
-
-  -- | Result of searching for the first event occurence of a specific event
-  -- and time span.
-  data FirstEventOcc
+  -- | Result of searching for the first change of a specific value and time
+  -- span.
+  data FirstValueChange
     -- | Enough information is known such that we can be sure this is the
-    -- first occurrence.
-    = FirstOccIsAt Time
-    -- | Enough information is known such that we can be sure the first
-    -- occurrence is at or before this time. This time will be the first
-    -- *known* event occurence, but there will be some unknown point or span
-    -- of time before this event that may contain the true first event.
-    | FirstOccIsAtOrBefore Time
-    -- | We have full information and know that no event is occurring in the
+    -- first change.
+    = FirstChangeIsAt Time
+    -- | Enough information is known such that we can be sure the first change
+    -- is at or before this time. This time will be the first *known* value
+    -- change, but there will be unknown changes before this time that may
+    -- contain the true first change.
+    | FirstChangeIsAtOrBefore Time
+    -- | We have full information and know that no change is occurring in the
     -- searched span.
-    | NoOccInSpan
-    -- | Some facts are missing such that we cant say anything about the
-    -- first occurence.
+    | NoChangeInSpan
+    -- | Facts are missing such that we cant say anything about the first
+    -- change.
     | Other
 
-  searchForFirstEventOcc
+  -- | Find the first change of value in this span. Note that a change of value
+  -- at the very start of the tspan (i.e. a Fact_SpanExc with a span at the
+  -- start of tspan) doesn't count as a change.
+  searchForFirstChange
     :: SpanExc
     -- ^ Time span to lookup
-    -> EIx a
+    -> VIx a
     -- ^ Event to lookup
-    -> [SomeEventFact]
+    -> [SomeValueFact]
     -- ^ All known facts.
-    -> FirstEventOcc
-  searchForFirstEventOcc tspan eix allFacts = let
-    (facts, unknownDSpans) = spanLookupEFacts (DS_SpanExc tspan) eix allFacts
-    firstKnownOccTMay = minimumMay [ t | FactMayOcc _ t (Just _)  <- facts]
-    in case firstKnownOccTMay of
-      -- No known first occurrence and total knowledge means no occurrence.
-      Nothing -> if null unknownDSpans then NoOccInSpan else Other
-      Just firstKnownOccT -> let
-        -- We know firstKnownOccT ∈ tspan
-        Just spanBeforeFirstKnownOccT = tspan `intersect` RightSpaceExc firstKnownOccT
-        -- First known occ is the true first occ if we have total
-        -- knowledge before that time.
-        isTrueFirstOcc = not $ any (intersects spanBeforeFirstKnownOccT) unknownDSpans
-        in if isTrueFirstOcc
-          then FirstOccIsAt     firstKnownOccT
-          else FirstOccIsAtOrBefore firstKnownOccT
+    -> FirstValueChange
+  searchForFirstChange tspan eix allFacts = let
+    (facts, _unknownDSpans) = spanLookupVFacts (DS_SpanExc tspan) eix allFacts
+    firstKnownTChangeMay     = minimumMay [ t | Fact_Point _ t _  <- facts]
+    firstKnownTSpanChangeMay = listToMaybe $ sortBy (compare `on` spanExcJustBefore)
+                                          [ tspan' | Fact_SpanExc _ tspan' _  <- facts]
+    in case firstKnownTSpanChangeMay of
+      Nothing -> case firstKnownTChangeMay of
+        Just firstKnownChangeTime -> FirstChangeIsAtOrBefore firstKnownChangeTime
+        Nothing -> Other
+      Just tspanFirstKnown
+        | spanExcSameLowerBound tspan tspanFirstKnown -> case spanExcJustAfter tspanFirstKnown of
+            Just firstChangeTime -> if tspan `contains` firstChangeTime
+              then FirstChangeIsAt firstChangeTime
+              else NoChangeInSpan
+            Nothing -> NoChangeInSpan
+        | otherwise -> case firstKnownTChangeMay of
+            Just tFirst -> FirstChangeIsAtOrBefore (min tFirst tspanFirstKnownLo)
+            Nothing -> FirstChangeIsAtOrBefore tspanFirstKnownLo
+        where
+          -- We know this exists because facts must be within tspan, and we
+          -- already covered the case of firstKnownTSpanChangeMay being at the
+          -- start of tspan.
+          tspanFirstKnownLo = fromJust $ spanExcJustBefore tspanFirstKnown
 
-
-  -- | Directly look up the previous event occurrence (strictly before the given time).
-  lookupPrevE
+  -- | Directly look up the previous value that satisfies the predicate
+  -- (strictly before the given time).
+  lookupPrevV
     :: Time
     -- ^ Time t
-    -> EIx a
+    -> VIx a
     -- ^ Event to lookup.
-    -> [SomeEventFact]
+    -> (a -> Maybe b)
+    -- ^ predicate / projection.
+    -> [SomeValueFact]
     -- ^ Known facts.
-    -> MaybeKnown (Maybe a)
-    -- ^ Nothing if unknown
-    -- Just Nothing if no event occurs before t.
-    -- Just (Just a) the value of the latest event occurring strictly before t.
-  lookupPrevE t eix allFacts = let
-    noOccSpans = mapMaybe
+    -> MaybeKnown (Maybe b)
+    -- ^ Unknown: if unknown
+    -- Known Nothing: if no value satisfying the predicate occurs strictly before t.
+    -- Known (Just b): the latest (projected) value satisfying the predicate (strictly before time t).
+  lookupPrevV t eix predicate allFacts = MaybeKnown . listToMaybe $ mapMaybe
         (\case
-          FactMayOcc _ _ _ -> Nothing
-          FactNoOcc _ tspan -> Just tspan
+          Fact_SpanExc _ tspan a
+            -- The fact spans just before time t
+            | tspan `contains` t || Just t == spanExcJustAfter tspan
+            -> case predicate a of
+                -- The fact's value satisfies the predicate. We're done.
+                Just b -> Just (Just b)
+                -- The fact does not satisfy the predicate. Keep searching.
+                Nothing -> case spanExcJustBefore tspan of
+                  Nothing -> Just Nothing
+                  Just tLo -> maybeKnownToMaybe $ lookupCurrE tLo eix predicate allFacts
+            | otherwise -> Nothing
+          Fact_Point _ _ _ -> Nothing
         )
-        (factsE' eix allFacts)
-    -- We must find a FactMayOcc just before or containing t.
-    tspanMay = find
-        (\tspan -> tspan `contains` t || Just t == spanExcJustAfter tspan)
-        noOccSpans
-    in case tspanMay of
-      Nothing -> Unknown
-      Just tspan -> case spanExcJustBefore tspan of
-        Nothing -> Known Nothing
-        Just t' -> lookupCurrE t' eix allFacts
+        (factsV' eix allFacts)
+
+
+    -- factSpanExcs = mapMaybe factSpa
+    --     (\case
+    --       Fact_Point _ _ _ -> Nothing
+    --       Fact_SpanExc _ tspan _ -> Just tspan
+    --     )
+    --     (factsV' eix allFacts)
+    -- -- We must find a Fact_Point just before or containing t.
+    -- tspanMay = find
+    --     (\tspan -> tspan `contains` t || Just t == spanExcJustAfter tspan)
+    --     factSpanExcs
+    -- in case tspanMay of
+    --   Nothing -> Unknown
+    --   Just tspan -> case spanExcJustBefore tspan of
+    --     Nothing -> Known Nothing
+    --     Just t' -> lookupCurrE t' eix allFacts
 
   -- | Directly look up the current (i.e. latest) event occurrence (equal or before the given time).
   lookupCurrE
     :: Time
     -- ^ Time t
-    -> EIx a
+    -> VIx a
     -- ^ Event to lookup.
-    -> [SomeEventFact]
+    -> (a -> Maybe b)
+    -- ^ predicate / projection.
+    -> [SomeValueFact]
     -- ^ Known facts.
-    -> MaybeKnown (Maybe a)
-    -- ^ Nothing if unknown
-    -- Just Nothing if no event occurs before t.
-    -- Just (Just a) the value of the latest occurring at or before t.
-  lookupCurrE t eix allFacts = let
-    facts = factsE' eix allFacts
-    factMay = find (\f -> factTSpan f `contains` t) facts
+    -> MaybeKnown (Maybe b)
+    -- ^ Unknown: if unknown
+    -- Known Nothing: if no value satisfying the predicate occurs at or before t.
+    -- Known (Just b): the latest (projected) value satisfying the predicate (at or before t).
+  lookupCurrE t eix predicate allFacts = let
+    factMay = find (\f -> factTSpan f `contains` t) (factsV' eix allFacts)
     in case factMay of
       Nothing -> Unknown
       Just fact -> case fact of
-        FactNoOcc _ tspan -> case spanExcJustBefore tspan of
-          Nothing -> Known Nothing
-          Just t' -> lookupCurrE t' eix allFacts
-        FactMayOcc _ _ Nothing -> lookupPrevE t eix allFacts
-        FactMayOcc _ _ (Just a) -> Known (Just a)
+        Fact_SpanExc _ tspan v -> case predicate v of
+          Just b -> Known (Just b)
+          Nothing -> case spanExcJustBefore tspan of
+            Nothing -> Known Nothing
+            Just t' -> lookupCurrE t' eix predicate allFacts
+        Fact_Point _ _ a -> case predicate a of
+          Nothing -> lookupPrevV t eix predicate allFacts
+          Just b  -> Known (Just b)
 
 
   -- | Directly lookup the previous value for an event over a span of time.
-  spanLookupPrevE
+  spanLookupPrevV
     :: DerivationSpan
     -- ^ Time or span to lookup
-    -> EIx a
+    -> VIx a
     -- ^ Event to lookup
-    -> [SomeEventFact]
+    -> (a -> Maybe b)
+    -- ^ predicate / projection.
+    -> [SomeValueFact]
     -- ^ All known facts.
-    -> ([(DerivationSpan, Maybe a)], [DerivationSpan])
-    -- ^ ( Known values about the given event
+    -> ([(DerivationSpan, Maybe b)], [DerivationSpan])
+    -- ^ ( Known values about the given VIx
     --   , unknown times and time spans )
     --   The union of these times and time spans should exactly
     --   equal the input time/time span.
-  spanLookupPrevE tspan eix allFacts = let
-    facts = prevEFacts eix allFacts
+  spanLookupPrevV tspan eix predicate allFacts = let
+    facts = prevVFacts eix predicate allFacts
     knownFacts =
         [ (ttspan', aMay)
         | (factTspan, aMay) <- facts
@@ -900,53 +830,55 @@ module Theory where
     in (knownFacts, unknownTSpans)
 
 
-  -- | Get all known PervE spans for an event
-  prevEFacts
-    :: forall a
-    .  EIx a
+  -- | Get all known PervV spans for an event
+  prevVFacts
+    :: forall a b
+    .  VIx a
     -- ^ Event to lookup
-    -> [SomeEventFact]
+    -> (a -> Maybe b)
+    -- ^ predicate / projection.
+    -> [SomeValueFact]
     -- ^ All known facts.
-    -> [(DerivationSpan, Maybe a)]
+    -> [(DerivationSpan, Maybe b)]
     -- ^ All known previous event values (if one exists)
-  prevEFacts eix allFacts = concat
+  prevVFacts eix predicate allFacts = concat
     [ case fact of
-      FactNoOcc _ tspan -> let
-        mayPrevEMay :: MaybeKnown (Maybe a)
-        mayPrevEMay = case spanExcJustBefore tspan of
+      Fact_SpanExc _ tspan _ -> let
+        mayPrevVMay :: MaybeKnown (Maybe b)
+        mayPrevVMay = case spanExcJustBefore tspan of
           -- Span starts at -∞ so that's a known Nothing previous event
           Nothing -> Known Nothing
           -- Span starts at a time prevT
-          Just prevT -> lookupCurrE prevT eix allFacts
-        in case mayPrevEMay of
+          Just prevT -> lookupCurrE prevT eix predicate allFacts
+        in case mayPrevVMay of
             Unknown -> []
-            Known prevEMay -> (DS_SpanExc tspan, prevEMay) : [(DS_Point nextT, prevEMay) | Just nextT <- [spanExcJustAfter tspan]]
-      FactMayOcc _ _ _ -> [] -- Point knowledge is handled by the above case
-    | fact <- factsE' eix allFacts
+            Known prevVMay -> (DS_SpanExc tspan, prevVMay) : [(DS_Point nextT, prevVMay) | Just nextT <- [spanExcJustAfter tspan]]
+      Fact_Point _ _ _ -> [] -- Point knowledge is handled by the above case
+    | fact <- factsV' eix allFacts
     ]
 
-  -- | Directly look up all known facts for a given event and time or time
+  -- | Directly look up all known facts for a given VIx and time or time
   -- span.
-  spanLookupEFacts
+  spanLookupVFacts
     :: DerivationSpan
     -- ^ Time or span to lookup
-    -> EIx a
+    -> VIx a
     -- ^ Event to lookup
-    -> [SomeEventFact]
+    -> [SomeValueFact]
     -- ^ All known facts.
-    -> ([EventFact a], [DerivationSpan])
-    -- ^ ( Facts about the given event
+    -> ([ValueFact a], [DerivationSpan])
+    -- ^ ( Facts about the given VIx
     --   , unknown times and time spans )
     --   The union of these facts and times and time spans should exactly
     --   equal the input time/time span.
-  spanLookupEFacts tspan eix allFacts = let
-    facts = factsE' eix allFacts
+  spanLookupVFacts tspan eix allFacts = let
+    facts = factsV' eix allFacts
     knownFacts =
         [ case (fact, ttspan') of
-          (FactNoOcc dtrace _, DS_SpanExc tspan') -> FactNoOcc dtrace tspan'
-          (FactNoOcc dtrace _, DS_Point t'   ) -> FactMayOcc dtrace t' Nothing
-          (FactMayOcc _ _ _   , DS_SpanExc _) -> error "Intersection between SpanExc and Time must be Just Time or Nothing"
-          (FactMayOcc dtrace _ occMay, DS_Point t') -> FactMayOcc dtrace t' occMay
+          (Fact_SpanExc dtrace _ v, DS_SpanExc tspan') -> Fact_SpanExc dtrace tspan' v
+          (Fact_SpanExc dtrace _ v, DS_Point   t'    ) -> Fact_Point dtrace t' v
+          (Fact_Point _ _ _   , DS_SpanExc _) -> error "Intersection between SpanExc and Time must be Just Time or Nothing"
+          (Fact_Point dtrace _ occMay, DS_Point t') -> Fact_Point dtrace t' occMay
         | fact <- facts
         , Just ttspan' <- [factTSpan fact `intersect` tspan]
         ]
@@ -1017,38 +949,28 @@ module Theory where
     -> Derivation a
     -- ^ Derivation with added traced entry.
   withDerTrace d msg = case d of
-    Derivation oldTrace ttspan prevDeps occSeen cont
+    Derivation oldTrace ttspan prevDeps cont
       -> let dMsg = "Derivation "
                   ++ showTtspan ttspan ++ " "
                   ++ (if null prevDeps
                       then ""
                       else "(t ≤ first occ of " ++ show prevDeps ++ ") ")
-                  ++ (if occSeen then "OccSeen " else " ")
-                  ++ "cont=" ++ showPeakEventM cont
+                  ++ "cont=" ++ showPeakValueM cont
                   ++ ": " ++ msg
-          in Derivation (oldTrace `appendDerTrace` dMsg) ttspan prevDeps occSeen cont
+          in Derivation (oldTrace `appendDerTrace` dMsg) ttspan prevDeps cont
 
-    DeriveAfterFirstOcc oldTrace tspan dep cont
+    DeriveAfterFirstChange oldTrace tspan dep cont
       -> let dMsg = "After first occ of " ++ show dep
                   ++ " s.t. t∈" ++ show tspan ++ " "
-                  ++ "cont=" ++ showPeakEventM cont
+                  ++ "cont=" ++ showPeakValueM cont
                   ++ ": " ++ msg
-          in DeriveAfterFirstOcc (oldTrace `appendDerTrace` dMsg) tspan dep cont
+          in DeriveAfterFirstChange (oldTrace `appendDerTrace` dMsg) tspan dep cont
 
-    AfterClearanceTime oldTrace tspan prevDeps cont
-      -> let
-          dMsg = "If no PrevE deps " ++ show prevDeps ++ " occur at t=" ++ show ct ++ ": "
-                  ++ show tspan
-                  ++ "cont=" ++ showPeakEventM cont
-                  ++ ": " ++ msg
-          Just ct = spanExcJustBefore tspan
-          in AfterClearanceTime (oldTrace `appendDerTrace` dMsg) tspan prevDeps cont
     where
     showTtspan (DS_Point t) = "t=" ++ show t
     showTtspan (DS_SpanExc tspan) = "t∈" ++ show tspan
 
-    showPeakEventM :: EventM a -> String
-    showPeakEventM (Pure _) = "Pure{}"
-    showPeakEventM NoOcc = "NoOcc"
-    showPeakEventM (GetE ix _) = "(GetE " ++ show ix ++ " _)"
-    showPeakEventM (PrevE ix _) = "(PrevE " ++ show ix ++ " _)"
+    showPeakValueM :: ValueM a -> String
+    showPeakValueM (Pure _) = "Pure{}"
+    showPeakValueM (GetV ix _) = "(GetV " ++ show ix ++ " _)"
+    showPeakValueM (PrevV ix _ _) = "(PrevV " ++ show ix ++ " _ _)"

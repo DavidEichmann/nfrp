@@ -27,7 +27,7 @@ import Data.Void (Void)
 import Data.Coerce
 import qualified StmContainers.Map as SM
 import Unsafe.Coerce
-
+{-
 import Theory
   ( DerivationSpan(..)
   , EIx(..)
@@ -332,3 +332,5 @@ untilJust go = do
   case aMay of
     Nothing -> retry
     Just a -> return a
+
+-}
