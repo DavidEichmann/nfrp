@@ -30,11 +30,16 @@ module Timeline
     , size
     , null
     , insert
+    , constrainTimeSpan
+    , lookup
+    , lookup'
+    , lookupGT'
     , elems
+    , elemsGT
     , TimeSpan(..)
     ) where
 
-import Prelude hiding (null)
+import Prelude hiding (lookup, null)
 import Data.List (foldl')
 import Data.Maybe (maybeToList)
 
@@ -78,12 +83,71 @@ insert ta a tl = case tl of
             ++ "`: overlapping existing times span of `"
             ++ show tb ++ "`."
 
+-- | All elements in chronological order
 elems :: Timeline a -> [(TimeSpan, a)]
 elems tl = case tl of
     Empty -> []
     Timeline _ ts a l r -> elems l ++ [(ts, a)] ++ elems r
 
+-- | Elements in chronological order that contain the time just after the give Time.
+elemsGT :: Time -> Timeline a -> [(TimeSpan, a)]
+elemsGT t tl = case tl of
+    Empty -> []
+    Timeline _ ta a l r -> case timeCompareTimeSpan t ta of
+        TTSO_Before -> elemsGT t l ++ [(ta, a)] ++ elems l
+        TTSO_During -> case ta of
+            DS_Point _   -> elems l -- omit `ta` as it is equal not greater than t.
+            DS_SpanExc _ -> (ta, a) : elems l
+        TTSO_After  -> elemsGT t r
 
+lookup :: Time -> Timeline a -> Maybe a
+lookup t = fmap snd . lookup' t
+
+lookup' :: Time -> Timeline a -> Maybe (TimeSpan, a)
+lookup' t tl = case tl of
+    Empty -> Nothing
+    Timeline _ ts a l r -> case timeCompareTimeSpan t ts of
+        TTSO_Before -> lookup' t l
+        TTSO_During -> Just (ts, a)
+        TTSO_After  -> lookup' t r
+
+-- | Lookup the value just after the given time
+lookupGT' :: Time -> Timeline a -> Maybe (TimeSpan, a)
+lookupGT' t tl = case elemsGT t tl of
+    x@(ts,_):_
+        | DS_SpanExc tss <- ts -- lookupGT' can only return a DS_SpanExc fact.
+        , spanExcJustBefore tss == Just t
+        -> Just x
+    _ -> Nothing
+
+union :: Timeline a -> Timeline a -> Timeline a
+union = error "TODO implement union"
+
+-- | Get only facts that intersect the time span. This also crops the facts that
+-- span the edge of the time span.
+constrainTimeSpan :: TimeSpan -> Timeline a -> Timeline a
+constrainTimeSpan = error "TODO implement constrainTimeSpan"
+
+instance Semigroup (Timeline a) where
+    (<>) = union
+
+
+data TimeVsTimeSpanOrdering
+    = TTSO_Before
+    | TTSO_During
+    | TTSO_After
+
+timeCompareTimeSpan :: Time -> TimeSpan -> TimeVsTimeSpanOrdering
+timeCompareTimeSpan t ts = case ts of
+    DS_Point t'
+        | t < t'     -> TTSO_Before
+        | t == t'    -> TTSO_During
+        | otherwise  -> TTSO_After
+    DS_SpanExc tse
+        | tse `contains` t -> TTSO_During
+        | Just lo <- spanExcJustBefore tse
+        , t <= lo -> TTSO_Before
+        | otherwise -> TTSO_After
 
 data TimeSpanOrdering
     = TSO_LT

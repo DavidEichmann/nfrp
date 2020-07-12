@@ -39,11 +39,12 @@ import GHC.Exts (Any)
 
 import Time
 import TimeSpan
+import Timeline (Timeline)
+import qualified Timeline as T
 
+import qualified Theory as Th
 import Theory
-  ( ValueFact(..)
-  , SomeValueFact(..)
-  , factTrace
+  ( factTrace
   , VIx(..)
   , SomeVIx(..)
 
@@ -76,25 +77,84 @@ import Theory
   , prevVWhere
   )
 
+
+
+
+
+
+{-
+
+I'm in the process of changing the KnowledgeBase's representation of Facts from
+a map from `VIx a` to `[ValueFact a]` to `Facts` which is a `Timeline`.
+This means that the TimeSpan is no loger attached to the fact, but is implied by
+it's position in the timeline, so now a "fact" is just `(DerivationTrace a, a)`.
+So I've removed ValueFact, now I need to update the usages, and gain some
+performance benfits while I do that.
+
+Once this code is compling again, run the tests. My latest test is a model test
+of TheoryFast against Theory. If that passes, then run the Benchmark and append
+the git commit hash and benchmark time in PERFORMANCE.md
+
+Then you'll have to continue making this more efficient! The most important thing
+is changing the dirty flag in KnowledgeBase from Bool to something similar to a
+TimeLine, where we mark the parts of the timeline that are dirty (i.e. we've
+learned new facts about). Then we need to store Derivations in a Timeline like
+structure too so that we can directly identify the derivations that need to be
+continued (based on what is dirty) instead of trying to continue all derivations
+in each iteration.
+
+
+
+
+-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 -- | Facts about a single value.
-type ValueFacts a = [ValueFact a]
+type ValueTimeline a = Timeline (DerivationTrace a, a)
 
 -- | A bunch of facts about possibly many values.
-newtype Facts = Facts (IntMap (ValueFacts Any))
+newtype Facts = Facts (IntMap (ValueTimeline Any))
 
 instance Semigroup Facts where
   (Facts a) <> (Facts b) = Facts $ IM.unionWith (<>) a b
 
-listToFacts :: [SomeValueFact] -> Facts
-listToFacts someValueFacts = Facts $ IM.fromListWith (++)
-    [ (vix, [(unsafeCoerce :: ValueFact a -> ValueFact Any) fact])
-    | SomeValueFact (VIx vix :: VIx a) fact <- someValueFacts
+listToFacts :: [Th.SomeValueFact] -> Facts
+listToFacts someValueFacts = Facts $ IM.fromListWith (<>)
+    [ ( vix
+      , T.fromList [(
+        factTSpan fact,
+        (unsafeCoerce :: (DerivationTrace a, a) -> (DerivationTrace Any, Any)) $
+          case fact of
+                  Th.Fact_SpanExc derT _ a -> (derT, a)
+                  Th.Fact_Point   derT _ a -> (derT, a)
+        )]
+      )
+    | Th.SomeValueFact (VIx vix :: VIx a) fact <- someValueFacts
     ]
 
-valueFacts :: VIx a -> Facts -> ValueFacts a
+valueFacts :: VIx a -> Facts -> ValueTimeline a
 valueFacts (VIx vix) (Facts vb) = case IM.lookup vix vb of
-  Nothing -> []
-  Just fs -> (unsafeCoerce :: ValueFacts Any -> ValueFacts a) fs
+  Nothing -> T.empty
+  Just fs -> (unsafeCoerce :: ValueTimeline Any -> ValueTimeline a) fs
 
 type Derivations = [SomeDerivation]
 
@@ -107,7 +167,7 @@ data KnowledgeBase = KnowledgeBase
   , kbDirty :: Bool
   }
 
-kbValueFacts :: VIx a -> KnowledgeBase -> ValueFacts a
+kbValueFacts :: VIx a -> KnowledgeBase -> ValueTimeline a
 kbValueFacts vix kb = valueFacts vix (kbFacts kb)
 
 lookupVKB :: Time -> VIx a -> KnowledgeBase -> MaybeKnown a
@@ -117,19 +177,17 @@ lookupVKBTrace :: Time -> VIx a -> KnowledgeBase -> MaybeKnown (DerivationTrace 
 lookupVKBTrace t eix kb = lookupVTrace t eix (kbFacts kb)
 
 lookupV :: Time -> VIx a -> Facts -> MaybeKnown a
-lookupV t eix facts = fmap
-  (\case
-    Fact_SpanExc _ _ v -> v
-    Fact_Point   _ _ v -> v
-  )
-  (lookupVFact t eix facts)
+lookupV t eix facts = snd <$> lookupVFact t eix facts
 
 lookupVTrace :: Time -> VIx a -> Facts -> MaybeKnown (DerivationTrace a)
-lookupVTrace t eix facts = factTrace <$> lookupVFact t eix facts
+lookupVTrace t vix facts = fst <$> lookupVFact t vix facts
 
-lookupVFact :: Time -> VIx a -> Facts -> MaybeKnown (ValueFact a)
-lookupVFact t eix facts = MaybeKnown $ listToMaybe $
-  filter ((`intersects` t) . factTSpan) (valueFacts eix facts)
+lookupVFact :: Time -> VIx a -> Facts -> MaybeKnown (DerivationTrace a, a)
+lookupVFact t vix facts = MaybeKnown $ do
+  let vfs = valueFacts vix facts
+  lookup' t vfs
+-- lookupVFact t vix facts = MaybeKnown $ listToMaybe $
+--   filter ((`intersects` t) . factTSpan) (valueFacts vix facts)
 
 type KnowledgeBaseM a = State KnowledgeBase a
 
@@ -199,7 +257,7 @@ solution1 inputs = execState iterateUntilChange initialKb
     -- ^ Current facts. Used to query for existing facts
     -> Derivation a
     -- ^ Derivation to step
-    -> Maybe ([ValueFact a], [Derivation a])
+    -> Maybe (ValueTimeline a, [Derivation a])
     -- ^ Nothing if no progress. Else Just the new facts and new derivations.
   pokeDerivation eix allDerivations facts derivation = case derivation of
       Derivation dtrace ttspan prevDeps contDerivation -> case contDerivation of
@@ -391,9 +449,9 @@ solution1 inputs = execState iterateUntilChange initialKb
         stepCompleteWithPrevDeps
           :: a
             -- ^ The derived value (The derivation must have ended with some `Pure a`).
-          -> Maybe ([ValueFact a], [Derivation a])
+          -> Maybe ([ValueTimeline a], [Derivation a])
             -- ^ Taking into account the PrevV deps, if progress can be made,
-            -- return the new ValueFact(s) and any new Derivation(s)
+            -- return the new Facts(s) and any new Derivation(s).
         stepCompleteWithPrevDeps val = case ttspan of
 
           -- If the ttspan is a point time, then this is easy! Pure x means x.
@@ -489,20 +547,14 @@ solution1 inputs = execState iterateUntilChange initialKb
           --
           -- Nothing: No fact spanning the time.
           -- Just Nothing: Fact found that goes to infinity
-          -- Just t: Fact found that ends at time t (exclusive)
+          -- Just (Just t): Fact found that ends at time t (exclusive)
           neighborsAndClearanceByFacts
             :: SomeVIx
             -> Maybe (Maybe Time)
           neighborsAndClearanceByFacts (SomeVIx ix) = findClearanceAfter tLo
             where
             findClearanceAfter :: Maybe Time -> Maybe (Maybe Time)
-            findClearanceAfter t = listToMaybe
-              [ spanExcJustAfter tspan
-              | Fact_SpanExc _ tspan _ <- valueFacts ix facts
-              , case t of
-                  Nothing -> spanExcJustBefore tspan == Nothing
-                  Just tt -> tspan `contains` tt
-              ]
+            findClearanceAfter t = spanExcJustAfter <$> T.lookupGT' t facts
 
           -- | Get the neighbors (PrevV deps) and local clearance time of a
           -- single VIx. Only considers active Derivations, not facts.
@@ -607,11 +659,12 @@ searchForFirstChange
   -> Facts
   -- ^ All known facts.
   -> FirstValueChange
-searchForFirstChange tspan eix allFacts = let
-  (facts, _unknownDSpans) = spanLookupVFacts (DS_SpanExc tspan) eix allFacts
-  firstKnownTChangeMay     = minimumMay [ t | Fact_Point _ t _  <- facts]
-  firstKnownTSpanChangeMay = listToMaybe $ sortBy (compare `on` spanExcJustBefore)
-                                        [ tspan' | Fact_SpanExc _ tspan' _  <- facts]
+searchForFirstChange tspan vix allFacts = let
+  -- TODO I think this could be simplified by pattern matching on facts with
+  -- some guards.
+  facts = elems $ constrainTimeSpan (DS_SpanExc tspan) (factV vix allFacts)
+  firstKnownTChangeMay     = headMay [ t      | (DS_Point   t     , _) <- facts]
+  firstKnownTSpanChangeMay = headMay [ tspan' | (DS_SpanExc tspan', _) <- facts]
   in case firstKnownTSpanChangeMay of
     Nothing -> case firstKnownTChangeMay of
       Just firstKnownChangeTime -> FirstChangeIsAtOrBefore firstKnownChangeTime
@@ -773,7 +826,7 @@ spanLookupVFacts
   -- ^ Event to lookup
   -> Facts
   -- ^ All known facts.
-  -> ([ValueFact a], [TimeSpan])
+  -> (ValueTimeline a, [TimeSpan])
   -- ^ ( Facts about the given VIx
   --   , unknown times and time spans )
   --   The union of these facts and times and time spans should exactly

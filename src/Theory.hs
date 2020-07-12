@@ -28,7 +28,7 @@ module Theory
   import Data.Kind
   import Data.List (find, foldl', sortBy)
   import Data.Function (on)
-  import Data.Maybe (fromMaybe, listToMaybe, mapMaybe, maybeToList, fromJust)
+  import Data.Maybe (fromMaybe, listToMaybe, mapMaybe, fromJust)
   import qualified Data.Set as S
   import Safe
   import Unsafe.Coerce
