@@ -16,18 +16,22 @@ import Data.Maybe (catMaybes, isJust, isNothing, fromMaybe)
 -- import FRP
 import Time (Time)
 import TimeSpan
-import Theory
+import Theory (VIx(..))
+import Theory as T
+import TheoryFast as TF
 -- import KnowledgeBase
 -- import KnowledgeBase.Timeline
 import System.Environment
 
 main :: IO ()
 main = do
-    nStr:_ <- getArgs
+    nStr:imp:_ <- getArgs
     let (vixs, ts, ins) = syntheticN (read nStr)
-        kb = solution1 ins
+        lookupV = case imp of
+            "t"  -> let kb =  T.solution1 ins in \t vix -> T.lookupVKB t vix kb
+            "tf" -> let kb = TF.solution1 ins in \t vix ->TF.lookupVKB t vix kb
     print $ sum
-        [ case lookupVKB t vix kb of
+        [ case lookupV t vix of
             Known x -> x
             Unknown -> 0
         | vix <- vixs

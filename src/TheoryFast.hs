@@ -17,7 +17,10 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeInType #-}
 
-module TheoryFast where
+module TheoryFast
+  ( module TheoryFast
+  , module Theory
+  ) where
 
 import Control.Monad (when)
 import Control.Monad.Trans.State.Strict (State, execState, gets, modify)
@@ -36,6 +39,8 @@ import GHC.Exts (Any)
 
 import Time
 import TimeSpan
+
+import Debug.Trace
 
 import Theory
   ( ValueFact(..)
@@ -67,6 +72,10 @@ import Theory
   , DerivationTrace
   , DerivationTraceEl
   , appendDerTrace
+
+  , getV
+  , prevV
+  , prevVWhere
   )
 
 
@@ -174,9 +183,9 @@ solution1 inputs = execState iterateUntilChange initialKb
                   case pokeDerivation vix allDers allFacts der of
                     Nothing -> loop (i + 1)
                     Just (newFacts, newDers) -> do
-                      modify (\kb -> KnowledgeBase
-                        { kbFacts = (listToFacts (SomeValueFact vix <$> newFacts)) <> kbFacts kb
-                        , kbDerivations = (SomeDerivation vix <$> newDers) <> kbDerivations kb
+                      modify (\_ -> KnowledgeBase
+                        { kbFacts = (listToFacts (SomeValueFact vix <$> newFacts)) <> allFacts
+                        , kbDerivations = (SomeDerivation vix <$> newDers) <> take i allDers <> drop (i+1) allDers
                         , kbDirty = True
                         })
     loop 0
