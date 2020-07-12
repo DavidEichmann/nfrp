@@ -25,6 +25,7 @@ library
         , Lazy
         , Reactor
         , Theory
+        , TheoryFast
         , Time
         , TimeSpan
     hs-source-dirs: src
