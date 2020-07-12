@@ -17,7 +17,10 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeInType #-}
 
-module Theory where
+module Theory
+  ( module Theory
+  , TimeSpan(..)
+  ) where
 
   import qualified Control.Monad as M
   import Control.Applicative
@@ -32,6 +35,7 @@ module Theory where
 
   import Time
   import TimeSpan
+  import Timeline (TimeSpan(..))
 
   type DerivationTraceEl a = String
   type DerivationTrace a = [DerivationTraceEl a]
@@ -44,7 +48,7 @@ module Theory where
 
   -- type EventFact a = ValueFact (MaybeOcc a)  -- ^ Invariant: all Fact_SpanExc have `Nothing` values.
 
-  factTSpan :: ValueFact a -> DerivationSpan
+  factTSpan :: ValueFact a -> TimeSpan
   factTSpan (Fact_SpanExc _ tspan _) = DS_SpanExc tspan
   factTSpan (Fact_Point _ t _) = DS_Point t
 
@@ -209,7 +213,7 @@ module Theory where
     --     . lookup t eix = deriveEgo t contDerivation
     = Derivation
       { derTrace :: DerivationTrace a
-      , derTtspan :: DerivationSpan
+      , derTtspan :: TimeSpan
       -- ^ Time span/point of jurisdiction.
       , derPrevDeps :: [SomeVIx]
       -- ^ dependencies via PrevV
@@ -224,13 +228,6 @@ module Theory where
       , derAfterDep   :: VIx b
       , derAfterContDerivation :: ValueM a
       }
-
-  data DerivationSpan
-    -- | DS_Point x ⟹ t < x
-    = DS_Point Time
-    -- | DS_SpanExc tspan ⟹ t ∈ tspan
-    | DS_SpanExc SpanExc
-    deriving (Show)
 
     -- -- | DS_SpanExc tspan ⟹ t ∈ tspan
     -- | DS_SpanExcInc SpanExcInc
@@ -811,7 +808,7 @@ module Theory where
 
   -- | Directly lookup the previous value for an event over a span of time.
   spanLookupPrevV
-    :: DerivationSpan
+    :: TimeSpan
     -- ^ Time or span to lookup
     -> VIx a
     -- ^ Event to lookup
@@ -819,7 +816,7 @@ module Theory where
     -- ^ predicate / projection.
     -> [SomeValueFact]
     -- ^ All known facts.
-    -> ([(DerivationSpan, Maybe b)], [DerivationSpan])
+    -> ([(TimeSpan, Maybe b)], [TimeSpan])
     -- ^ ( Known values about the given VIx
     --   , unknown times and time spans )
     --   The union of these times and time spans should exactly
@@ -845,7 +842,7 @@ module Theory where
     -- ^ predicate / projection.
     -> [SomeValueFact]
     -- ^ All known facts.
-    -> [(DerivationSpan, Maybe b)]
+    -> [(TimeSpan, Maybe b)]
     -- ^ All known previous event values (if one exists)
   prevVFacts eix predicate allFacts = concat
     [ case fact of
@@ -866,13 +863,13 @@ module Theory where
   -- | Directly look up all known facts for a given VIx and time or time
   -- span.
   spanLookupVFacts
-    :: DerivationSpan
+    :: TimeSpan
     -- ^ Time or span to lookup
     -> VIx a
     -- ^ Event to lookup
     -> [SomeValueFact]
     -- ^ All known facts.
-    -> ([ValueFact a], [DerivationSpan])
+    -> ([ValueFact a], [TimeSpan])
     -- ^ ( Facts about the given VIx
     --   , unknown times and time spans )
     --   The union of these facts and times and time spans should exactly
@@ -897,55 +894,6 @@ module Theory where
 {- APPENDIX -}
 
   -- TODO
-
-  instance Intersect DerivationSpan SpanExc (Maybe DerivationSpan) where intersect = flip intersect
-  instance Intersect SpanExc DerivationSpan (Maybe DerivationSpan) where
-    intersect t (DS_Point t')     = DS_Point   <$> intersect t t'
-    intersect t (DS_SpanExc tspan)  = DS_SpanExc <$> intersect t tspan
-
-  instance Intersect Time DerivationSpan (Maybe Time) where intersect = flip intersect
-  instance Intersect DerivationSpan Time (Maybe Time) where
-    intersect (DS_Point t)     t' = intersect t t'
-    intersect (DS_SpanExc tspan) t  = intersect tspan t
-
-  instance Intersect DerivationSpan DerivationSpan (Maybe DerivationSpan) where
-    intersect (DS_Point t)     ds = DS_Point <$> intersect t ds
-    intersect (DS_SpanExc tspan) ds = intersect tspan ds
-
-  instance Contains DerivationSpan DerivationSpan where
-    contains (DS_Point a) (DS_Point b) = contains a b
-    contains (DS_Point a) (DS_SpanExc b) = contains a b
-    contains (DS_SpanExc a) (DS_Point b) = contains a b
-    contains (DS_SpanExc a) (DS_SpanExc b) = contains a b
-
-  instance Contains SpanExc DerivationSpan where
-    contains a (DS_Point b) = contains a b
-    contains a (DS_SpanExc b) = contains a b
-
-  instance Contains DerivationSpan Time where
-    contains (DS_Point t) t' = contains t t'
-    contains (DS_SpanExc tspan) t = contains tspan t
-
-  instance Difference DerivationSpan DerivationSpan [DerivationSpan] where
-    difference (DS_Point a) (DS_Point b)
-      | a == b = []
-      | otherwise = [DS_Point a]
-    difference (DS_Point a) (DS_SpanExc b) = fmap DS_Point . maybeToList $ a `difference` b
-    difference (DS_SpanExc a) (DS_Point b) = DS_SpanExc <$> a `difference` b
-    difference (DS_SpanExc a) (DS_SpanExc b) = concat
-      [ l ++ r
-      | let (x, y) = a `difference` b
-      , let l = case x of
-              Nothing -> []
-              Just (tspan, t) -> [DS_SpanExc tspan, DS_Point t]
-      , let r = case y of
-              Nothing -> []
-              Just (t, tspan) -> [DS_SpanExc tspan, DS_Point t]
-      ]
-  instance Difference [DerivationSpan] DerivationSpan [DerivationSpan] where
-    difference a b = concatMap (`difference` b) a
-  instance Difference DerivationSpan [DerivationSpan] [DerivationSpan] where
-    difference a bs = foldl' difference [a] bs
 
   withDerTrace
     :: Derivation a

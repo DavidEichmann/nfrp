@@ -56,7 +56,7 @@ import Theory
 --   , SomeDerivation(..)
 --   , startDerivationForAllTime
 
-  , DerivationSpan(..)
+  , TimeSpan(..)
 --   , factTSpan
 
 --   , DerivationTrace
@@ -69,7 +69,7 @@ import Theory
 --
 
 data Region a
-  = Region_Fact (VIx a) DerivationSpan
+  = Region_Fact (VIx a) TimeSpan
 
 -- | Describes the change in knowlage after inserting one or many facts.
 data Diff
@@ -121,7 +121,7 @@ insertFact = _
 valueMForAllTimeToReaction :: forall a . VIx a -> ValueM a -> Reaction ()
 valueMForAllTimeToReaction vix valueMTop = go (DS_SpanExc allT) valueMTop
   where
-  go :: DerivationSpan -> ValueM a -> Reaction ()
+  go :: TimeSpan -> ValueM a -> Reaction ()
   go derSpan valueM = case valueM of
     Pure a -> write (Region_Fact vix derSpan) a
     GetV vixB cont -> forkOnValue vixB derSpan $ \derSpan' b -> go derSpan' (cont b)
@@ -139,7 +139,7 @@ valueMForAllTimeToReaction vix valueMTop = go (DS_SpanExc allT) valueMTop
 -- Some handy Reaction patterns
 --
 
-forkOnValue :: VIx a -> DerivationSpan -> (DerivationSpan -> a -> Reaction ()) -> Reaction ()
+forkOnValue :: VIx a -> TimeSpan -> (TimeSpan -> a -> Reaction ()) -> Reaction ()
 forkOnValue = _
 -}
 
@@ -729,7 +729,7 @@ lookupCurrE t eix predicate allFacts = let
 
 -- | Directly lookup the previous value for an event over a span of time.
 spanLookupPrevV
-  :: DerivationSpan
+  :: TimeSpan
   -- ^ Time or span to lookup
   -> VIx a
   -- ^ Event to lookup
@@ -737,7 +737,7 @@ spanLookupPrevV
   -- ^ predicate / projection.
   -> [SomeValueFact]
   -- ^ All known facts.
-  -> ([(DerivationSpan, Maybe b)], [DerivationSpan])
+  -> ([(TimeSpan, Maybe b)], [TimeSpan])
   -- ^ ( Known values about the given VIx
   --   , unknown times and time spans )
   --   The union of these times and time spans should exactly
@@ -763,7 +763,7 @@ prevVFacts
   -- ^ predicate / projection.
   -> [SomeValueFact]
   -- ^ All known facts.
-  -> [(DerivationSpan, Maybe b)]
+  -> [(TimeSpan, Maybe b)]
   -- ^ All known previous event values (if one exists)
 prevVFacts eix predicate allFacts = concat
   [ case fact of
@@ -784,13 +784,13 @@ prevVFacts eix predicate allFacts = concat
 -- | Directly look up all known facts for a given VIx and time or time
 -- span.
 spanLookupVFacts
-  :: DerivationSpan
+  :: TimeSpan
   -- ^ Time or span to lookup
   -> VIx a
   -- ^ Event to lookup
   -> [SomeValueFact]
   -- ^ All known facts.
-  -> ([ValueFact a], [DerivationSpan])
+  -> ([ValueFact a], [TimeSpan])
   -- ^ ( Facts about the given VIx
   --   , unknown times and time spans )
   --   The union of these facts and times and time spans should exactly

@@ -28,6 +28,7 @@ library
         , TheoryFast
         , Time
         , TimeSpan
+        , Timeline
     hs-source-dirs: src
     default-language: Haskell2010
     ghc-options: -fprof-auto -Wall
