@@ -24,6 +24,7 @@ library
         , KnowledgeBase.Ix
         , Lazy
         , Reactor
+        , Synthetic
         , Theory
         , TheoryFast
         , Time
