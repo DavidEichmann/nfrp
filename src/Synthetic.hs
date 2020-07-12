@@ -9,21 +9,11 @@
 
 module Synthetic where
 
-import qualified GHC.Generics as GHC
-import Control.Monad (when)
-import Data.Kind (Type)
-import Data.Maybe (catMaybes, isJust, isNothing, fromMaybe)
+import Data.Maybe (catMaybes)
 
--- import NFRP
--- import FRP
 import Time (Time)
 import TimeSpan
-import Theory (VIx(..))
-import Theory as T
-import TheoryFast as TF
--- import KnowledgeBase
--- import KnowledgeBase.Timeline
-import System.Environment
+import Theory (Inputs, InputEl(..), VIx(..), ValueFact(..), prevVWhere, getV)
 
 -- | Synthetic inputs and VIx/times that should be sampled
 syntheticN :: Int -> ([VIx Int], [Time], Inputs)

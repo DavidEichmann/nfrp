@@ -21,9 +21,11 @@ import Generics.SOP
 
 -- import NFRP
 -- import FRP
+import Synthetic
 import Time (Time)
 import TimeSpan
-import Theory
+import Theory as T
+import qualified TheoryFast as TF
 -- import KnowledgeBase
 -- import KnowledgeBase.Timeline
 
@@ -589,6 +591,19 @@ tests = testGroup "lcTransaction"
         lookupVKB 27 out kb @?= Known 16
         lookupVKB 30 out kb @?= Known 16
         lookupVKB 35 out kb @?= Known 6
+    ]
+
+  , testGroup "TheoryFast"
+    [ testCase "vs Theory on Synthetic 10" $ do
+        let n = 10
+            (vixs, ts, ins) = syntheticN n
+            lookupT  = let kb =  T.solution1 ins in \t vix -> T.lookupVKB t vix kb
+            lookupTF = let kb = TF.solution1 ins in \t vix ->TF.lookupVKB t vix kb
+        sequence_
+            [ lookupTF t vix @?= lookupT t vix
+            | vix <- vixs
+            , t <- ts
+            ]
     ]
   ]
 
