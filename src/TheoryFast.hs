@@ -29,8 +29,6 @@ import Control.Applicative
 -- import Data.Kind
 import Data.List (find, sortBy)
 import Data.Function (on)
-import qualified Data.Map as M
-import           Data.Map (Map)
 import qualified Data.IntMap as IM
 import           Data.IntMap (IntMap)
 import Data.Maybe (fromMaybe, listToMaybe, mapMaybe, fromJust)
@@ -293,6 +291,7 @@ solution1 inputs = execState iterateUntilChange initialKb
               in fromMaybe
                 ([], [newDer])
                 (pokeDerivation eix allDerivations facts newDer)
+            _ -> undefined
 
           -- !! The Plan
           -- !! Try and split on facts about eixB.
@@ -345,6 +344,7 @@ solution1 inputs = execState iterateUntilChange initialKb
                           ++ " and solve for the rest of the time span if any.")
                       ]
                     )
+                _ -> undefined
             in case factsAndUnknownsMay of
               -- TODO I think we don't necessarily need to detect deadlock, we
               -- can always just assume there might be deadlock and derive
@@ -759,6 +759,7 @@ prevVFacts eix predicate allFacts = concat
       in case mayPrevVMay of
           Unknown -> []
           Known prevVMay -> (DS_SpanExc tspan, prevVMay) : [(DS_Point nextT, prevVMay) | Just nextT <- [spanExcJustAfter tspan]]
+          _ -> undefined
     Fact_Point _ _ _ -> [] -- Point knowledge is handled by the above case
   | fact <- valueFacts eix allFacts
   ]
