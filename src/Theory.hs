@@ -71,7 +71,7 @@ module Theory
   pattern NoOcc = MaybeOcc Nothing
   {-# COMPLETE Occ, NoOcc #-}
 
-  newtype VIx (a :: Type) = VIx Int     -- Index of an event
+  newtype VIx (a :: Type) = VIx { unVIx :: Int}     -- Index of an event
     deriving newtype (Eq, Ord, Show, Hashable)
 
   data SomeVIx = forall a . SomeVIx (VIx a)
@@ -417,7 +417,7 @@ module Theory
               tspanLo = spanExcJustBefore tspan
               prevValMayIfKnown = case tspanLo of
                 Nothing -> Known Nothing -- Known: there is no previous value.
-                Just tLo -> lookupCurrE tLo eixB predicate facts
+                Just tLo -> lookupCurrV tLo eixB predicate facts
               in case prevValMayIfKnown of
                 Unknown -> Nothing
                 Known prevValMay -> Just
@@ -754,7 +754,7 @@ module Theory
                 -- The fact does not satisfy the predicate. Keep searching.
                 Nothing -> case spanExcJustBefore tspan of
                   Nothing -> Just Nothing
-                  Just tLo -> maybeKnownToMaybe $ lookupCurrE tLo eix predicate allFacts
+                  Just tLo -> maybeKnownToMaybe $ lookupCurrV tLo eix predicate allFacts
             | otherwise -> Nothing
           Fact_Point _ _ _ -> Nothing
         )
@@ -775,10 +775,10 @@ module Theory
     --   Nothing -> Unknown
     --   Just tspan -> case spanExcJustBefore tspan of
     --     Nothing -> Known Nothing
-    --     Just t' -> lookupCurrE t' eix allFacts
+    --     Just t' -> lookupCurrV t' eix allFacts
 
   -- | Directly look up the current (i.e. latest) event occurrence (equal or before the given time).
-  lookupCurrE
+  lookupCurrV
     :: Time
     -- ^ Time t
     -> VIx a
@@ -791,7 +791,7 @@ module Theory
     -- ^ Unknown: if unknown
     -- Known Nothing: if no value satisfying the predicate occurs at or before t.
     -- Known (Just b): the latest (projected) value satisfying the predicate (at or before t).
-  lookupCurrE t eix predicate allFacts = let
+  lookupCurrV t eix predicate allFacts = let
     factMay = find (\f -> factTSpan f `contains` t) (factsV' eix allFacts)
     in case factMay of
       Nothing -> Unknown
@@ -800,7 +800,7 @@ module Theory
           Just b -> Known (Just b)
           Nothing -> case spanExcJustBefore tspan of
             Nothing -> Known Nothing
-            Just t' -> lookupCurrE t' eix predicate allFacts
+            Just t' -> lookupCurrV t' eix predicate allFacts
         Fact_Point _ _ a -> case predicate a of
           Nothing -> lookupPrevV t eix predicate allFacts
           Just b  -> Known (Just b)
@@ -852,7 +852,7 @@ module Theory
           -- Span starts at -∞ so that's a known Nothing previous event
           Nothing -> Known Nothing
           -- Span starts at a time prevT
-          Just prevT -> lookupCurrE prevT eix predicate allFacts
+          Just prevT -> lookupCurrV prevT eix predicate allFacts
         in case mayPrevVMay of
             Unknown -> []
             Known prevVMay -> (DS_SpanExc tspan, prevVMay) : [(DS_Point nextT, prevVMay) | Just nextT <- [spanExcJustAfter tspan]]

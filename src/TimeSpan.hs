@@ -138,6 +138,29 @@ spanExcJustAfter (SpanExc _ (Or (LeftSpaceExc t))) = Just t
 spanExcSameLowerBound :: SpanExc -> SpanExc -> Bool
 spanExcSameLowerBound a b = spanExcJustBefore a == spanExcJustBefore b
 
+data Span = Span SpanBound SpanBound
+data SpanBound
+    = Open
+    | ClosedInc Time
+    | ClosedExc Time
+
+mkSpan :: SpanBound -> SpanBound -> Maybe Span
+mkSpan l h = case (l, h) of
+    (Open,  _  ) -> Just (Span Open h)
+    (_   , Open) -> Just (Span l Open)
+    (ClosedInc a, ClosedInc b)
+        | a <= b      -> Just (Span l Open)
+        | otherwise   -> Nothing
+    (ClosedExc a, ClosedExc b)
+        | a < b       -> Just (Span l Open)
+        | otherwise   -> Nothing
+    (ClosedExc a, ClosedInc b)
+        | a < b       -> Just (Span l Open)
+        | otherwise   -> Nothing
+    (ClosedInc a, ClosedExc b)
+        | a < b       -> Just (Span l Open)
+        | otherwise   -> Nothing
+
 class Intersect a b c | a b -> c where
     intersect :: a -> b -> c
 
@@ -157,12 +180,67 @@ class Contains a b where
 -- | Covering all of time
 class AllT a where allT :: a
 instance AllT SpanExc where allT = SpanExc All All
+instance AllT Span where allT = Span Open Open
+
+spanExcToSpan :: SpanExc -> Span
+spanExcToSpan (SpanExc l r)
+    = Span
+        (case l of
+            All -> Open
+            Or (RightSpaceExc t) -> ClosedExc t
+        )
+        (case r of
+            All -> Open
+            Or (LeftSpaceExc t) -> ClosedExc t
+        )
+
+beforeSpan :: Span -> Maybe Span
+beforeSpan (Span l _) = case l of
+    Open -> Nothing
+    ClosedInc t -> Just (Span Open (ClosedExc t))
+    ClosedExc t -> Just (Span Open (ClosedInc t))
+
+afterSpan :: Span -> Maybe Span
+afterSpan (Span _ r) = case r of
+    Open -> Nothing
+    ClosedInc t -> Just (Span (ClosedExc t) Open)
+    ClosedExc t -> Just (Span (ClosedInc t) Open)
 
 class IsAllT a where isAllT :: a -> Bool
 instance IsAllT LeftSpaceExc where isAllT _ = False
 instance IsAllT RightSpaceExc where isAllT _ = False
 instance IsAllT LeftSpaceInc where isAllT _ = False
 instance IsAllT RightSpaceInc where isAllT _ = False
+
+instance Intersect Span Span (Maybe Span) where
+    intersect (Span l1 h1) (Span l2 h2) = mkSpan l h
+        where
+        l = case (l1, l2) of
+                (Open, _) -> l2
+                (_, Open) -> l1
+                (ClosedInc a, ClosedInc b) -> ClosedInc (max a b)
+                (ClosedExc a, ClosedExc b) -> ClosedExc (max a b)
+                (ClosedInc a, ClosedExc b) -> case compare a b of
+                    LT -> ClosedExc b
+                    EQ -> ClosedExc b
+                    GT -> ClosedInc a
+                (ClosedExc a, ClosedInc b) -> case compare a b of
+                    LT -> ClosedInc b
+                    EQ -> ClosedExc b
+                    GT -> ClosedExc a
+        h = case (h1, h2) of
+                (Open, _) -> h2
+                (_, Open) -> h1
+                (ClosedInc a, ClosedInc b) -> ClosedInc (min a b)
+                (ClosedExc a, ClosedExc b) -> ClosedExc (min a b)
+                (ClosedInc a, ClosedExc b) -> case compare a b of
+                    LT -> ClosedInc a
+                    EQ -> ClosedExc a
+                    GT -> ClosedExc b
+                (ClosedExc a, ClosedInc b) -> case compare a b of
+                    LT -> ClosedExc a
+                    EQ -> ClosedExc a
+                    GT -> ClosedInc b
 
 instance Intersect LeftSpaceExc RightSpaceExc (Maybe SpanExc) where intersect = flip intersect
 instance Intersect RightSpaceExc LeftSpaceExc (Maybe SpanExc) where

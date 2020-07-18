@@ -27,11 +27,10 @@ import Control.Monad.Trans.State.Strict (State, execState, gets, modify)
 import Control.Applicative
 -- import Data.Hashable
 -- import Data.Kind
-import Data.List (find, sortBy)
-import Data.Function (on)
+import Data.List (find)
 import qualified Data.IntMap as IM
 import           Data.IntMap (IntMap)
-import Data.Maybe (fromMaybe, listToMaybe, mapMaybe, fromJust)
+import Data.Maybe (fromMaybe, listToMaybe, fromJust)
 import qualified Data.Set as S
 import Safe
 import Unsafe.Coerce
@@ -85,23 +84,23 @@ import Theory
 {-
 
 I'm in the process of changing the KnowledgeBase's representation of Facts from
-a map from `VIx a` to `[ValueFact a]` to `Facts` which is a `Timeline`.
-This means that the TimeSpan is no loger attached to the fact, but is implied by
+a map from `VIx a` to `[ValueFact a]` to `Facts` which is a `Timeline`. This
+means that the TimeSpan is no longer attached to the fact, but is implied by
 it's position in the timeline, so now a "fact" is just `(DerivationTrace a, a)`.
 So I've removed ValueFact, now I need to update the usages, and gain some
-performance benfits while I do that.
+performance benefits while I do that.
 
-Once this code is compling again, run the tests. My latest test is a model test
+Once this code is compiling again, run the tests. My latest test is a model test
 of TheoryFast against Theory. If that passes, then run the Benchmark and append
 the git commit hash and benchmark time in PERFORMANCE.md
 
-Then you'll have to continue making this more efficient! The most important thing
-is changing the dirty flag in KnowledgeBase from Bool to something similar to a
-TimeLine, where we mark the parts of the timeline that are dirty (i.e. we've
-learned new facts about). Then we need to store Derivations in a Timeline like
-structure too so that we can directly identify the derivations that need to be
-continued (based on what is dirty) instead of trying to continue all derivations
-in each iteration.
+Then you'll have to continue making this more efficient! The most important
+thing is changing the dirty flag in KnowledgeBase from Bool to something similar
+to a TimeLine, where we mark the parts of the timeline that are dirty (i.e.
+we've learned new facts about). Then we need to store Derivations in a Timeline
+like structure too so that we can directly identify the derivations that need to
+be continued (based on what is dirty) instead of trying to continue all
+derivations in each iteration.
 
 
 
@@ -151,6 +150,11 @@ listToFacts someValueFacts = Facts $ IM.fromListWith (<>)
     | Th.SomeValueFact (VIx vix :: VIx a) fact <- someValueFacts
     ]
 
+singletonFacts :: VIx a -> ValueTimeline a -> Facts
+singletonFacts eix tl = Facts $ IM.singleton
+  (unVIx eix)
+  ((unsafeCoerce :: ValueTimeline a -> ValueTimeline Any) tl)
+
 valueFacts :: VIx a -> Facts -> ValueTimeline a
 valueFacts (VIx vix) (Facts vb) = case IM.lookup vix vb of
   Nothing -> T.empty
@@ -185,7 +189,7 @@ lookupVTrace t vix facts = fst <$> lookupVFact t vix facts
 lookupVFact :: Time -> VIx a -> Facts -> MaybeKnown (DerivationTrace a, a)
 lookupVFact t vix facts = MaybeKnown $ do
   let vfs = valueFacts vix facts
-  lookup' t vfs
+  T.lookup t vfs
 -- lookupVFact t vix facts = MaybeKnown $ listToMaybe $
 --   filter ((`intersects` t) . factTSpan) (valueFacts vix facts)
 
@@ -205,7 +209,7 @@ solution1 :: Inputs -> KnowledgeBase
 solution1 inputs = execState iterateUntilChange initialKb
   where
   initialFacts = listToFacts $ concat
-    [ SomeValueFact eix <$> eventFacts
+    [ Th.SomeValueFact eix <$> eventFacts
     | InputEl eix (Left eventFacts) <- inputs
     ]
   initialDerivations =
@@ -239,14 +243,13 @@ solution1 inputs = execState iterateUntilChange initialKb
                     Nothing -> loop (i + 1)
                     Just (newFacts, newDers) -> do
                       modify (\_ -> KnowledgeBase
-                        { kbFacts = (listToFacts (SomeValueFact vix <$> newFacts)) <> allFacts
+                        { kbFacts = (singletonFacts vix newFacts) <> allFacts
                         , kbDerivations = (SomeDerivation vix <$> newDers) <> take i allDers <> drop (i+1) allDers
                         , kbDirty = True
                         })
     loop 0
 
-  -- This is the important part that should correspond to the `deriveE`
-  -- denotation.
+  -- This is the important part. Is corresponds to the `deriveE` denotation.
   pokeDerivation
     :: forall a
     .  VIx a
@@ -266,63 +269,60 @@ solution1 inputs = execState iterateUntilChange initialKb
               DS_Point t -> let
                 dtrace' = appendDerTrace dtrace $
                   "Jurisdiction is a point (t=" ++ show t ++ "), ValueM is `Pure a`."
-                in ([Fact_Point dtrace' t a], [])
+                in (T.singleton (DS_Point t) (dtrace', a), [])
 
               DS_SpanExc tspanSpan -> let
                 dtrace' = appendDerTrace dtrace $
                   "Jurisdiction is (" ++ show tspanSpan ++ "), ValueM is `Pure a`."
-                in ([Fact_SpanExc dtrace' tspanSpan a], [])
+                in (T.singleton (DS_SpanExc tspanSpan) (dtrace', a), [])
           else stepCompleteWithPrevDeps a
         GetV eixb cont -> let
           factsBAndUnknownsMay = if null prevDeps
             then Just (spanLookupVFacts ttspan eixb facts)
+
             -- chronological version of the above with PrevV deps.
             -- TODO this and the above "then" and also the PrevV cases
             -- have very similar code (split on other facts). Try to DRY
             -- it.
-
-            else case find isChronological (fst (spanLookupVFacts ttspan eixb facts)) of
+            else case T.lookupAtStartOf' ttspan (valueFacts eixb facts) of
               Nothing -> Nothing
-              Just fact -> Just ([fact], ttspan `difference` factTSpan fact)
-
-          isChronological :: ValueFact b -> Bool
-          isChronological fact = case ttspan of
-            DS_Point _ -> True  -- we use the assumption that fact is in ttspan
-            DS_SpanExc tspan -> case factTSpan fact of
-              DS_Point _ -> False
-              DS_SpanExc tspan' -> spanExcSameLowerBound tspan tspan'
+              Just (ttspanB, b) -> Just
+                ( T.singleton (fromJust $ ttspanB `intersect` ttspan) b
+                , ttspan `difference` ttspanB
+                )
 
           in case factsBAndUnknownsMay of
             Nothing -> Nothing
-            Just ([], _) -> Nothing
-            Just (factsB, unknowns) -> Just $ (
+            Just (factsB, unknowns)
+              | T.null factsB -> Nothing
+              | otherwise -> Just $ (
                 -- For knowns, split and try to progress the derivation.
                 mconcat
-                  [ case factB of
-                    Fact_SpanExc _ subTspan valB -> let
+                  [ case ttspanB of
+                    DS_SpanExc subTspan -> let
                       newCont = cont valB
                       newDer  = Derivation dtrace (DS_SpanExc subTspan) prevDeps newCont
                                   `withDerTrace`
                                   ("Split on GetV dep (" ++ show eixb ++ ") Fact_SpanExc")
                       in fromMaybe
-                        ([], [newDer])
+                        (T.empty, [newDer])
                         -- ^ Couldn't progress further: no new facts, but we've progressed the derivation up to newDer.
                         (pokeDerivation eix allDerivations facts newDer)
                         -- ^ Try to progress further.
-                    Fact_Point _ t valB -> let
+                    DS_Point t -> let
                         newCont = cont valB
                         newDer  = Derivation dtrace (DS_Point t) prevDeps newCont
                                   `withDerTrace`
                                   ("Split on GetV dep (" ++ show eixb ++ ") Fact_Point")
                         in fromMaybe
-                          ([], [newDer])
+                          (T.empty, [newDer])
                           (pokeDerivation eix allDerivations facts newDer)
-                  | factB <- factsB
+                  | (ttspanB, (_, valB)) <- T.elems factsB
                   ]
                 <>
                 -- For unknowns, simply split the derivation into the
                 -- unknown subspans.
-                ( []
+                ( T.empty
                 , [ Derivation dtrace subTspan prevDeps contDerivation
                     `withDerTrace`
                     ("Split on GetV dep (" ++ show eixb ++ ") unknown point or span.")
@@ -347,7 +347,7 @@ solution1 inputs = execState iterateUntilChange initialKb
                     `withDerTrace`
                     ("Use known PrevV value of dep (" ++ show eixB ++ ")")
               in fromMaybe
-                ([], [newDer])
+                (T.empty, [newDer])
                 (pokeDerivation eix allDerivations facts newDer)
             _ -> undefined
 
@@ -378,11 +378,11 @@ solution1 inputs = execState iterateUntilChange initialKb
               tspanLo = spanExcJustBefore tspan
               prevValMayIfKnown = case tspanLo of
                 Nothing -> Known Nothing -- Known: there is no previous value.
-                Just tLo -> lookupCurrE tLo eixB predicate facts
+                Just tLo -> lookupCurrV tLo eixB predicate facts
               in case prevValMayIfKnown of
                 Unknown -> Nothing
                 Known prevValMay -> Just
-                    ( []
+                    ( T.empty
                     , [ Derivation
                           dtrace
                           ttspan
@@ -428,7 +428,7 @@ solution1 inputs = execState iterateUntilChange initialKb
                         `withDerTrace`
                           ("Split on known facts")
                     in fromMaybe
-                      ([], [newDer])
+                      (T.empty, [newDer])
                       -- ^ Couldn't progress further: no new facts, but we've progressed the derivation up to newDer.
                       (pokeDerivation eix allDerivations facts newDer)
                       -- ^ Try to progress further.
@@ -437,10 +437,13 @@ solution1 inputs = execState iterateUntilChange initialKb
                 <>
                 -- For unknowns, simply split the derivation into the
                 -- unknown subspans.
-                ([], [Derivation dtrace subTspan prevDeps contDerivation
+                ( T.empty
+                , [ Derivation dtrace subTspan prevDeps contDerivation
                         `withDerTrace`
                           ("Split on unknown span or point")
-                      | subTspan <- unknownSpans])
+                  | subTspan <- unknownSpans
+                  ]
+                )
                 )
 
         where
@@ -449,7 +452,7 @@ solution1 inputs = execState iterateUntilChange initialKb
         stepCompleteWithPrevDeps
           :: a
             -- ^ The derived value (The derivation must have ended with some `Pure a`).
-          -> Maybe ([ValueTimeline a], [Derivation a])
+          -> Maybe (ValueTimeline a, [Derivation a])
             -- ^ Taking into account the PrevV deps, if progress can be made,
             -- return the new Facts(s) and any new Derivation(s).
         stepCompleteWithPrevDeps val = case ttspan of
@@ -458,7 +461,7 @@ solution1 inputs = execState iterateUntilChange initialKb
           DS_Point t -> let
               dtrace' = appendDerTrace dtrace $
                 "ValueM is (Pure _). As jurisdiction is a point, we can ignore PrevV deps."
-              in Just ([Fact_Point dtrace' t val], [])
+              in Just (T.singleton (DS_Point t) (dtrace', val), [])
 
           -- If the ttspan is a span, things get more tricky. At this point we
           -- need to find a "clearance time". This is some time span at the
@@ -482,7 +485,7 @@ solution1 inputs = execState iterateUntilChange initialKb
                 dtraceF = appendDerTrace dtrace $
                   msgCt ++ " This means no value changes are occuring up to at least that time."
                 in Just
-                  ( [Fact_SpanExc dtraceF (spanExc tLoMay ct) val]
+                  ( T.singleton (DS_SpanExc (spanExc tLoMay ct)) (dtraceF, val)
                   -- If ct is not Inf (i.e. Nothing) and is within the current
                   -- jurisdiction (i.e. tspan), then we need to cover the
                   -- clearance time at and after ct.
@@ -554,7 +557,15 @@ solution1 inputs = execState iterateUntilChange initialKb
           neighborsAndClearanceByFacts (SomeVIx ix) = findClearanceAfter tLo
             where
             findClearanceAfter :: Maybe Time -> Maybe (Maybe Time)
-            findClearanceAfter t = spanExcJustAfter <$> T.lookupGT' t facts
+            findClearanceAfter tMay = case mayFactSpan of
+              Just (DS_SpanExc clearanceSpan) -> Just (spanExcJustAfter clearanceSpan)
+              Just (DS_Point _) -> error "Implossible!"
+              Nothing -> Nothing
+              where
+              ixFacts = valueFacts ix facts
+              mayFactSpan = case tMay of
+                Nothing -> fst <$> T.lookupNegInf' ixFacts
+                Just t  -> fst <$> T.lookupJustAfter' t ixFacts
 
           -- | Get the neighbors (PrevV deps) and local clearance time of a
           -- single VIx. Only considers active Derivations, not facts.
@@ -595,7 +606,7 @@ solution1 inputs = execState iterateUntilChange initialKb
             cont
               `withDerTrace`
               ("Found first occ at t=" ++ show firstChangeTime)
-          in Just ([], [newDer])
+          in Just (T.empty, [newDer])
 
         -- We know the right of clearanceTime (exclusive) is definitely
         -- after the first event.
@@ -620,11 +631,11 @@ solution1 inputs = execState iterateUntilChange initialKb
                   ++ ". Solve after that time.")
             -- See NOTE [DeriveAfterFirstChange and PrevV deps]
             ]
-          in Just ([], newDers)
+          in Just (T.empty, newDers)
 
         -- There is no first occ, so this derivation covers no time, so
         -- we stop.
-        NoChangeInSpan -> Just ([], [])
+        NoChangeInSpan -> Just (T.empty, [])
 
         -- We don't know any more info about the first occurrence so we
         -- cant make any more progress.
@@ -662,7 +673,7 @@ searchForFirstChange
 searchForFirstChange tspan vix allFacts = let
   -- TODO I think this could be simplified by pattern matching on facts with
   -- some guards.
-  facts = elems $ constrainTimeSpan (DS_SpanExc tspan) (factV vix allFacts)
+  facts = T.elems $ T.cropTimeSpan (DS_SpanExc tspan) (valueFacts vix allFacts)
   firstKnownTChangeMay     = headMay [ t      | (DS_Point   t     , _) <- facts]
   firstKnownTSpanChangeMay = headMay [ tspan' | (DS_SpanExc tspan', _) <- facts]
   in case firstKnownTSpanChangeMay of
@@ -699,22 +710,15 @@ lookupPrevV
   -- ^ Unknown: if unknown
   -- Known Nothing: if no value satisfying the predicate occurs strictly before t.
   -- Known (Just b): the latest (projected) value satisfying the predicate (strictly before time t).
-lookupPrevV t eix predicate allFacts = MaybeKnown . listToMaybe $ mapMaybe
-      (\case
-        Fact_SpanExc _ tspan a
-          -- The fact spans just before time t
-          | tspan `contains` t || Just t == spanExcJustAfter tspan
-          -> case predicate a of
-              -- The fact's value satisfies the predicate. We're done.
-              Just b -> Just (Just b)
-              -- The fact does not satisfy the predicate. Keep searching.
-              Nothing -> case spanExcJustBefore tspan of
+lookupPrevV t eix predicate allFacts = MaybeKnown $ case T.lookupJustBefore' t (valueFacts eix allFacts) of
+  Nothing -> Nothing
+  Just (ttspan, (_, a)) -> case ttspan of
+    DS_Point _ -> error "Impossible! lookupJustBefore' can't return a point"
+    DS_SpanExc tspan -> case predicate a of
+      Just b -> Just (Just b)
+      Nothing -> case spanExcJustBefore tspan of
                 Nothing -> Just Nothing
-                Just tLo -> maybeKnownToMaybe $ lookupCurrE tLo eix predicate allFacts
-          | otherwise -> Nothing
-        Fact_Point _ _ _ -> Nothing
-      )
-      (valueFacts eix allFacts)
+                Just tLo -> maybeKnownToMaybe $ lookupCurrV tLo eix predicate allFacts
 
 
   -- factSpanExcs = mapMaybe factSpa
@@ -731,10 +735,10 @@ lookupPrevV t eix predicate allFacts = MaybeKnown . listToMaybe $ mapMaybe
   --   Nothing -> Unknown
   --   Just tspan -> case spanExcJustBefore tspan of
   --     Nothing -> Known Nothing
-  --     Just t' -> lookupCurrE t' eix allFacts
+  --     Just t' -> lookupCurrV t' eix allFacts
 
 -- | Directly look up the current (i.e. latest) event occurrence (equal or before the given time).
-lookupCurrE
+lookupCurrV
   :: Time
   -- ^ Time t
   -> VIx a
@@ -747,19 +751,18 @@ lookupCurrE
   -- ^ Unknown: if unknown
   -- Known Nothing: if no value satisfying the predicate occurs at or before t.
   -- Known (Just b): the latest (projected) value satisfying the predicate (at or before t).
-lookupCurrE t eix predicate allFacts = let
-  factMay = find (\f -> factTSpan f `contains` t) (valueFacts eix allFacts)
-  in case factMay of
+lookupCurrV tTop eix predicate allFacts = go tTop
+  where
+  facts = valueFacts eix allFacts
+  go t = case T.lookup' t facts of
     Nothing -> Unknown
-    Just fact -> case fact of
-      Fact_SpanExc _ tspan v -> case predicate v of
-        Just b -> Known (Just b)
-        Nothing -> case spanExcJustBefore tspan of
+    Just (ttspan', (_, a)) -> case predicate a of
+      Nothing -> case ttspan' of
+        DS_Point t' -> lookupPrevV t' eix predicate allFacts
+        DS_SpanExc tspan' -> case spanExcJustBefore tspan' of
           Nothing -> Known Nothing
-          Just t' -> lookupCurrE t' eix predicate allFacts
-      Fact_Point _ _ a -> case predicate a of
-        Nothing -> lookupPrevV t eix predicate allFacts
-        Just b  -> Known (Just b)
+          Just t' -> go t'
+      Just b -> Known (Just b)
 
 
 -- | Directly lookup the previous value for an event over a span of time.
@@ -801,20 +804,20 @@ prevVFacts
   -> [(TimeSpan, Maybe b)]
   -- ^ All known previous event values (if one exists)
 prevVFacts eix predicate allFacts = concat
-  [ case fact of
-    Fact_SpanExc _ tspan _ -> let
+  [ case ttspan of
+    DS_SpanExc tspan -> let
       mayPrevVMay :: MaybeKnown (Maybe b)
       mayPrevVMay = case spanExcJustBefore tspan of
         -- Span starts at -∞ so that's a known Nothing previous event
         Nothing -> Known Nothing
         -- Span starts at a time prevT
-        Just prevT -> lookupCurrE prevT eix predicate allFacts
+        Just prevT -> lookupCurrV prevT eix predicate allFacts
       in case mayPrevVMay of
           Unknown -> []
           Known prevVMay -> (DS_SpanExc tspan, prevVMay) : [(DS_Point nextT, prevVMay) | Just nextT <- [spanExcJustAfter tspan]]
           _ -> undefined
-    Fact_Point _ _ _ -> [] -- Point knowledge is handled by the above case
-  | fact <- valueFacts eix allFacts
+    DS_Point _ -> [] -- Point knowledge is handled by the above case
+  | (ttspan, _) <- T.elems (valueFacts eix allFacts)
   ]
 
 -- | Directly look up all known facts for a given VIx and time or time
@@ -832,17 +835,8 @@ spanLookupVFacts
   --   The union of these facts and times and time spans should exactly
   --   equal the input time/time span.
 spanLookupVFacts tspan eix allFacts = let
-  facts = valueFacts eix allFacts
-  knownFacts =
-      [ case (fact, ttspan') of
-        (Fact_SpanExc dtrace _ v, DS_SpanExc tspan') -> Fact_SpanExc dtrace tspan' v
-        (Fact_SpanExc dtrace _ v, DS_Point   t'    ) -> Fact_Point dtrace t' v
-        (Fact_Point _ _ _   , DS_SpanExc _) -> error "Intersection between SpanExc and Time must be Just Time or Nothing"
-        (Fact_Point dtrace _ occMay, DS_Point t') -> Fact_Point dtrace t' occMay
-      | fact <- facts
-      , Just ttspan' <- [factTSpan fact `intersect` tspan]
-      ]
-  knownTSpans = factTSpan <$> knownFacts
+  knownFacts = T.cropTimeSpan tspan (valueFacts eix allFacts)
+  knownTSpans = fst <$> T.elems knownFacts
   unknownTSpans = tspan `difference` knownTSpans
   in (knownFacts, unknownTSpans)
 

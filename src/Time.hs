@@ -45,6 +45,8 @@ import System.Random
 
 -- Time id nanoseconds
 type Time = Int64 -- TODO Int64?
+
+secondsToTime :: Num a => a -> a
 secondsToTime s = s * 1000000000
 
 -- | Time with possible delay.

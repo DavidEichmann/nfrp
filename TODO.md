@@ -1,5 +1,6 @@
 # TODO
 
+* Instead of distinguising between Time and SpanExc, just use Span
 * An efficient implementation and a way to test it against the model
   implementation.
   * I think it should be easy enought to do model testing. Just need a way to

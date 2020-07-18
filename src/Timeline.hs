@@ -26,14 +26,18 @@
 module Timeline
     ( Timeline
     , empty
+    , singleton
     , fromList
     , size
     , null
     , insert
-    , constrainTimeSpan
+    , cropTimeSpan
     , lookup
     , lookup'
-    , lookupGT'
+    , lookupJustBefore'
+    , lookupJustAfter'
+    , lookupNegInf'
+    , lookupAtStartOf'
     , elems
     , elemsGT
     , TimeSpan(..)
@@ -64,6 +68,9 @@ null tl = case tl of
     Empty -> True
     _     -> False
 
+singleton :: TimeSpan -> a -> Timeline a
+singleton ts a = Timeline 1 ts a Empty Empty
+
 fromList :: [(TimeSpan, a)] -> Timeline a
 fromList = foldl' (\tl (timeSpan, value) -> insert timeSpan value tl) empty
 
@@ -89,6 +96,23 @@ elems tl = case tl of
     Empty -> []
     Timeline _ ts a l r -> elems l ++ [(ts, a)] ++ elems r
 
+-- | All elements in reverse chronological order
+elemsRev :: Timeline a -> [(TimeSpan, a)]
+elemsRev tl = case tl of
+    Empty -> []
+    Timeline _ ts a l r -> elems r ++ [(ts, a)] ++ elems l
+
+-- | Elements in reverse chronological order that contain the time just before the give Time.
+elemsLT :: Time -> Timeline a -> [(TimeSpan, a)]
+elemsLT t tl = case tl of
+    Empty -> []
+    Timeline _ ta a l r -> case timeCompareTimeSpan t ta of
+        TTSO_Before -> elemsLT t l
+        TTSO_During -> case ta of
+            DS_Point _   -> elems l -- omit `ta` as it is equal not less than t.
+            DS_SpanExc _ -> (ta, a) : elemsRev l
+        TTSO_After  -> elemsLT t r ++ [(ta, a)] ++ elemsLT t l
+
 -- | Elements in chronological order that contain the time just after the give Time.
 elemsGT :: Time -> Timeline a -> [(TimeSpan, a)]
 elemsGT t tl = case tl of
@@ -112,25 +136,98 @@ lookup' t tl = case tl of
         TTSO_After  -> lookup' t r
 
 -- | Lookup the value just after the given time
-lookupGT' :: Time -> Timeline a -> Maybe (TimeSpan, a)
-lookupGT' t tl = case elemsGT t tl of
+lookupJustBefore' :: Time -> Timeline a -> Maybe (TimeSpan, a)
+lookupJustBefore' t tl = case elemsLT t tl of
     x@(ts,_):_
-        | DS_SpanExc tss <- ts -- lookupGT' can only return a DS_SpanExc fact.
+        | DS_SpanExc tss <- ts -- lookupJustBefore' can only return a DS_SpanExc fact.
+        , spanExcJustAfter tss == Just t
+        -> Just x
+    _ -> Nothing
+
+-- | Lookup the value just after the given time
+lookupJustAfter' :: Time -> Timeline a -> Maybe (TimeSpan, a)
+lookupJustAfter' t tl = case elemsGT t tl of
+    x@(ts,_):_
+        | DS_SpanExc tss <- ts -- lookupJustAfter' can only return a DS_SpanExc fact.
         , spanExcJustBefore tss == Just t
         -> Just x
     _ -> Nothing
+
+-- Lookup the fact spanning negative infinity.
+lookupNegInf' :: Timeline a -> Maybe (TimeSpan, a)
+lookupNegInf' tl = case elems tl of
+    x@(ts,_):_
+        | DS_SpanExc tss <- ts
+        , spanExcJustBefore tss == Nothing
+        -> Just x
+    _ -> Nothing
+
+-- | Lookup the fact spanning the start of the given timespan.
+lookupAtStartOf' :: TimeSpan -> Timeline a -> Maybe (TimeSpan, a)
+lookupAtStartOf' tts tl = case tts of
+    DS_Point t -> lookup' t tl
+    DS_SpanExc ts -> case spanExcJustBefore ts of
+        Nothing -> lookupNegInf' tl
+        Just tLo -> lookupJustAfter' tLo tl
 
 union :: Timeline a -> Timeline a -> Timeline a
 union = error "TODO implement union"
 
 -- | Get only facts that intersect the time span. This also crops the facts that
 -- span the edge of the time span.
-constrainTimeSpan :: TimeSpan -> Timeline a -> Timeline a
-constrainTimeSpan = error "TODO implement constrainTimeSpan"
+cropTimeSpan :: forall a . TimeSpan -> Timeline a -> Timeline a
+cropTimeSpan ts = cropList (timeSpanToSpan ts)
+    where
+    -- TODO I need a more general SpanExc that might include the lo/high points
+    -- right now I'm using the union of the Maybe Time and SpanExc.
+    cropList
+        :: Span -- The space of possible keys in tl
+        -> Timeline a
+        -> Timeline a
+    cropList space tl = case tl of
+        Empty -> empty
+        (Timeline _ ts' a l r) ->
+            -- TODO if we transition to Span from SpanExc, we can use balancing
+            -- constructor instead of union
+
+            -- Current element
+            (case sp''May of
+                Nothing -> empty
+                Just sp'' -> fromList [(ts'', a) | ts'' <- spanToTimeSpans sp'']
+            )
+            -- Left
+            <> maybe empty (`cropList` l) lSpaceMay
+            -- Right
+            <> maybe empty (`cropList` r) rSpaceMay
+            where
+            sp' = timeSpanToSpan ts'
+            sp''May = sp' `intersect` space
+            lSpaceMay = intersect space =<< beforeSpan sp'
+            rSpaceMay = intersect space =<< afterSpan sp'
+
+timeSpanToSpan :: TimeSpan -> Span
+timeSpanToSpan tts = case tts of
+    DS_Point t -> Span (ClosedInc t) (ClosedInc t)
+    DS_SpanExc ts -> spanExcToSpan ts
+
+spanToTimeSpans :: Span -> [TimeSpan]
+spanToTimeSpans (Span l h) = case (l,h) of
+    (Open, Open) -> [DS_SpanExc (spanExc Nothing Nothing)]
+    (Open, ClosedExc b) -> [DS_SpanExc (spanExc Nothing (Just b))]
+    (Open, ClosedInc b) -> [DS_SpanExc (spanExc Nothing (Just b)), DS_Point b]
+    (ClosedExc a, Open) -> [DS_SpanExc (spanExc (Just a) Nothing)]
+    (ClosedExc a, ClosedExc b) -> [DS_SpanExc (spanExc (Just a) (Just b))]
+    (ClosedExc a, ClosedInc b) -> [DS_SpanExc (spanExc (Just a) (Just b)), DS_Point b]
+    (ClosedInc a, Open) -> [DS_Point  a, DS_SpanExc (spanExc (Just a) Nothing)]
+    (ClosedInc a, ClosedExc b) -> [DS_Point  a, DS_SpanExc (spanExc (Just a) (Just b))]
+    (ClosedInc a, ClosedInc b) -> [DS_Point  a, DS_SpanExc (spanExc (Just a) (Just b)), DS_Point b]
+
 
 instance Semigroup (Timeline a) where
     (<>) = union
 
+instance Monoid (Timeline a) where
+    mempty = empty
 
 data TimeVsTimeSpanOrdering
     = TTSO_Before
