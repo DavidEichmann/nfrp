@@ -170,8 +170,46 @@ lookupAtStartOf' tts tl = case tts of
         Nothing -> lookupNegInf' tl
         Just tLo -> lookupJustAfter' tLo tl
 
-union :: Timeline a -> Timeline a -> Timeline a
+union :: forall a . Timeline a -> Timeline a -> Timeline a
 union = error "TODO implement union"
+    where
+    -- See paper for hedge union. Note the paper includes specialized versions
+    -- for open SpanBounds.
+
+    -- | unbalanced filter only for elements in the given span.
+    trim :: Span -> Timeline a -> Timeline a
+    trim _ Empty = Empty
+    trim sp (Timeline _ ta a l r) = if _
+        then if _
+            then _
+            else _
+        else _
+        where
+        sp = timeSpanToSpan ta
+        lSpace = beforeSpan sp
+        rSpace = afterSpan sp
+
+    uni :: Span -> Timeline a -> Timeline a -> Timeline a
+    uni _ s Empty = s
+    uni _ Empty (Timeline _ ta a l r) = concat3
+    uni sp
+        tl1@(Timeline _ ta1 a1 l1 r1)
+        tl2@(Timeline _ ta2 a2 l2 r2)
+        = concat3 ta1 a1
+            (case lSpaceMay of
+                Nothing -> Empty
+                Just lSpace -> uni lSpace l1 (trim lSpace tl2)
+            )
+            (case rSpaceMay of
+                Nothing -> Empty
+                Just rSpace -> uni rSpace r1 (trim rSpace tl2)
+            )
+        where
+        lSpaceMay = intersect sp =<< beforeSpan (timeSpanToSpan ta1)
+        rSpaceMay = intersect sp =<< afterSpan (timeSpanToSpan ta1)
+
+    concat3 :: TimeSpan -> a -> Timeline a -> Timeline a -> Timeline a
+    concat3 = _
 
 -- | Get only facts that intersect the time span. This also crops the facts that
 -- span the edge of the time span.
