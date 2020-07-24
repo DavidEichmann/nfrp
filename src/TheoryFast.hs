@@ -305,10 +305,10 @@ solution1 inputs = execState iterateUntilChange initialKb
                                   `withDerTrace`
                                   ("Split on GetV dep (" ++ show eixb ++ ") Fact_SpanExc")
                       in fromMaybe
+                        -- Couldn't progress further: no new facts, but we've progressed the derivation up to newDer.
                         (T.empty, [newDer])
-                        -- ^ Couldn't progress further: no new facts, but we've progressed the derivation up to newDer.
+                        -- Try to progress further.
                         (pokeDerivation eix allDerivations facts newDer)
-                        -- ^ Try to progress further.
                     DS_Point t -> let
                         newCont = cont valB
                         newDer  = Derivation dtrace (DS_Point t) prevDeps newCont
@@ -428,10 +428,10 @@ solution1 inputs = execState iterateUntilChange initialKb
                         `withDerTrace`
                           ("Split on known facts")
                     in fromMaybe
+                      -- Couldn't progress further: no new facts, but we've progressed the derivation up to newDer.
                       (T.empty, [newDer])
-                      -- ^ Couldn't progress further: no new facts, but we've progressed the derivation up to newDer.
+                      -- Try to progress further.
                       (pokeDerivation eix allDerivations facts newDer)
-                      -- ^ Try to progress further.
                   | (ttspan', prevVMay) <- knownSpansAndValueMays
                   ]
                 <>
@@ -600,9 +600,9 @@ solution1 inputs = execState iterateUntilChange initialKb
           newDer = Derivation
             dtrace
             (DS_SpanExc concreteTimeSpan)
-            []
-            -- ^ NOTE [DeriveAfterFirstChange and PrevV deps] There are
+            -- NOTE [DeriveAfterFirstChange and PrevV deps] There are
             -- no PrevV events by denotation of DeriveAfterFirstChange
+            []
             cont
               `withDerTrace`
               ("Found first occ at t=" ++ show firstChangeTime)
