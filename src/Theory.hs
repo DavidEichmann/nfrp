@@ -230,10 +230,10 @@ module Theory
       }
 
     -- -- | DS_SpanExc tspan ⟹ t ∈ tspan
-    -- | DS_SpanExcInc SpanExcInc
+    -- DS_SpanExcInc SpanExcInc
 
     -- -- | DS_SpanExcIncFirstOcc lo  ⟹ t ∈ tspan
-    -- | forall a . DS_SpanExcIncFirstOcc SpanExc (VIx a)
+    -- forall a . DS_SpanExcIncFirstOcc SpanExc (VIx a)
 
 -- Now a natural fist attempt at a solution is obvious: start with an initial
 -- knowledge base and continue evaluating derivations until all terminate or
