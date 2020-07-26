@@ -53,11 +53,6 @@ import Data.Maybe (maybeToList)
 import Time
 import TimeSpan
 
---
--- I'm adapting http://groups.csail.mit.edu/mac/users/adams/BB/ such that index
--- is possibly a span rather than just a point.
---
-
 -- | A timeline is a map from time to value where values may be set on spans of
 -- time.
 data Timeline a = Timeline
@@ -82,6 +77,12 @@ insert :: TimeSpan -> a -> Timeline a -> Timeline a
 insert tts a (Timeline m n) = case tts of
     DS_Point t -> Timeline m (M.insert t a n)
     DS_SpanExc ts -> Timeline (M.insert (spanExcJustBefore ts) (spanExcJustAfter ts, a) m) n
+
+-- | Try to insert into the timeline, but check for overlap
+tryInsert :: TimeSpan -> a -> Timeline a -> Maybe (Timeline a)
+tryInsert tts a tl
+    | null (select (timeSpanToSpan tts) tl) = Just (insert tts a tl)
+    | otherwise = Nothing
 
 -- | All elements in chronological order
 elems :: Timeline a -> [(TimeSpan, a)]

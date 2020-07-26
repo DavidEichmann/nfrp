@@ -30,6 +30,7 @@ library
         , Time
         , TimeSpan
         , Timeline
+        , MultiTimeline
     hs-source-dirs: src
     default-language: Haskell2010
     ghc-options: -fprof-auto -Wall
@@ -59,61 +60,61 @@ library
         vector -any
 
 
-executable KBGame
-    main-is: KBGame.hs
-    hs-source-dirs: app
-    default-language: Haskell2010
-    ghc-options: -fprof-auto -Wall -threaded
-    build-depends:
-        base == 4.12.0.0,
-        containers >=0.5.9,
-        async -any,
-        network -any,
-        nfrp -any,
-        safe -any,
-        generics-sop -any,
-        -- gtk3 -any,
-        time == 1.8.0.2
+-- executable KBGame
+--     main-is: KBGame.hs
+--     hs-source-dirs: app
+--     default-language: Haskell2010
+--     ghc-options: -fprof-auto -Wall -threaded
+--     build-depends:
+--         base == 4.12.0.0,
+--         containers >=0.5.9,
+--         async -any,
+--         network -any,
+--         nfrp -any,
+--         safe -any,
+--         generics-sop -any,
+--         -- gtk3 -any,
+--         time == 1.8.0.2
 
 
-executable Main
-    main-is: Main.hs
-    hs-source-dirs: app
-    default-language: Haskell2010
-    ghc-options: -fprof-auto -Wall -threaded
-    build-depends:
-        base == 4.12.0.0,
-        containers >=0.5.9,
-        async -any,
-        network -any,
-        nfrp -any,
-        safe -any,
-        generics-sop -any,
-        -- gtk3 -any,
-        time == 1.8.0.2
+-- executable Main
+--     main-is: Main.hs
+--     hs-source-dirs: app
+--     default-language: Haskell2010
+--     ghc-options: -fprof-auto -Wall -threaded
+--     build-depends:
+--         base == 4.12.0.0,
+--         containers >=0.5.9,
+--         async -any,
+--         network -any,
+--         nfrp -any,
+--         safe -any,
+--         generics-sop -any,
+--         -- gtk3 -any,
+--         time == 1.8.0.2
 
-executable Circles
-    main-is: Circles.hs
-    hs-source-dirs: app
-    default-language: Haskell2010
-    ghc-options: -fprof-auto -Wall -threaded
-    other-modules:
-        Circles.Game
-    build-depends:
-        base == 4.12.0.0,
-        async -any,
-        binary -any,
-        cmdargs -any,
-        containers >=0.5.9,
-        deepseq -any,
-        gloss -any,
-        generics-sop -any,
-        -- gtk3 -any,
-        ncurses -any,
-        network -any,
-        nfrp -any,
-        safe -any,
-        time == 1.8.0.2
+-- executable Circles
+--     main-is: Circles.hs
+--     hs-source-dirs: app
+--     default-language: Haskell2010
+--     ghc-options: -fprof-auto -Wall -threaded
+--     other-modules:
+--         Circles.Game
+--     build-depends:
+--         base == 4.12.0.0,
+--         async -any,
+--         binary -any,
+--         cmdargs -any,
+--         containers >=0.5.9,
+--         deepseq -any,
+--         gloss -any,
+--         generics-sop -any,
+--         -- gtk3 -any,
+--         ncurses -any,
+--         network -any,
+--         nfrp -any,
+--         safe -any,
+--         time == 1.8.0.2
 
 executable bench
     main-is: Bench.hs

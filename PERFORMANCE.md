@@ -17,3 +17,4 @@ understand the operations we need to perform:
 
 * benchmark `stack run bench -- 70 tf`
     * 597061766efc01ba79fe392df55ef8335455e3ab -> 10.07s user 0.32s system 100% cpu 10.381 total
+    * 5ab12e4753ecd474e1fa26bc5d39b9640dbcedc3 -> 10.07s user 0.32s system 100% cpu 10.381 total
