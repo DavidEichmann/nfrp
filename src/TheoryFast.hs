@@ -23,10 +23,8 @@ module TheoryFast
   ) where
 
 -- import Control.Monad (when)
-import Control.Monad.Trans.Class (MonadTrans(..))
-import Control.Monad.Trans.Reader (Reader, asks, runReader)
 import Control.Monad.Trans.State.Strict (State, execState, gets, modify)
-import Control.Monad.Trans.Writer.Strict (WriterT, runWriterT, tell)
+import Control.Monad.Trans.RWS.CPS (asks, RWS, runRWS, tell)
 -- import Data.Hashable
 -- import Data.Kind
 import Data.List (find)
@@ -208,7 +206,7 @@ solution1 inputs = execState iterateUntilChange initialKb
               case allDers !! i of
                 SomeDerivation vix der -> do
                   -- case pokeDerivation vix allDers allFacts der of
-                  let (mayNewFactsAndDers, deps) = runReader (runWriterT (pokeDerivation vix der)) (allFacts, allDers)
+                  let (mayNewFactsAndDers, (), deps) = runRWS (pokeDerivation vix der) (allFacts, allDers) ()
                   case mayNewFactsAndDers of
                     Nothing -> do
                       -- TODO Poke this derivation when `deps` have changed
@@ -792,18 +790,18 @@ prevVFacts timeSpan vix predicate = do
 -- DerivationM a monad that tracks dependencies used while stepping a derivation.
 --
 
-type DerivationM a =  WriterT [DerivationDep] (Reader (Facts, Derivations)) a
+type DerivationM a = RWS (Facts, Derivations) [DerivationDep] () a
 
 tellDep :: DerivationDep -> DerivationM ()
 tellDep dep = tell [dep]
 
 -- Use `tellDeps` after this to track what part of facts you depend on.
 untrackedAskFacts :: DerivationM Facts
-untrackedAskFacts = lift (asks fst)
+untrackedAskFacts = asks fst
 
 -- Use `tellDeps` after this to track what part of derivations you depend on.
 untrackedAskDerivations :: DerivationM Derivations
-untrackedAskDerivations = lift (asks snd)
+untrackedAskDerivations = asks snd
 
 -- Describes a dependency
 data DerivationDep
