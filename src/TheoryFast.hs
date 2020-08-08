@@ -23,13 +23,16 @@ module TheoryFast
   ) where
 
 -- import Control.Monad (when)
+import Control.Monad.Trans.Class (MonadTrans(..))
+import Control.Monad.Trans.Reader (Reader, asks, runReader)
 import Control.Monad.Trans.State.Strict (State, execState, gets, modify)
+import Control.Monad.Trans.Writer.Strict (WriterT, runWriterT, tell)
 -- import Data.Hashable
 -- import Data.Kind
 import Data.List (find)
 import qualified Data.IntMap as IM
 import           Data.IntMap (IntMap)
-import Data.Maybe (fromJust)
+import Data.Maybe (listToMaybe, fromJust)
 import qualified Data.Set as S
 import Unsafe.Coerce
 import GHC.Exts (Any)
@@ -73,6 +76,7 @@ import Theory
   , prevV
   , prevVWhere
   )
+import Control.Monad (when)
 
 
 
@@ -186,32 +190,35 @@ solution1 inputs = execState iterateUntilChange initialKb
   iterateUntilChange :: KnowledgeBaseM ()
   iterateUntilChange = do
     dirty <- gets kbDirty
-    if dirty
-      then stepDerivations >> iterateUntilChange
-      else return ()
+    when dirty $ do
+      setClean
+      stepDerivations
+      iterateUntilChange
 
   -- Tries to step all derivations once.
   stepDerivations :: KnowledgeBaseM ()
   stepDerivations = do
-    setClean
     n <- gets (length . kbDerivations)
-    let loop i = todo
-  --       loop i = do
-  --         if i == n
-  --           then return ()
-  --           else do
-  --             allDers <- gets kbDerivations
-  --             allFacts <- gets kbFacts
-  --             case allDers !! i of
-  --               SomeDerivation vix der -> do
-  --                 case pokeDerivation vix allDers allFacts der of
-  --                   Nothing -> loop (i + 1)
-  --                   Just (newFacts, newDers) -> do
-  --                     modify (\_ -> KnowledgeBase
-  --                       { kbFacts = (singletonFacts vix newFacts) <> allFacts
-  --                       , kbDerivations = (SomeDerivation vix <$> newDers) <> take i allDers <> drop (i+1) allDers
-  --                       , kbDirty = True
-  --                       })
+    let loop i = do
+          if i == n
+            then return ()
+            else do
+              allDers <- gets kbDerivations
+              allFacts <- gets kbFacts
+              case allDers !! i of
+                SomeDerivation vix der -> do
+                  -- case pokeDerivation vix allDers allFacts der of
+                  let (mayNewFactsAndDers, deps) = runReader (runWriterT (pokeDerivation vix der)) (allFacts, allDers)
+                  case mayNewFactsAndDers of
+                    Nothing -> do
+                      -- TODO Poke this derivation when `deps` have changed
+                      loop (i + 1)
+                    Just (newFacts, newDers) -> do
+                      modify (\_ -> KnowledgeBase
+                        { kbFacts = (singletonFacts vix newFacts) <> allFacts
+                        , kbDerivations = (SomeDerivation vix <$> newDers) <> take i allDers <> drop (i+1) allDers
+                        , kbDirty = True
+                        })
     loop 0
 
   -- This is the important part. Is corresponds to the `deriveE` denotation.
@@ -340,13 +347,13 @@ solution1 inputs = execState iterateUntilChange initialKb
             -- that chronological before the first occurrence of eixB will be
             -- productive (produce facts as soon as they are knowable).
             let tryChonologicalSplit = do
-                let tspanLo = spanExcJustBefore tspan
-                prevValMayIfKnown <- case tspanLo of
-                      Nothing -> pure (Known Nothing) -- Known: there is no previous value.
-                      Just tLo -> lookupCurrV tLo eixB predicate
-                return $ case prevValMayIfKnown of
-                  Unknown -> Nothing
-                  Known prevValMay -> Just
+                  let tspanLo = spanExcJustBefore tspan
+                  prevValMayIfKnown <- case tspanLo of
+                        Nothing -> pure (Known Nothing) -- Known: there is no previous value.
+                        Just tLo -> lookupCurrV tLo eixB predicate
+                  return $ case prevValMayIfKnown of
+                    Unknown -> Nothing
+                    Known prevValMay -> Just
                       ( T.empty
                       , [ Derivation
                             dtrace
@@ -367,7 +374,7 @@ solution1 inputs = execState iterateUntilChange initialKb
                             ++ " and solve for the rest of the time span if any.")
                         ]
                       )
-                  _ -> undefined
+                    _ -> undefined
             case factsAndUnknownsMay of
               -- TODO I think we don't necessarily need to detect deadlock, we
               -- can always just assume there might be deadlock and derive
@@ -518,7 +525,7 @@ solution1 inputs = execState iterateUntilChange initialKb
             clearanceByFactsMay <- neighborsAndClearanceByFacts ix
             case clearanceByFactsMay of
               Just clearance -> pure $ Just ([], clearance)
-              Nothing -> neighborsAndClearanceByDerivation ix tLo
+              Nothing -> neighborsAndClearanceByDerivation ix
 
           -- | Get the clearance time (ignoring neighbors) of a single value
           -- by looking for a fact spanning the time just after tLo.
@@ -545,27 +552,28 @@ solution1 inputs = execState iterateUntilChange initialKb
           -- single VIx. Only considers active Derivations, not facts.
           neighborsAndClearanceByDerivation
             :: SomeVIx
-            -> Maybe Time -- ^ Start time. Nothing means -Inf
             -> DerivationM (Maybe ([SomeVIx], Maybe Time))
-          neighborsAndClearanceByDerivation ix tLo = todo
-          -- neighborsAndClearanceByDerivation ix tLo = listToMaybe
-          --   [ (neighbors, spanExcJustAfter tspan)
-          --   | SomeDerivation
-          --       ix''
-          --       (Derivation
-          --         _
-          --         (DS_SpanExc tspan)
-          --         neighbors
-          --         cont
-          --       )
-          --       <- allDerivations
-          --   , ix == SomeVIx ix'' -- look up the correct eix
-          --   , spanExcJustBefore tspan == tLo -- starts at tLo
-          --   -- derivation is complete
-          --   , case cont of
-          --       Pure _ -> True
-          --       _ -> False
-          --   ]
+          neighborsAndClearanceByDerivation someDepIx@(SomeVIx depIx) = do
+            tellDep (Dep_DerivationClearance tLo depIx)
+            allDerivations <- untrackedAskDerivations
+            return $ listToMaybe
+              [ (neighbors, spanExcJustAfter tspan)
+              | SomeDerivation
+                  ix''
+                  (Derivation
+                    _
+                    (DS_SpanExc tspan)
+                    neighbors
+                    cont
+                  )
+                  <- allDerivations
+              , someDepIx == SomeVIx ix'' -- look up the correct eix
+              , spanExcJustBefore tspan == tLo -- starts at tLo
+              -- derivation is complete
+              , case cont of
+                  Pure _ -> True
+                  _ -> False
+              ]
 
       DeriveAfterFirstChange dtrace tspan eixB cont -> do
        fc <- searchForFirstChange tspan eixB
@@ -784,14 +792,42 @@ prevVFacts timeSpan vix predicate = do
 -- DerivationM a monad that tracks dependencies used while stepping a derivation.
 --
 
-type DerivationM a = State ({- TODO -}) a
+type DerivationM a =  WriterT [DerivationDep] (Reader (Facts, Derivations)) a
+
+tellDep :: DerivationDep -> DerivationM ()
+tellDep dep = tell [dep]
+
+-- Use `tellDeps` after this to track what part of facts you depend on.
+untrackedAskFacts :: DerivationM Facts
+untrackedAskFacts = lift (asks fst)
+
+-- Use `tellDeps` after this to track what part of derivations you depend on.
+untrackedAskDerivations :: DerivationM Derivations
+untrackedAskDerivations = lift (asks snd)
+
+-- Describes a dependency
+data DerivationDep
+  -- Depend on all facts in a time span for a Vix
+  = forall a . Dep_FactSpan TimeSpan (VIx a)
+  -- Depend on all the value at -Inf a Vix
+  | forall a . Dep_NegInf (VIx a)
+  -- Depend on all the value just after t of a Vix
+  | forall a . Dep_JustBefore Time (VIx a)
+  -- Depend on all the value just before t of a Vix
+  | forall a . Dep_JustAfter Time (VIx a)
+  -- Depend on the derivation based clearance of a Vix just after a given time.
+  -- That's a completed (continuation is Pure _) Derivation spanning a time just
+  -- after the given time. (Nothing means -Inf)
+  | forall a . Dep_DerivationClearance (Maybe Time) (VIx a)
 
 --
 -- DerivationM Primitives
 --
 
--- | Directly look up all known facts for a given VIx and time or time
--- span.
+-- | Directly look up all known facts for a given VIx and time or time span.
+--
+-- TODO This causes a dep on the whole span, but at the use sights we may be
+-- using less info.
 spanLookupVFacts
   :: TimeSpan
   -- ^ Time or span to lookup
@@ -803,32 +839,42 @@ spanLookupVFacts
   --   , unknown times and time spans )
   --   The union of these facts and times and time spans should exactly
   --   equal the input time/time span.
-spanLookupVFacts tspan vix = todo
--- spanLookupVFacts tspan eix allFacts = let
---   knownFacts = T.cropTimeSpan tspan (valueFacts eix allFacts)
---   knownTSpans = fst <$> T.elems knownFacts
---   unknownTSpans = tspan `difference` knownTSpans
---   in (knownFacts, unknownTSpans)
+spanLookupVFacts tspan vix = do
+  tellDep (Dep_FactSpan tspan vix)
+  facts <- valueFacts vix <$> untrackedAskFacts
+  let knownFacts = T.cropTimeSpan tspan facts
+      knownTSpans = fst <$> T.elems knownFacts
+      unknownTSpans = tspan `difference` knownTSpans
+  return (knownFacts, unknownTSpans)
 
 -- TODO rename all DerivationM primitives to `xyzM`
 
 lookupM' :: Time -> VIx a -> DerivationM (Maybe (TimeSpan, (DerivationTrace a, a)))
-lookupM' = todo
-
-lookupAtStartOf' :: TimeSpan -> VIx a -> DerivationM (Maybe (TimeSpan, (DerivationTrace a, a)))
-lookupAtStartOf' = todo
+lookupM' t vix = do
+  tellDep (Dep_FactSpan (DS_Point t) vix)
+  T.lookup' t . valueFacts vix <$> untrackedAskFacts
 
 lookupNegInf' :: VIx a -> DerivationM (Maybe (TimeSpan, (DerivationTrace a, a)))
-lookupNegInf' = todo -- fst <$> T.lookupNegInf'
+lookupNegInf' vix = do
+  tellDep (Dep_NegInf vix)
+  T.lookupNegInf' . valueFacts vix <$> untrackedAskFacts
 
 lookupJustAfter' :: Time -> VIx a -> DerivationM (Maybe (TimeSpan, (DerivationTrace a, a)))
-lookupJustAfter' t vix = todo -- fst <$> T.lookupJustAfter' t
+lookupJustAfter' t vix = do
+  tellDep (Dep_JustAfter t vix)
+  T.lookupJustAfter' t . valueFacts vix <$> untrackedAskFacts
 
 lookupJustBefore' :: Time -> VIx a -> DerivationM (Maybe (TimeSpan, (DerivationTrace a, a)))
-lookupJustBefore' t vix = todo -- fst <$> T.lookupJustAfter' t
+lookupJustBefore' t vix = do
+  tellDep (Dep_JustBefore t vix)
+  T.lookupJustBefore' t . valueFacts vix <$> untrackedAskFacts
 
-todo :: a
-todo = error "TODO"
+lookupAtStartOf' :: TimeSpan -> VIx a -> DerivationM (Maybe (TimeSpan, (DerivationTrace a, a)))
+lookupAtStartOf' tts = case tts of
+  DS_Point t -> lookupM' t
+  DS_SpanExc ts -> case spanExcJustBefore ts of
+    Nothing -> lookupNegInf'
+    Just t -> lookupJustAfter' t
 
 
 
