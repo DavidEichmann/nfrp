@@ -89,6 +89,18 @@ module Theory
     = Pure a
     | forall b   . GetV  (VIx b)
                          (b -> ValueM a)
+
+    -- TODO !!!!!!!!!!!!!!!!!!!!!!!!!! IMPORTANT !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    --
+    -- I had changed this from "previous event occurence value" to previous
+    -- value that satisfies an arbitrary predicate, but this is not sound. We
+    -- can end up with undefined behavior: what does `x = fromJust 0 <$> prevV
+    -- x` mean? I think the solution is to go back to the "only on event
+    -- occurrences" can you look up prevV of something. I'll need to think about
+    -- how to enforce this. Essensually this'll be a "sample just before event"
+    -- primitive (as opposed to "sample on event" which can be defined in terms
+    -- of getV on an event and a value).
+    --
     | forall b c . PrevV (VIx b)
                          (b -> Maybe c)  -- ^ Predicate / projection.
                          (Maybe c -> ValueM a)
