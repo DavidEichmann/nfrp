@@ -357,10 +357,10 @@ module Theory
                                   `withDerTrace`
                                   ("Split on GetV dep (" ++ show eixb ++ ") Fact_SpanExc")
                       in fromMaybe
+                        -- Couldn't progress further: no new facts, but we've progressed the derivation up to newDer.
                         ([], [newDer])
-                        -- ^ Couldn't progress further: no new facts, but we've progressed the derivation up to newDer.
+                        -- Try to progress further.
                         (stepDerivation eix allDerivations facts newDer)
-                        -- ^ Try to progress further.
                     Fact_Point _ t valB -> let
                         newCont = cont valB
                         newDer  = Derivation dtrace (DS_Point t) prevDeps newCont
@@ -478,10 +478,10 @@ module Theory
                         `withDerTrace`
                           ("Split on known facts")
                     in fromMaybe
+                      -- Couldn't progress further: no new facts, but we've progressed the derivation up to newDer.
                       ([], [newDer])
-                      -- ^ Couldn't progress further: no new facts, but we've progressed the derivation up to newDer.
+                      -- Try to progress further.
                       (stepDerivation eix allDerivations facts newDer)
-                      -- ^ Try to progress further.
                   | (ttspan', prevVMay) <- knownSpansAndValueMays
                   ]
                 <>
@@ -646,9 +646,9 @@ module Theory
           newDer = Derivation
             dtrace
             (DS_SpanExc concreteTimeSpan)
+            -- NOTE [DeriveAfterFirstChange and PrevV deps] There are no PrevV
+            -- events by denotation of DeriveAfterFirstChange
             []
-            -- ^ NOTE [DeriveAfterFirstChange and PrevV deps] There are
-            -- no PrevV events by denotation of DeriveAfterFirstChange
             cont
               `withDerTrace`
               ("Found first occ at t=" ++ show firstChangeTime)
