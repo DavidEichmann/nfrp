@@ -31,7 +31,9 @@ import Data.List (find)
 import qualified Data.IntMap as IM
 import           Data.IntMap (IntMap)
 import Data.Maybe (listToMaybe, fromJust)
+import Data.Set (Set)
 import qualified Data.Set as S
+import Data.Coerce (coerce)
 import Unsafe.Coerce
 import GHC.Exts (Any)
 
@@ -130,12 +132,51 @@ type Derivations = [SomeDerivation]
 
 data KnowledgeBase = KnowledgeBase
   { kbFacts :: Facts
-  , kbDerivations :: Derivations
-  -- | Is the KnowledgeBase dirty such that some derivations may be able to
-  -- progress. This is set to False before attempting to progress all
-  -- derivations.
-  , kbDirty :: Bool
+
+
+  -- , kbDerivations :: Derivations
+  -- -- | Is the KnowledgeBase dirty such that some derivations may be able to
+  -- -- progress. This is set to False before attempting to progress all
+  -- -- derivations.
+  -- , kbDirty :: Bool
+
+
+  -- WIP derivation tracking by deps
+  , kbDerivations :: DerivationsByDeps
+  , kbHotDerivations :: Set SomeDerivationID
   }
+
+-- Some data to store/query derivations according to their dependencies
+data DerivationsByDeps
+newtype DerivationID a = DerivationID Int
+  deriving (Eq, Ord)
+data SomeDerivationID = forall a . SomeDerivationID (VIx a) (DerivationID a)
+instance Eq SomeDerivationID where
+  (SomeDerivationID vixA derIdA) == (SomeDerivationID vixB derIdB)
+    = vixA == coerce vixB && derIdA == coerce derIdB
+instance Ord SomeDerivationID where
+  compare (SomeDerivationID vixA derIdA) (SomeDerivationID vixB derIdB)
+    = compare (vixA, derIdA) (coerce (vixB, derIdB))
+
+lookupDer :: DerivationID a -> DerivationsByDeps -> Maybe (Derivation a)
+lookupDer = todo
+
+fromListNoDeps :: [SomeDerivation] -> DerivationsByDeps
+fromListNoDeps = todo
+
+insertsNoDepsDBD :: [SomeDerivation] -> DerivationsByDeps -> ([SomeDerivationID], DerivationsByDeps)
+insertsNoDepsDBD = todo
+
+deleteDBD :: DerivationID a -> DerivationsByDeps -> DerivationsByDeps
+deleteDBD = todo
+
+idsDBD :: DerivationsByDeps -> Set SomeDerivationID
+idsDBD = todo
+
+setDeps :: DerivationID a -> [DerivationDep] -> DerivationsByDeps -> DerivationsByDeps
+setDeps = todo
+
+todo = _todo
 
 kbValueFacts :: VIx a -> KnowledgeBase -> ValueTimeline a
 kbValueFacts vix kb = valueFacts vix (kbFacts kb)
@@ -161,12 +202,6 @@ lookupVFact t vix facts = MaybeKnown $ do
 
 type KnowledgeBaseM a = State KnowledgeBase a
 
-setClean :: KnowledgeBaseM ()
-setClean = modify (\kb -> kb { kbDirty = False })
-
-setDirty :: KnowledgeBaseM ()
-setDirty = modify (\kb -> kb { kbDirty = True })
-
 -- Now a natural fist attempt at a solution is obvious: start with an initial
 -- knowledge base and continue evaluating derivations until all terminate or
 -- deadlock:
@@ -178,46 +213,77 @@ solution1 inputs = execState iterateUntilChange initialKb
     [ Th.SomeValueFact eix <$> eventFacts
     | InputEl eix (Left eventFacts) <- inputs
     ]
-  initialDerivations =
+  initialDerivations = fromListNoDeps
     [ SomeDerivation eix (startDerivationForAllTime eventM)
     | InputEl eix (Right eventM) <- inputs
     ]
-  mayProgress = not (null initialDerivations)
-  initialKb = KnowledgeBase initialFacts initialDerivations mayProgress
+  initialKb = KnowledgeBase
+                { kbFacts = initialFacts
+                , kbDerivations = initialDerivations
+                , kbHotDerivations = idsDBD initialDerivations
+                }
 
   iterateUntilChange :: KnowledgeBaseM ()
-  iterateUntilChange = do
-    dirty <- gets kbDirty
-    when dirty $ do
-      setClean
-      stepDerivations
-      iterateUntilChange
+  iterateUntilChange = go
+    where
+      -- Try remove a derivation from kbHotDerivations
+      popHotDerivation = do
+        mvMay <- gets (S.minView . kbHotDerivations)
+        case mvMay of
+          Nothing -> return Nothing
+          Just (derId, newHotDers) -> do
+            modify (\kb -> kb { kbHotDerivations = newHotDers })
+            return (Just derId)
 
-  -- Tries to step all derivations once.
-  stepDerivations :: KnowledgeBaseM ()
-  stepDerivations = do
-    n <- gets (length . kbDerivations)
-    let loop i = do
-          if i == n
-            then return ()
-            else do
-              allDers <- gets kbDerivations
-              allFacts <- gets kbFacts
-              case allDers !! i of
-                SomeDerivation vix der -> do
-                  -- case pokeDerivation vix allDers allFacts der of
-                  let (mayNewFactsAndDers, (), deps) = runRWS (pokeDerivation vix der) (allFacts, allDers) ()
-                  case mayNewFactsAndDers of
-                    Nothing -> do
-                      -- TODO Poke this derivation when `deps` have changed
-                      loop (i + 1)
-                    Just (newFacts, newDers) -> do
-                      modify (\_ -> KnowledgeBase
-                        { kbFacts = (singletonFacts vix newFacts) <> allFacts
-                        , kbDerivations = (SomeDerivation vix <$> newDers) <> take i allDers <> drop (i+1) allDers
-                        , kbDirty = True
-                        })
-    loop 0
+      pushHotDerivation derId = modify (\kb -> kb { kbHotDerivations = S.insert derId (kbHotDerivations kb) })
+
+      go = do
+        -- Pop a DerivatiopnID off the Hot list
+        derIdMay <- popHotDerivation
+        case derIdMay of
+          Nothing -> return ()
+          Just (SomeDerivationID vix derId) -> do
+            -- Poke the Derivation
+            derMay <- gets (lookupDer derId . kbDerivations)
+            let Just der = derMay
+            allDers <- gets kbDerivations
+            allFacts <- gets kbFacts
+            let (mayNewFactsAndDers, (), deps) = runRWS (pokeDerivation vix der) (allFacts, allDers) ()
+            case mayNewFactsAndDers of
+              -- If no progress, simply update the deps (they have changed).
+              Nothing -> modify (\kb -> kb { kbDerivations = setDeps derId deps (kbDerivations kb) })
+              -- Else we made progress and should add the new facts and (hot) derivations.
+              Just (newFacts, newDers) -> do
+                oldHotDers <- gets kbHotDerivations -- note we've already popped off derId
+                let (newDerIds, newKbDers)
+                      = insertsNoDepsDBD (SomeDerivation vix <$> newDers)
+                      $ deleteDBD derId allDers
+                    newKbHotDers = S.union (S.fromList newDerIds) oldHotDers
+                modify (\kb -> kb
+                  { kbDerivations = newKbDers
+                  , kbHotDerivations = newKbHotDers
+                  })
+
+      -- loop_OLD i = do
+      --     if i == n
+      --       then return ()
+      --       else do
+      --         allDers <- gets kbDerivations
+      --         allFacts <- gets kbFacts
+      --         case allDers !! i of
+      --           SomeDerivation vix der -> do
+      --             -- case pokeDerivation vix allDers allFacts der of
+      --             let (mayNewFactsAndDers, (), deps) = runRWS (pokeDerivation vix der) (allFacts, allDers) ()
+      --             case mayNewFactsAndDers of
+      --               Nothing -> do
+      --                 -- TODO Poke this derivation when `deps` have changed
+      --                 loop (i + 1)
+      --               Just (newFacts, newDers) -> do
+      --                 modify (\_ -> KnowledgeBase
+      --                   { kbFacts = (singletonFacts vix newFacts) <> allFacts
+      --                   , kbDerivations = (SomeDerivation vix <$> newDers) <> take i allDers <> drop (i+1) allDers
+      --                   , kbDirty = True
+      --                   })
 
   -- This is the important part. Is corresponds to the `deriveE` denotation.
   pokeDerivation
@@ -790,7 +856,7 @@ prevVFacts timeSpan vix predicate = do
 -- DerivationM a monad that tracks dependencies used while stepping a derivation.
 --
 
-type DerivationM a = RWS (Facts, Derivations) [DerivationDep] () a
+type DerivationM a = RWS (Facts, DerivationsByDeps) [DerivationDep] () a
 
 tellDep :: DerivationDep -> DerivationM ()
 tellDep dep = tell [dep]
@@ -800,7 +866,7 @@ untrackedAskFacts :: DerivationM Facts
 untrackedAskFacts = asks fst
 
 -- Use `tellDeps` after this to track what part of derivations you depend on.
-untrackedAskDerivations :: DerivationM Derivations
+untrackedAskDerivations :: DerivationM DerivationsByDeps
 untrackedAskDerivations = asks snd
 
 -- Describes a dependency
@@ -874,6 +940,22 @@ lookupAtStartOf' tts = case tts of
     Nothing -> lookupNegInf'
     Just t -> lookupJustAfter' t
 
+
+
+--
+-- I need a way to relate new facts and new derivation-based-clearances to live
+-- derivations via their dependencies (DrivationDep). I also need to deal with
+-- the fact that multiple Derivations may be made "hot" (i.e. ready to be poked
+-- due to a dependency change) due to a single dependency change, but we are
+-- poking serially so may get even more hot Derivations before we've progressed
+-- all the current hot derivations. I think we need dome unique ID per live
+-- derivation and we should have a Set of live derivations that we'll use as a
+-- queue of things to poke.
+--
+-- (VIx, TimeSpan) is a unique identifier for Derivations, though they may
+-- change, but they only change after they are poked, so that sufficient for use
+-- between pokes.
+--
 
 
 {- APPENDIX -}
