@@ -158,34 +158,32 @@ instance Ord SomeDerivationID where
   compare (SomeDerivationID vixA derIdA) (SomeDerivationID vixB derIdB)
     = compare (vixA, derIdA) (coerce (vixB, derIdB))
 
-lookupDer :: DerivationID a -> DerivationsByDeps -> Maybe (Derivation a)
-lookupDer = todo
+dbdLookupDer :: DerivationID a -> DerivationsByDeps -> Maybe (Derivation a)
+dbdLookupDer = todo
 
-data SomeDerivationIDAndDerivation
-  = forall a . SomeDerivationIDAndDerivation (DerivationID a) (Derivation a)
-
-lookupSpanDerJustAfter
+-- | Lookup a derivation that spans just after the given time.
+dbdLookupSpanDerJustAfter
   :: VIx a
   -> Maybe Time
   -- ^ Nothing means -Inf
   -> DerivationsByDeps
   -> Maybe (DerivationID a, Derivation a)
-lookupSpanDerJustAfter = todo
+dbdLookupSpanDerJustAfter = todo
 
-fromListNoDeps :: [SomeDerivation] -> DerivationsByDeps
-fromListNoDeps = todo
+dbdFromListNoDeps :: [SomeDerivation] -> DerivationsByDeps
+dbdFromListNoDeps = todo
 
-insertsNoDepsDBD :: [SomeDerivation] -> DerivationsByDeps -> ([SomeDerivationID], DerivationsByDeps)
-insertsNoDepsDBD = todo
+dbdInsertsNoDeps :: [SomeDerivation] -> DerivationsByDeps -> ([SomeDerivationID], DerivationsByDeps)
+dbdInsertsNoDeps = todo
 
-deleteDBD :: DerivationID a -> DerivationsByDeps -> DerivationsByDeps
-deleteDBD = todo
+dbdDelete :: DerivationID a -> DerivationsByDeps -> DerivationsByDeps
+dbdDelete = todo
 
-idsDBD :: DerivationsByDeps -> Set SomeDerivationID
-idsDBD = todo
+dbdIds :: DerivationsByDeps -> Set SomeDerivationID
+dbdIds = todo
 
-setDeps :: DerivationID a -> [DerivationDep] -> DerivationsByDeps -> DerivationsByDeps
-setDeps = todo
+dbdSetDeps :: DerivationID a -> [DerivationDep] -> DerivationsByDeps -> DerivationsByDeps
+dbdSetDeps = todo
 
 todo = _todo
 
@@ -224,14 +222,14 @@ solution1 inputs = execState iterateUntilChange initialKb
     [ Th.SomeValueFact eix <$> eventFacts
     | InputEl eix (Left eventFacts) <- inputs
     ]
-  initialDerivations = fromListNoDeps
+  initialDerivations = dbdFromListNoDeps
     [ SomeDerivation eix (startDerivationForAllTime eventM)
     | InputEl eix (Right eventM) <- inputs
     ]
   initialKb = KnowledgeBase
                 { kbFacts = initialFacts
                 , kbDerivations = initialDerivations
-                , kbHotDerivations = idsDBD initialDerivations
+                , kbHotDerivations = dbdIds initialDerivations
                 }
 
   iterateUntilChange :: KnowledgeBaseM ()
@@ -255,20 +253,20 @@ solution1 inputs = execState iterateUntilChange initialKb
           Nothing -> return ()
           Just (SomeDerivationID vix derId) -> do
             -- Poke the Derivation
-            derMay <- gets (lookupDer derId . kbDerivations)
+            derMay <- gets (dbdLookupDer derId . kbDerivations)
             let Just der = derMay
             allDers <- gets kbDerivations
             allFacts <- gets kbFacts
             let (mayNewFactsAndDers, (), deps) = runRWS (pokeDerivation vix der) (allFacts, allDers) ()
             case mayNewFactsAndDers of
               -- If no progress, simply update the deps (they have changed).
-              Nothing -> modify (\kb -> kb { kbDerivations = setDeps derId deps (kbDerivations kb) })
+              Nothing -> modify (\kb -> kb { kbDerivations = dbdSetDeps derId deps (kbDerivations kb) })
               -- Else we made progress and should add the new facts and (hot) derivations.
               Just (newFacts, newDers) -> do
                 oldHotDers <- gets kbHotDerivations -- note we've already popped off derId
                 let (newDerIds, newKbDers)
-                      = insertsNoDepsDBD (SomeDerivation vix <$> newDers)
-                      $ deleteDBD derId allDers
+                      = dbdInsertsNoDeps (SomeDerivation vix <$> newDers)
+                      $ dbdDelete derId allDers
                     newKbHotDers = S.union (S.fromList newDerIds) oldHotDers
                 modify (\kb -> kb
                   { kbDerivations = newKbDers
@@ -630,12 +628,12 @@ solution1 inputs = execState iterateUntilChange initialKb
             -> DerivationM (Maybe ([SomeVIx], Maybe Time))
           neighborsAndClearanceByDerivation someDepIx@(SomeVIx depIx) = do
             tellDep (Dep_DerivationClearance tLo depIx)
-            derMay <- lookupSpanDerJustAfter depIx tLo <$> untrackedAskDerivations
+            derMay <- dbdLookupSpanDerJustAfter depIx tLo <$> untrackedAskDerivations
             return $ case derMay of
               Just ( _
                    , Derivation
                         _
-                        (DS_SpanExc tspan) -- Must be of this form due to `lookupSpanDerJustAfter`
+                        (DS_SpanExc tspan) -- Must be of this form due to `dbdLookupSpanDerJustAfter`
                         neighbors
                         (Pure _)
                    )
