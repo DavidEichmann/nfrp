@@ -24,8 +24,8 @@ library
         -- , KnowledgeBase.Ix
         -- , Lazy
         -- , Reactor
-        -- , Synthetic
-          Theory
+          Synthetic
+        , Theory
         , TheoryFast
         , Time
         , TimeSpan

@@ -4,6 +4,7 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
@@ -13,75 +14,71 @@ import Data.Maybe (catMaybes)
 
 import Time (Time)
 import TimeSpan
-import Theory (Inputs, InputEl(..), VIx(..), ValueFact(..), prevVWhere, getV)
+import Theory (ValueM(Pure), MaybeOcc(..), pattern NoOcc, Inputs, InputEl(..), EIx(..), Fact(..), prevV, getE)
 
--- | Synthetic inputs and VIx/times that should be sampled
-syntheticN :: Int -> ([VIx Int], [Time], Inputs)
+-- | Synthetic inputs and EIx/times that should be sampled
+syntheticN :: Int -> ([EIx Int], [Time], Inputs)
 syntheticN n =
-    ( vixs
-    , sampleTimes
-    , [ InputEl vix $ if i < n
-            -- Source Value
-            then Left
-                [ case ts of
-                    Left t      -> Fact_Point [] t (negate $ (i * timesN) + x)
-                    Right tspan -> Fact_SpanExc [] tspan ((i * timesN) + x)
-                | (ts, x) <- zip times [0..]
-                ]
-            -- Derived Value
-            else Right $ do
-                -- Depend on lower ix values.
-                x <- sum <$> mapM (getV . VIx) [0..(i-1)]
-
-                -- Depend on (prevV) higher ix odd values.
-                y <- sum . catMaybes
-                    <$> mapM
-                            (\j -> prevVWhere
-                                (VIx j)
-                                -- (\v -> if odd v then Just v else Nothing)
-                                (const (Just 1))
-                            )
-                            [(i+1)..m]
-
-                return (x+y)
-
-        | vix@(VIx i) <- vixs
+  ( vixs
+  , sampleTimes
+  , [ InputEl vix $ if i < n
+      -- Source Value
+      then Left
+        [ case ts of
+          Left t      -> Fact_Occ [] t (negate $ (i * timesN) + x)
+          Right tspan -> Fact_NoOcc [] (DS_SpanExc tspan)
+        | (ts, x) <- zip times [0..]
         ]
-    )
-    where
-    vixs = VIx <$> [0..m]
+      -- Derived Value
+      else Right $ do
+        -- Depend on lower ix values.
+        xs <- catMaybes . fmap maybeOccToMaybe <$> mapM (getE . EIx) [0..(i-1)]
+        if null xs
+          then Pure NoOcc
+          else do
+            let x = sum xs
 
-    m = (2 * n) - 1
+            -- Depend on (prevV) higher ix odd values.
+            y <- sum . catMaybes <$> mapM
+                                      (\j -> prevV (EIx j))
+                                      [(i+1)..m]
 
-    timesN :: Num a => a
-    timesN = 100
+            return (x+y)
 
-    timeStep :: Num a => a
-    timeStep = 10
+    | vix@(EIx i) <- vixs
+    ]
+  )
+  where
+  vixs = EIx <$> [0..m]
 
-    sampleTimes
-        = -1
-        : 0
-        : timesN * timeStep + 1
-        : concat
-            [ [ tLo
-              , tMid
-              ]
-            | i <- [0..(timesN-1)]
-            , let tLo = i * timeStep
-            , let tMid = tLo + 1
-            ]
+  m = (2 * n) - 1
 
-    times :: [Either Time SpanExc]
-    times
-        = Right (spanExc Nothing (Just 0))
-        : Left (timesN * timeStep)
-        : Right (spanExc (Just (timesN * timeStep)) Nothing)
-        : concat
-            [ [ Left tLo
-              , Right (spanExc (Just tLo) (Just tHi))
-              ]
-            | i <- [0..(timesN-1)]
-            , let tLo = i * timeStep
-            , let tHi = (i + 1) * timeStep
-            ]
+  timesN :: Num a => a
+  timesN = 100
+
+  timeStep :: Num a => a
+  timeStep = 10
+
+  sampleTimes
+    = concat
+      [ [ tLo
+        , tMid
+        ]
+      | i <- [(-1)..timesN]
+      , let tLo = i * timeStep
+      , let tMid = tLo + 1
+      ]
+
+  times :: [Either Time SpanExc]
+  times
+    = Right (spanExc Nothing (Just 0))
+    : Left (timesN * timeStep)
+    : Right (spanExc (Just (timesN * timeStep)) Nothing)
+    : concat
+      [ [ Left tLo
+        , Right (spanExc (Just tLo) (Just tHi))
+        ]
+      | i <- [0..(timesN-1)]
+      , let tLo = i * timeStep
+      , let tHi = tLo + timeStep
+      ]

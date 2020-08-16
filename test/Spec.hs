@@ -14,18 +14,18 @@ import Test.Tasty.QuickCheck
 import qualified GHC.Generics as GHC
 import Control.Monad (when)
 import Data.Kind (Type)
-import Data.Maybe (isJust, isNothing, fromMaybe)
+import Data.Maybe (catMaybes, isJust, isNothing, fromMaybe)
 import qualified System.Timeout as Sys
 import Data.Text.Prettyprint.Doc
 import Generics.SOP
 
 -- import NFRP
 -- import FRP
--- import Synthetic
+import Synthetic
 import Time (Time)
 import TimeSpan
 import Theory as T
--- import qualified TheoryFast as TF
+import qualified TheoryFast as TF
 -- import KnowledgeBase
 -- import KnowledgeBase.Timeline
 
@@ -60,17 +60,25 @@ tests = testGroup "NFRP"
                     --         2        8    18
                     , InputEl eix2
                         (Right $ do
-                            v1 <- requireE eix1
-                            pv2 <- fromMaybe 0 <$> prevV eix3
-                            return (v1 + pv2)
+                            xs <- catMaybes . fmap maybeOccToMaybe <$> mapM getE [eix1]
+                            if null xs
+                                then Pure NoOcc
+                                else do
+                                    y <- sum . catMaybes <$> mapM prevV
+                                                                [eix3]
+                                    return (sum xs + y)
                         )
                     -- time: --0--------5-----7--------------
                     --         4       12    24
                     , InputEl eix3
                         (Right $ do
-                            v1 <- requireE eix1
-                            v2 <- requireE eix2
-                            return (v1+v2)
+                            xs <- catMaybes . fmap maybeOccToMaybe <$> mapM getE [eix1, eix2]
+                            if null xs
+                                then Pure NoOcc
+                                else do
+                                    y <- sum . catMaybes <$> mapM prevV
+                                                                []
+                                    return (sum xs + y)
                         )
                     ]
 
@@ -89,6 +97,16 @@ tests = testGroup "NFRP"
         lookupVKB 6 eix3 kb @?= Known NoOcc
         lookupVKB 7 eix3 kb @?= Known (Occ 24)
         lookupVKB 8 eix3 kb @?= Known NoOcc
+
+      , let n = 5 in testCase ("TheoryFast vs Theory on Synthetic " ++ show n) $ do
+        let (vixs, ts, ins) = syntheticN n
+            lookupT  = let kb =  T.solution1 ins in \t vix -> T.lookupVKB t vix kb
+            lookupTF = let kb = TF.solution1 ins in \t vix ->TF.lookupVKB t vix kb
+        sequence_
+            [ lookupTF t vix @?= lookupT t vix
+            | vix <- vixs
+            , t <- ts
+            ]
 
       , testCase "Switching" $ do
           let
@@ -647,21 +665,6 @@ tests = testGroup "NFRP"
 --         lookupVKB 27 out kb @?= Known 16
 --         lookupVKB 30 out kb @?= Known 16
 --         lookupVKB 35 out kb @?= Known 6
---     ]
-
---   , testGroup "TheoryFast"
---     [ let n = 5 in testCase ("vs Theory on Synthetic " ++ show n) $ do
---         let (vixs, ts, ins) = syntheticN n
---             lookupT  = let kb =  T.solution1 ins in \t vix -> T.lookupVKB t vix kb
---             lookupTF = let kb = TF.solution1 ins in \t vix ->TF.lookupVKB t vix kb
---         sequence_
---             [ print (lookupT (-1000) vix) -- lookupTF t vix @?= lookupT t vix
---             | vix <- vixs
---             -- , t <- ts
---             ]
-
---         True @?= False
-
 --     ]
   -- ]
 
