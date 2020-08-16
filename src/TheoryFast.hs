@@ -161,6 +161,17 @@ instance Ord SomeDerivationID where
 lookupDer :: DerivationID a -> DerivationsByDeps -> Maybe (Derivation a)
 lookupDer = todo
 
+data SomeDerivationIDAndDerivation
+  = forall a . SomeDerivationIDAndDerivation (DerivationID a) (Derivation a)
+
+lookupSpanDerJustAfter
+  :: VIx a
+  -> Maybe Time
+  -- ^ Nothing means -Inf
+  -> DerivationsByDeps
+  -> Maybe (DerivationID a, Derivation a)
+lookupSpanDerJustAfter = todo
+
 fromListNoDeps :: [SomeDerivation] -> DerivationsByDeps
 fromListNoDeps = todo
 
@@ -619,25 +630,17 @@ solution1 inputs = execState iterateUntilChange initialKb
             -> DerivationM (Maybe ([SomeVIx], Maybe Time))
           neighborsAndClearanceByDerivation someDepIx@(SomeVIx depIx) = do
             tellDep (Dep_DerivationClearance tLo depIx)
-            allDerivations <- untrackedAskDerivations
-            return $ listToMaybe
-              [ (neighbors, spanExcJustAfter tspan)
-              | SomeDerivation
-                  ix''
-                  (Derivation
-                    _
-                    (DS_SpanExc tspan)
-                    neighbors
-                    cont
-                  )
-                  <- allDerivations
-              , someDepIx == SomeVIx ix'' -- look up the correct eix
-              , spanExcJustBefore tspan == tLo -- starts at tLo
-              -- derivation is complete
-              , case cont of
-                  Pure _ -> True
-                  _ -> False
-              ]
+            derMay <- lookupSpanDerJustAfter depIx tLo <$> untrackedAskDerivations
+            return $ case derMay of
+              Just ( _
+                   , Derivation
+                        _
+                        (DS_SpanExc tspan) -- Must be of this form due to `lookupSpanDerJustAfter`
+                        neighbors
+                        (Pure _)
+                   )
+                   -> Just (neighbors, spanExcJustAfter tspan)
+              _ -> Nothing
 
       DeriveAfterFirstChange dtrace tspan eixB cont -> do
        fc <- searchForFirstChange tspan eixB
