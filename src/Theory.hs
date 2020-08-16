@@ -26,8 +26,7 @@ module Theory
   import Control.Applicative
   import Data.Hashable
   import Data.Kind
-  import Data.List (find, foldl', sortBy)
-  import Data.Function (on)
+  import Data.List (find, foldl')
   import Data.Maybe (fromMaybe, listToMaybe, mapMaybe, fromJust)
   import qualified Data.Set as S
   import Safe
@@ -84,9 +83,15 @@ module Theory
 -- Derived events are expressed with the ValueM monad:
 
   data ValueM a
+    -- | Return an occurence. Must be NoOcc if no GetE has returned a Occ yet.
+    -- TODO enforce this in the API e.g. by only allowing construction from an
+    -- witnessed event... or Occ contains a constraint "proof" that an event is
+    -- witnessed
     = Pure (MaybeOcc a)
+    -- | Get current event value if occurring.
     | forall b . GetE  (EIx b)
                        (MaybeOcc b -> ValueM a)
+    -- | Get previous event value strictly before current time.
     | forall b . PrevV (EIx b)
                        (Maybe b -> ValueM a)
 
@@ -110,9 +115,17 @@ module Theory
   requireE :: EIx a -> ValueM a
   requireE eix = GetE eix Pure
 
-  -- | Note that this returns Nothing at time -Inf
+  -- | Note that this returns Nothing if there is no previous event
   prevV :: EIx a -> ValueM (Maybe a)
   prevV eix = PrevV eix (Pure . Occ)
+
+  -- | Note that this returns Nothing if there is no current/previous event
+  currV :: EIx a -> ValueM (Maybe a)
+  currV eix = do
+    currMay <- getE eix
+    case currMay of
+      Occ a -> return (Just a)
+      NoOcc -> prevV eix
 
   onEvent :: EIx a -> (a -> ValueM b) -> ValueM (MaybeOcc b)
   onEvent eix withA = do
@@ -819,7 +832,7 @@ module Theory
             Known prevVMay -> (DS_SpanExc tspan, prevVMay) : [(DS_Point nextT, prevVMay) | Just nextT <- [spanExcJustAfter tspan]]
 
       -- Point knowledge is handled by the above case
-      Fact_NoOcc _ (DS_Point t) -> []
+      Fact_NoOcc _ (DS_Point _) -> []
       Fact_Occ _ _ _ -> []
 
     | fact <- factsV' eix allFacts
