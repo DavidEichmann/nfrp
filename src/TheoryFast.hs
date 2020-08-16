@@ -146,8 +146,37 @@ data KnowledgeBase = KnowledgeBase
   , kbHotDerivations :: Set SomeDerivationID
   }
 
+kbValueFacts :: VIx a -> KnowledgeBase -> ValueTimeline a
+kbValueFacts vix kb = valueFacts vix (kbFacts kb)
+
+lookupVKB :: Time -> VIx a -> KnowledgeBase -> MaybeKnown a
+lookupVKB t eix kb = lookupV t eix (kbFacts kb)
+
+lookupVKBTrace :: Time -> VIx a -> KnowledgeBase -> MaybeKnown (DerivationTrace a)
+lookupVKBTrace t eix kb = lookupVTrace t eix (kbFacts kb)
+
+lookupV :: Time -> VIx a -> Facts -> MaybeKnown a
+lookupV t eix facts = snd <$> lookupVFact t eix facts
+
+lookupVTrace :: Time -> VIx a -> Facts -> MaybeKnown (DerivationTrace a)
+lookupVTrace t vix facts = fst <$> lookupVFact t vix facts
+
+lookupVFact :: Time -> VIx a -> Facts -> MaybeKnown (DerivationTrace a, a)
+lookupVFact t vix facts = MaybeKnown $ do
+  let vfs = valueFacts vix facts
+  T.lookup t vfs
+-- lookupVFact t vix facts = MaybeKnown $ listToMaybe $
+--   filter ((`intersects` t) . factTSpan) (valueFacts vix facts)
+
+type KnowledgeBaseM a = State KnowledgeBase a
+
 -- Some data to store/query derivations according to their dependencies
-data DerivationsByDeps
+data DerivationsByDeps = DerivationsByDeps
+  {
+  }
+
+
+
 newtype DerivationID a = DerivationID Int
   deriving (Eq, Ord)
 data SomeDerivationID = forall a . SomeDerivationID (VIx a) (DerivationID a)
@@ -186,30 +215,6 @@ dbdSetDeps :: DerivationID a -> [DerivationDep] -> DerivationsByDeps -> Derivati
 dbdSetDeps = todo
 
 todo = _todo
-
-kbValueFacts :: VIx a -> KnowledgeBase -> ValueTimeline a
-kbValueFacts vix kb = valueFacts vix (kbFacts kb)
-
-lookupVKB :: Time -> VIx a -> KnowledgeBase -> MaybeKnown a
-lookupVKB t eix kb = lookupV t eix (kbFacts kb)
-
-lookupVKBTrace :: Time -> VIx a -> KnowledgeBase -> MaybeKnown (DerivationTrace a)
-lookupVKBTrace t eix kb = lookupVTrace t eix (kbFacts kb)
-
-lookupV :: Time -> VIx a -> Facts -> MaybeKnown a
-lookupV t eix facts = snd <$> lookupVFact t eix facts
-
-lookupVTrace :: Time -> VIx a -> Facts -> MaybeKnown (DerivationTrace a)
-lookupVTrace t vix facts = fst <$> lookupVFact t vix facts
-
-lookupVFact :: Time -> VIx a -> Facts -> MaybeKnown (DerivationTrace a, a)
-lookupVFact t vix facts = MaybeKnown $ do
-  let vfs = valueFacts vix facts
-  T.lookup t vfs
--- lookupVFact t vix facts = MaybeKnown $ listToMaybe $
---   filter ((`intersects` t) . factTSpan) (valueFacts vix facts)
-
-type KnowledgeBaseM a = State KnowledgeBase a
 
 -- Now a natural fist attempt at a solution is obvious: start with an initial
 -- knowledge base and continue evaluating derivations until all terminate or
