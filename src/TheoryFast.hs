@@ -28,6 +28,8 @@ import Control.Monad.Trans.RWS.CPS (asks, RWS, runRWS, tell)
 -- import Data.Hashable
 -- import Data.Kind
 import Data.List (find)
+import qualified Data.Map as M
+import           Data.Map (Map)
 import qualified Data.IntMap as IM
 import           Data.IntMap (IntMap)
 import Data.Maybe (listToMaybe, fromJust)
@@ -77,6 +79,7 @@ import Theory
   , prevVWhere
   )
 import Control.Monad (when)
+import Data.List (foldl')
 
 
 
@@ -172,9 +175,30 @@ type KnowledgeBaseM a = State KnowledgeBase a
 
 -- Some data to store/query derivations according to their dependencies
 data DerivationsByDeps = DerivationsByDeps
-  {
+  { dbdNextID :: Int
+  , dbdDerivation :: IntMap (DbdDerivation_Value Any) -- Map (DerivationID a) (VIx a, Derivation a)
+
+  -- Derivations keyed on dependencies
+
+  -- Ixs to DerivationIDs
+  -- TODO and indexes, then update:
+  --  * dbdDelete
+  --  * dbdSetDeps
+  --  * ???
+
+  , dbdIxSpanLoJurisdiction :: Map (SomeVIx, Maybe Time) Int -- Map (VIx a, Maybe Time) DerivationID
+  -- ^ Used for `dbdLookupSpanDerJustAfter`. Key is lot time of derivation
+  -- jurisdiction. Only applies to (non-DeriveAfterFirstChange) derivations with
+  -- a span jurisdiction. Nothing means (-Inf)
   }
 
+type DbdDerivation_Value a = (VIx a, Derivation a)
+
+-- | Get the key in to dbdIxSpanLoJurisdiction
+dbdIxKeySpanLoJurisdiction :: VIx a -> Derivation a -> Maybe (SomeVIx, Maybe Time)
+dbdIxKeySpanLoJurisdiction vix der = case der of
+  Derivation _ (DS_SpanExc tspan) _ _ -> Just (SomeVIx vix, spanExcJustBefore tspan)
+  _ -> Nothing
 
 
 newtype DerivationID a = DerivationID Int
@@ -187,8 +211,10 @@ instance Ord SomeDerivationID where
   compare (SomeDerivationID vixA derIdA) (SomeDerivationID vixB derIdB)
     = compare (vixA, derIdA) (coerce (vixB, derIdB))
 
-dbdLookupDer :: DerivationID a -> DerivationsByDeps -> Maybe (Derivation a)
-dbdLookupDer = todo
+dbdLookupDer :: DerivationID a -> DerivationsByDeps -> Maybe (VIx a, Derivation a)
+dbdLookupDer (DerivationID derIdInt) dbd = fmap
+  (unsafeCoerce :: DbdDerivation_Value Any -> DbdDerivation_Value a)
+  (IM.lookup derIdInt (dbdDerivation dbd))
 
 -- | Lookup a derivation that spans just after the given time.
 dbdLookupSpanDerJustAfter
@@ -197,24 +223,65 @@ dbdLookupSpanDerJustAfter
   -- ^ Nothing means -Inf
   -> DerivationsByDeps
   -> Maybe (DerivationID a, Derivation a)
-dbdLookupSpanDerJustAfter = todo
+dbdLookupSpanDerJustAfter vix t dbd = do
+  let ix = dbdIxSpanLoJurisdiction dbd
+  derId <- M.lookup (SomeVIx vix, t) ix
+  let (_, der) = (unsafeCoerce :: DbdDerivation_Value Any -> DbdDerivation_Value a)
+        (dbdDerivation dbd IM.! derId)
+  return (DerivationID derId, der)
 
-dbdFromListNoDeps :: [SomeDerivation] -> DerivationsByDeps
-dbdFromListNoDeps = todo
+dbdInitialEmpty :: DerivationsByDeps
+dbdInitialEmpty = DerivationsByDeps
+  { dbdNextID = 0
+  , dbdDerivation = IM.empty
+  , dbdIxSpanLoJurisdiction = M.empty
+  }
+
+dbdInitialFromListNoDeps :: [SomeDerivation] -> ([SomeDerivationID], DerivationsByDeps)
+dbdInitialFromListNoDeps ders = dbdInsertsNoDeps ders dbdInitialEmpty
 
 dbdInsertsNoDeps :: [SomeDerivation] -> DerivationsByDeps -> ([SomeDerivationID], DerivationsByDeps)
-dbdInsertsNoDeps = todo
+dbdInsertsNoDeps someDers dbd = (reverse revIds, dbdFinal)
+  where
+  (revIds, dbdFinal) = foldl'
+      (\(ids, dbd') (SomeDerivation vix der) ->
+        let (newId, dbd'') = dbdInsertNoDeps vix der dbd'
+        in (SomeDerivationID vix newId : ids, dbd'')
+      )
+      ([], dbd)
+      someDers
+
+dbdInsertNoDeps :: VIx a -> Derivation a -> DerivationsByDeps -> (DerivationID a, DerivationsByDeps)
+dbdInsertNoDeps vix der dbd =
+  ( myId
+  , DerivationsByDeps
+    { dbdNextID = dbdNextID dbd + 1
+    , dbdDerivation = IM.insert
+        myIdInt
+        ((unsafeCoerce :: DbdDerivation_Value a -> DbdDerivation_Value Any) (vix, der))
+        (dbdDerivation dbd)
+    , dbdIxSpanLoJurisdiction = case dbdIxKeySpanLoJurisdiction vix der of
+        Just key -> M.insert key myIdInt (dbdIxSpanLoJurisdiction dbd)
+        Nothing -> dbdIxSpanLoJurisdiction dbd
+    }
+  )
+  where
+  myIdInt = dbdNextID dbd
+  myId = DerivationID myIdInt
 
 dbdDelete :: DerivationID a -> DerivationsByDeps -> DerivationsByDeps
-dbdDelete = todo
-
-dbdIds :: DerivationsByDeps -> Set SomeDerivationID
-dbdIds = todo
+dbdDelete (DerivationID derIdInt) dbd = case IM.lookup derIdInt (dbdDerivation dbd) of
+  Nothing -> dbd
+  Just (vix, der) -> DerivationsByDeps
+    { dbdNextID = dbdNextID dbd
+    , dbdDerivation = IM.delete derIdInt (dbdDerivation dbd)
+    , dbdIxSpanLoJurisdiction = case dbdIxKeySpanLoJurisdiction vix der of
+        Nothing -> dbdIxSpanLoJurisdiction dbd
+        Just key -> M.delete key (dbdIxSpanLoJurisdiction dbd)
+    }
 
 dbdSetDeps :: DerivationID a -> [DerivationDep] -> DerivationsByDeps -> DerivationsByDeps
-dbdSetDeps = todo
-
-todo = _todo
+dbdSetDeps derID deps dbd = dbd
 
 -- Now a natural fist attempt at a solution is obvious: start with an initial
 -- knowledge base and continue evaluating derivations until all terminate or
@@ -227,14 +294,14 @@ solution1 inputs = execState iterateUntilChange initialKb
     [ Th.SomeValueFact eix <$> eventFacts
     | InputEl eix (Left eventFacts) <- inputs
     ]
-  initialDerivations = dbdFromListNoDeps
+  (initialDerivationIDs, initialDerivations) = dbdInitialFromListNoDeps
     [ SomeDerivation eix (startDerivationForAllTime eventM)
     | InputEl eix (Right eventM) <- inputs
     ]
   initialKb = KnowledgeBase
                 { kbFacts = initialFacts
                 , kbDerivations = initialDerivations
-                , kbHotDerivations = dbdIds initialDerivations
+                , kbHotDerivations = S.fromList initialDerivationIDs
                 }
 
   iterateUntilChange :: KnowledgeBaseM ()
@@ -259,7 +326,7 @@ solution1 inputs = execState iterateUntilChange initialKb
           Just (SomeDerivationID vix derId) -> do
             -- Poke the Derivation
             derMay <- gets (dbdLookupDer derId . kbDerivations)
-            let Just der = derMay
+            let Just (_, der) = derMay
             allDers <- gets kbDerivations
             allFacts <- gets kbFacts
             let (mayNewFactsAndDers, (), deps) = runRWS (pokeDerivation vix der) (allFacts, allDers) ()
@@ -319,7 +386,7 @@ solution1 inputs = execState iterateUntilChange initialKb
   pokeDerivation eix derivation = case derivation of
       Derivation dtrace ttspan prevDeps contDerivation -> case contDerivation of
         Pure a ->if null prevDeps
-          then  pure $ Just $ case ttspan of
+          then pure $ Just $ case ttspan of
               DS_Point t -> let
                 dtrace' = appendDerTrace dtrace $
                   "Jurisdiction is a point (t=" ++ show t ++ "), ValueM is `Pure a`."
