@@ -14,18 +14,18 @@ extra-source-files:
 
 library
     exposed-modules:
-          ClockSync
-        , DataFRP
-        , FRP
-        , NFRP
-        , KnowledgeBase
-        , KnowledgeBase.DMap
-        , KnowledgeBase.Timeline
-        , KnowledgeBase.Ix
-        , Lazy
-        , Reactor
+        --   ClockSync
+        -- , DataFRP
+        -- , FRP
+        -- , NFRP
+        -- , KnowledgeBase
+        -- , KnowledgeBase.DMap
+        -- , KnowledgeBase.Timeline
+        -- , KnowledgeBase.Ix
+        -- , Lazy
+        -- , Reactor
         -- , Synthetic
-        , Theory
+          Theory
         , TheoryFast
         , Time
         , TimeSpan
