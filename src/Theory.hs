@@ -34,7 +34,6 @@ module Theory
 
   import Time
   import TimeSpan
-  import Timeline (TimeSpan(..))
 
   type DerivationTraceEl a = String
   type DerivationTrace a = [DerivationTraceEl a]

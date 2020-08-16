@@ -47,8 +47,8 @@ import qualified Timeline as T
 import qualified Theory as Th
 import Theory
   ( factTrace
-  , VIx(..)
-  , SomeVIx(..)
+  , EIx(..)
+  , SomeEIx(..)
 
   , ValueM(..)
 
@@ -74,9 +74,8 @@ import Theory
   , DerivationTraceEl
   , appendDerTrace
 
-  , getV
+  , getE
   , prevV
-  , prevVWhere
   )
 -- import Control.Monad (when)
 import Data.List (foldl')
@@ -110,24 +109,26 @@ instance Semigroup Facts where
 listToFacts :: [Th.SomeValueFact] -> Facts
 listToFacts someValueFacts = Facts $ IM.fromListWith (<>)
     [ ( vix
-      , T.fromList [(
-        factTSpan fact,
-        (unsafeCoerce :: (DerivationTrace a, a) -> (DerivationTrace Any, Any)) $
-          case fact of
-                  Th.Fact_SpanExc derT _ a -> (derT, a)
-                  Th.Fact_Point   derT _ a -> (derT, a)
-        )]
+      , case fact of
+          Th.Fact_NoOcc derT _ a -> (derT, a)
+          Th.Fact_Point   derT _ a -> (derT, a)
       )
-    | Th.SomeValueFact (VIx vix :: VIx a) fact <- someValueFacts
+    | Th.SomeValueFact (EIx vix :: EIx a) fact <- someValueFacts
+    -- , let (noOccs, Occs) = partitionEither
+    --       [(
+    --       factTSpan fact,
+    --       (unsafeCoerce :: (DerivationTrace a, a) -> (DerivationTrace Any, Any)) $
+
+    --       )]
     ]
 
-singletonFacts :: VIx a -> ValueTimeline a -> Facts
+singletonFacts :: EIx a -> ValueTimeline a -> Facts
 singletonFacts eix tl = Facts $ IM.singleton
-  (unVIx eix)
+  (unEIx eix)
   ((unsafeCoerce :: ValueTimeline a -> ValueTimeline Any) tl)
 
-valueFacts :: VIx a -> Facts -> ValueTimeline a
-valueFacts (VIx vix) (Facts vb) = case IM.lookup vix vb of
+valueFacts :: EIx a -> Facts -> ValueTimeline a
+valueFacts (EIx vix) (Facts vb) = case IM.lookup vix vb of
   Nothing -> T.empty
   Just fs -> (unsafeCoerce :: ValueTimeline Any -> ValueTimeline a) fs
 
@@ -149,22 +150,22 @@ data KnowledgeBase = KnowledgeBase
   , kbHotDerivations :: Set SomeDerivationID
   }
 
-kbValueFacts :: VIx a -> KnowledgeBase -> ValueTimeline a
+kbValueFacts :: EIx a -> KnowledgeBase -> ValueTimeline a
 kbValueFacts vix kb = valueFacts vix (kbFacts kb)
 
-lookupVKB :: Time -> VIx a -> KnowledgeBase -> MaybeKnown a
+lookupVKB :: Time -> EIx a -> KnowledgeBase -> MaybeKnown a
 lookupVKB t eix kb = lookupV t eix (kbFacts kb)
 
-lookupVKBTrace :: Time -> VIx a -> KnowledgeBase -> MaybeKnown (DerivationTrace a)
+lookupVKBTrace :: Time -> EIx a -> KnowledgeBase -> MaybeKnown (DerivationTrace a)
 lookupVKBTrace t eix kb = lookupVTrace t eix (kbFacts kb)
 
-lookupV :: Time -> VIx a -> Facts -> MaybeKnown a
+lookupV :: Time -> EIx a -> Facts -> MaybeKnown a
 lookupV t eix facts = snd <$> lookupVFact t eix facts
 
-lookupVTrace :: Time -> VIx a -> Facts -> MaybeKnown (DerivationTrace a)
+lookupVTrace :: Time -> EIx a -> Facts -> MaybeKnown (DerivationTrace a)
 lookupVTrace t vix facts = fst <$> lookupVFact t vix facts
 
-lookupVFact :: Time -> VIx a -> Facts -> MaybeKnown (DerivationTrace a, a)
+lookupVFact :: Time -> EIx a -> Facts -> MaybeKnown (DerivationTrace a, a)
 lookupVFact t vix facts = MaybeKnown $ do
   let vfs = valueFacts vix facts
   T.lookup t vfs
@@ -176,7 +177,7 @@ type KnowledgeBaseM a = State KnowledgeBase a
 -- Some data to store/query derivations according to their dependencies
 data DerivationsByDeps = DerivationsByDeps
   { dbdNextID :: Int
-  , dbdDerivation :: IntMap (DbdDerivation_Value Any) -- Map (DerivationID a) (VIx a, Derivation a)
+  , dbdDerivation :: IntMap (DbdDerivation_Value Any) -- Map (DerivationID a) (EIx a, Derivation a)
 
   -- Derivations keyed on dependencies
 
@@ -186,24 +187,24 @@ data DerivationsByDeps = DerivationsByDeps
   --  * dbdSetDeps
   --  * ???
 
-  , dbdIxSpanLoJurisdiction :: Map (SomeVIx, Maybe Time) Int -- Map (VIx a, Maybe Time) DerivationID
+  , dbdIxSpanLoJurisdiction :: Map (SomeEIx, Maybe Time) Int -- Map (EIx a, Maybe Time) DerivationID
   -- ^ Used for `dbdLookupSpanDerJustAfter`. Key is lot time of derivation
   -- jurisdiction. Only applies to (non-DeriveAfterFirstChange) derivations with
   -- a span jurisdiction. Nothing means (-Inf)
   }
 
-type DbdDerivation_Value a = (VIx a, Derivation a)
+type DbdDerivation_Value a = (EIx a, Derivation a)
 
 -- | Get the key in to dbdIxSpanLoJurisdiction
-dbdIxKeySpanLoJurisdiction :: VIx a -> Derivation a -> Maybe (SomeVIx, Maybe Time)
+dbdIxKeySpanLoJurisdiction :: EIx a -> Derivation a -> Maybe (SomeEIx, Maybe Time)
 dbdIxKeySpanLoJurisdiction vix der = case der of
-  Derivation _ (DS_SpanExc tspan) _ _ -> Just (SomeVIx vix, spanExcJustBefore tspan)
+  Derivation _ (DS_SpanExc tspan) _ _ -> Just (SomeEIx vix, spanExcJustBefore tspan)
   _ -> Nothing
 
 
 newtype DerivationID a = DerivationID Int
   deriving (Eq, Ord)
-data SomeDerivationID = forall a . SomeDerivationID (VIx a) (DerivationID a)
+data SomeDerivationID = forall a . SomeDerivationID (EIx a) (DerivationID a)
 instance Eq SomeDerivationID where
   (SomeDerivationID vixA derIdA) == (SomeDerivationID vixB derIdB)
     = vixA == coerce vixB && derIdA == coerce derIdB
@@ -211,21 +212,21 @@ instance Ord SomeDerivationID where
   compare (SomeDerivationID vixA derIdA) (SomeDerivationID vixB derIdB)
     = compare (vixA, derIdA) (coerce (vixB, derIdB))
 
-dbdLookupDer :: DerivationID a -> DerivationsByDeps -> Maybe (VIx a, Derivation a)
+dbdLookupDer :: DerivationID a -> DerivationsByDeps -> Maybe (EIx a, Derivation a)
 dbdLookupDer (DerivationID derIdInt) dbd = fmap
   (unsafeCoerce :: DbdDerivation_Value Any -> DbdDerivation_Value a)
   (IM.lookup derIdInt (dbdDerivation dbd))
 
 -- | Lookup a derivation that spans just after the given time.
 dbdLookupSpanDerJustAfter
-  :: VIx a
+  :: EIx a
   -> Maybe Time
   -- ^ Nothing means -Inf
   -> DerivationsByDeps
   -> Maybe (DerivationID a, Derivation a)
 dbdLookupSpanDerJustAfter vix t dbd = do
   let ix = dbdIxSpanLoJurisdiction dbd
-  derId <- M.lookup (SomeVIx vix, t) ix
+  derId <- M.lookup (SomeEIx vix, t) ix
   let (_, der) = (unsafeCoerce :: DbdDerivation_Value Any -> DbdDerivation_Value a)
         (dbdDerivation dbd IM.! derId)
   return (DerivationID derId, der)
@@ -251,7 +252,7 @@ dbdInsertsNoDeps someDers dbd = (reverse revIds, dbdFinal)
       ([], dbd)
       someDers
 
-dbdInsertNoDeps :: VIx a -> Derivation a -> DerivationsByDeps -> (DerivationID a, DerivationsByDeps)
+dbdInsertNoDeps :: EIx a -> Derivation a -> DerivationsByDeps -> (DerivationID a, DerivationsByDeps)
 dbdInsertNoDeps vix der dbd =
   ( myId
   , DerivationsByDeps
@@ -387,7 +388,7 @@ solution1 inputs = execState iterateUntilChange initialKb
   -- This is the important part. Is corresponds to the `deriveE` denotation.
   pokeDerivation
     :: forall a
-    .  VIx a
+    .  EIx a
     -- ^ Event index that the derivation corresponds to.
 
     -- TODO all this will be moved to the monad's state.
@@ -480,7 +481,7 @@ solution1 inputs = execState iterateUntilChange initialKb
               Unknown -> Nothing
               Known prevBMay -> Just $ let
                 newCont = mayPrevToCont prevBMay
-                newDer  = Derivation dtrace ttspan (SomeVIx eixB : prevDeps) newCont
+                newDer  = Derivation dtrace ttspan (SomeEIx eixB : prevDeps) newCont
                       `withDerTrace`
                       ("Use known PrevV value of dep (" ++ show eixB ++ ")")
                 in (T.empty, [newDer])
@@ -521,7 +522,7 @@ solution1 inputs = execState iterateUntilChange initialKb
                       , [ Derivation
                             dtrace
                             ttspan
-                            (SomeVIx eixB : prevDeps)
+                            (SomeEIx eixB : prevDeps)
                             (mayPrevToCont prevValMay)
                           `withDerTrace`
                             ("Deadlock detected via " ++ show eixB ++ " (at t=" ++ show tspanLo ++ "). Store "
@@ -607,7 +608,7 @@ solution1 inputs = execState iterateUntilChange initialKb
             -- clearance time must be in tspan or at the time just after tspan.
             -- This is a natural consequence of the fact that we observe the
             -- current Derivation as part of the calculation of clearance time.
-            ctMay <- clearanceTime (SomeVIx eix) tLoMay
+            ctMay <- clearanceTime (SomeEIx eix) tLoMay
             return $ case ctMay of
               -- We don't know the clearance time, so return Nothing.
               Nothing -> Nothing
@@ -630,11 +631,11 @@ solution1 inputs = execState iterateUntilChange initialKb
                   )
 
         -- | Clearance time is some known time up to which we know the value of
-        -- SomeVIx will not change. In practice the value may not change even
+        -- SomeEIx will not change. In practice the value may not change even
         -- longer, so clearance time is a conservative value based on current
         -- knowledge and derivations.
         clearanceTime
-          :: SomeVIx      -- ^ Event in question
+          :: SomeEIx      -- ^ Event in question
           -> Maybe Time   -- ^ Start time of clearance ((exclusive) start of the span of NoOcc ). Nothing means -Inf.
           -> DerivationM (Maybe (Maybe Time))
                           -- ^ Clearance time if greater than the input time ((exclusive) end of the span of NoOcc). Just Nothing means Inf.
@@ -652,10 +653,10 @@ solution1 inputs = execState iterateUntilChange initialKb
                   ixClearanceTime
           where
           go
-            :: [SomeVIx]
-              -- ^ Stack of `VIx`s to visit
-            -> S.Set SomeVIx
-              -- ^ visited `VIx`s
+            :: [SomeEIx]
+              -- ^ Stack of `EIx`s to visit
+            -> S.Set SomeEIx
+              -- ^ visited `EIx`s
             -> Maybe Time
               -- ^ clearance time so far (if any).
             -> DerivationM (Maybe (Maybe Time))
@@ -680,10 +681,10 @@ solution1 inputs = execState iterateUntilChange initialKb
           minClearance (Just a) (Just b) = Just (min a b)
 
           -- | Get the neighbors (PrevV deps) and local clearance time of a
-          -- single VIx.
+          -- single EIx.
           neighborsAndClearance
-            :: SomeVIx
-            -> DerivationM (Maybe ([SomeVIx], Maybe Time))
+            :: SomeEIx
+            -> DerivationM (Maybe ([SomeEIx], Maybe Time))
           neighborsAndClearance ix = do
             clearanceByFactsMay <- neighborsAndClearanceByFacts ix
             case clearanceByFactsMay of
@@ -697,9 +698,9 @@ solution1 inputs = execState iterateUntilChange initialKb
           -- Just Nothing: Fact found that goes to infinity
           -- Just (Just t): Fact found that ends at time t (exclusive)
           neighborsAndClearanceByFacts
-            :: SomeVIx
+            :: SomeEIx
             -> DerivationM (Maybe (Maybe Time))
-          neighborsAndClearanceByFacts (SomeVIx ix) = findClearanceAfter tLo
+          neighborsAndClearanceByFacts (SomeEIx ix) = findClearanceAfter tLo
             where
             findClearanceAfter :: Maybe Time -> DerivationM (Maybe (Maybe Time))
             findClearanceAfter tMay = do
@@ -712,11 +713,11 @@ solution1 inputs = execState iterateUntilChange initialKb
                 Nothing -> Nothing
 
           -- | Get the neighbors (PrevV deps) and local clearance time of a
-          -- single VIx. Only considers active Derivations, not facts.
+          -- single EIx. Only considers active Derivations, not facts.
           neighborsAndClearanceByDerivation
-            :: SomeVIx
-            -> DerivationM (Maybe ([SomeVIx], Maybe Time))
-          neighborsAndClearanceByDerivation (SomeVIx depIx) = do
+            :: SomeEIx
+            -> DerivationM (Maybe ([SomeEIx], Maybe Time))
+          neighborsAndClearanceByDerivation (SomeEIx depIx) = do
             tellDep (Dep_DerivationClearance tLo depIx)
             derMay <- dbdLookupSpanDerJustAfter depIx tLo <$> untrackedAskDerivations
             return $ case derMay of
@@ -806,7 +807,7 @@ data FirstValueChange
 searchForFirstChange
   :: SpanExc
   -- ^ Time span to lookup
-  -> VIx a
+  -> EIx a
   -- ^ Event to lookup
   -> DerivationM FirstValueChange
 searchForFirstChange tspan vix = do
@@ -828,7 +829,7 @@ searchForFirstChange tspan vix = do
 lookupPrevV
   :: Time
   -- ^ Time t
-  -> VIx a
+  -> EIx a
   -- ^ Event to lookup.
   -> (a -> Maybe b)
   -- ^ predicate / projection.
@@ -852,7 +853,7 @@ lookupPrevV t vix predicate = do
 lookupCurrV
   :: Time
   -- ^ Time t
-  -> VIx a
+  -> EIx a
   -- ^ Event to lookup.
   -> (a -> Maybe b)
   -- ^ predicate / projection.
@@ -876,12 +877,12 @@ lookupCurrV t eix predicate = do
 spanLookupPrevV
   :: TimeSpan
   -- ^ Time or span to lookup
-  -> VIx a
+  -> EIx a
   -- ^ Event to lookup
   -> (a -> Maybe b)
   -- ^ predicate / projection.
   -> DerivationM ([(TimeSpan, Maybe b)], [TimeSpan])
-  -- ^ ( Known values about the given VIx
+  -- ^ ( Known values about the given EIx
   --   , unknown times and time spans )
   --   The union of these times and time spans should exactly
   --   equal the input time/time span.
@@ -902,7 +903,7 @@ prevVFacts
   :: forall a b
   .  TimeSpan
   -- ^ Time or span to lookup
-  -> VIx a
+  -> EIx a
   -- ^ Event to lookup
   -> (a -> Maybe b)
   -- ^ predicate / projection.
@@ -963,34 +964,34 @@ untrackedAskDerivations = asks snd
 -- Describes a dependency
 data DerivationDep
   -- Depend on all facts in a time span for a Vix
-  = forall a . Dep_FactSpan TimeSpan (VIx a)
+  = forall a . Dep_FactSpan TimeSpan (EIx a)
   -- Depend on all the value at -Inf a Vix
-  | forall a . Dep_NegInf (VIx a)
+  | forall a . Dep_NegInf (EIx a)
   -- Depend on all the value just after t of a Vix
-  | forall a . Dep_JustBefore Time (VIx a)
+  | forall a . Dep_JustBefore Time (EIx a)
   -- Depend on all the value just before t of a Vix
-  | forall a . Dep_JustAfter Time (VIx a)
+  | forall a . Dep_JustAfter Time (EIx a)
   -- Depend on the derivation based clearance of a Vix just after a given time.
   -- That's a completed (continuation is Pure _) Derivation spanning a time just
   -- after the given time. (Nothing means -Inf)
-  | forall a . Dep_DerivationClearance (Maybe Time) (VIx a)
+  | forall a . Dep_DerivationClearance (Maybe Time) (EIx a)
 
 --
 -- DerivationM Primitives
 --
 
--- | Directly look up all known facts for a given VIx and time or time span.
+-- | Directly look up all known facts for a given EIx and time or time span.
 --
 -- TODO This causes a dep on the whole span, but at the use sights we may be
 -- using less info.
 spanLookupVFacts
   :: TimeSpan
   -- ^ Time or span to lookup
-  -> VIx a
+  -> EIx a
   -- ^ Event to lookup
   -- ^ All known facts.
   -> DerivationM (ValueTimeline a, [TimeSpan])
-  -- ^ ( Facts about the given VIx
+  -- ^ ( Facts about the given EIx
   --   , unknown times and time spans )
   --   The union of these facts and times and time spans should exactly
   --   equal the input time/time span.
@@ -1004,27 +1005,27 @@ spanLookupVFacts tspan vix = do
 
 -- TODO rename all DerivationM primitives to `xyzM`
 
-lookupM' :: Time -> VIx a -> DerivationM (Maybe (TimeSpan, (DerivationTrace a, a)))
+lookupM' :: Time -> EIx a -> DerivationM (Maybe (TimeSpan, (DerivationTrace a, a)))
 lookupM' t vix = do
   tellDep (Dep_FactSpan (DS_Point t) vix)
   T.lookup' t . valueFacts vix <$> untrackedAskFacts
 
-lookupNegInf' :: VIx a -> DerivationM (Maybe (TimeSpan, (DerivationTrace a, a)))
+lookupNegInf' :: EIx a -> DerivationM (Maybe (TimeSpan, (DerivationTrace a, a)))
 lookupNegInf' vix = do
   tellDep (Dep_NegInf vix)
   T.lookupNegInf' . valueFacts vix <$> untrackedAskFacts
 
-lookupJustAfter' :: Time -> VIx a -> DerivationM (Maybe (TimeSpan, (DerivationTrace a, a)))
+lookupJustAfter' :: Time -> EIx a -> DerivationM (Maybe (TimeSpan, (DerivationTrace a, a)))
 lookupJustAfter' t vix = do
   tellDep (Dep_JustAfter t vix)
   T.lookupJustAfter' t . valueFacts vix <$> untrackedAskFacts
 
-lookupJustBefore' :: Time -> VIx a -> DerivationM (Maybe (TimeSpan, (DerivationTrace a, a)))
+lookupJustBefore' :: Time -> EIx a -> DerivationM (Maybe (TimeSpan, (DerivationTrace a, a)))
 lookupJustBefore' t vix = do
   tellDep (Dep_JustBefore t vix)
   T.lookupJustBefore' t . valueFacts vix <$> untrackedAskFacts
 
-lookupAtStartOf' :: TimeSpan -> VIx a -> DerivationM (Maybe (TimeSpan, (DerivationTrace a, a)))
+lookupAtStartOf' :: TimeSpan -> EIx a -> DerivationM (Maybe (TimeSpan, (DerivationTrace a, a)))
 lookupAtStartOf' tts = case tts of
   DS_Point t -> lookupM' t
   DS_SpanExc ts -> case spanExcJustBefore ts of
@@ -1043,7 +1044,7 @@ lookupAtStartOf' tts = case tts of
 -- derivation and we should have a Set of live derivations that we'll use as a
 -- queue of things to poke.
 --
--- (VIx, TimeSpan) is a unique identifier for Derivations, though they may
+-- (EIx, TimeSpan) is a unique identifier for Derivations, though they may
 -- change, but they only change after they are poked, so that sufficient for use
 -- between pokes.
 --

@@ -677,3 +677,60 @@ arbitraryTimeInSpan s = arbitraryTimeDInSpan s `suchThatMap` (\td -> let
 
 increasingListOf :: Ord a => Gen a -> Gen [a]
 increasingListOf xs = fmap head . group . sort <$> listOf xs
+
+
+data TimeSpan
+    -- | DS_Point x ⟹ t < x
+    = DS_Point Time
+    -- | DS_SpanExc tspan ⟹ t ∈ tspan
+    | DS_SpanExc SpanExc
+    deriving (Show)
+
+instance Intersect TimeSpan SpanExc (Maybe TimeSpan) where intersect = flip intersect
+instance Intersect SpanExc TimeSpan (Maybe TimeSpan) where
+    intersect t (DS_Point t')     = DS_Point   <$> intersect t t'
+    intersect t (DS_SpanExc tspan)  = DS_SpanExc <$> intersect t tspan
+
+instance Intersect Time TimeSpan (Maybe Time) where intersect = flip intersect
+instance Intersect TimeSpan Time (Maybe Time) where
+    intersect (DS_Point t)     t' = intersect t t'
+    intersect (DS_SpanExc tspan) t  = intersect tspan t
+
+instance Intersect TimeSpan TimeSpan (Maybe TimeSpan) where
+    intersect (DS_Point t)     ds = DS_Point <$> intersect t ds
+    intersect (DS_SpanExc tspan) ds = intersect tspan ds
+
+instance Contains TimeSpan TimeSpan where
+    contains (DS_Point a) (DS_Point b) = contains a b
+    contains (DS_Point a) (DS_SpanExc b) = contains a b
+    contains (DS_SpanExc a) (DS_Point b) = contains a b
+    contains (DS_SpanExc a) (DS_SpanExc b) = contains a b
+
+instance Contains SpanExc TimeSpan where
+    contains a (DS_Point b) = contains a b
+    contains a (DS_SpanExc b) = contains a b
+
+instance Contains TimeSpan Time where
+    contains (DS_Point t) t' = contains t t'
+    contains (DS_SpanExc tspan) t = contains tspan t
+
+instance Difference TimeSpan TimeSpan [TimeSpan] where
+    difference (DS_Point a) (DS_Point b)
+        | a == b = []
+        | otherwise = [DS_Point a]
+    difference (DS_Point a) (DS_SpanExc b) = fmap DS_Point . maybeToList $ a `difference` b
+    difference (DS_SpanExc a) (DS_Point b) = DS_SpanExc <$> a `difference` b
+    difference (DS_SpanExc a) (DS_SpanExc b) = concat
+        [ l ++ r
+        | let (x, y) = a `difference` b
+        , let l = case x of
+                Nothing -> []
+                Just (tspan, t) -> [DS_SpanExc tspan, DS_Point t]
+        , let r = case y of
+                Nothing -> []
+                Just (t, tspan) -> [DS_SpanExc tspan, DS_Point t]
+        ]
+instance Difference [TimeSpan] TimeSpan [TimeSpan] where
+    difference a b = concatMap (`difference` b) a
+instance Difference TimeSpan [TimeSpan] [TimeSpan] where
+    difference a bs = foldl' difference [a] bs
