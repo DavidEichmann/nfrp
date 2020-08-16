@@ -119,6 +119,9 @@ module Theory
   prevV eix = PrevV eix (Pure . Occ)
 
   -- | Note that this returns Nothing if there is no current/previous event
+  -- WARNING: this uses getE which may witness an event. Higher level APIs would
+  -- abstract this away. Other wise the user may get an event occurrence without
+  -- expecting it because the similar prevV function never witnesses events.
   currV :: EIx a -> ValueM (Maybe a)
   currV eix = do
     currMay <- getE eix
@@ -904,4 +907,4 @@ module Theory
     showPeakValueM :: ValueM a -> String
     showPeakValueM (Pure _) = "Pure{}"
     showPeakValueM (GetE ix _) = "(GetE " ++ show ix ++ " _)"
-    showPeakValueM (PrevV ix _) = "(PrevV " ++ show ix ++ " _ _)"
+    showPeakValueM (PrevV ix _) = "(PrevV " ++ show ix ++ " _)"

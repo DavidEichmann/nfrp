@@ -243,49 +243,48 @@ cropTimeSpan ts = crop (timeSpanToSpan ts)
 lookup :: Time -> Timeline trace a -> Maybe (MaybeOcc a)
 lookup t = fmap (either (const NoOcc) id . snd) . lookup' t
 
-lookup' :: Time -> Timeline trace a -> Maybe (trace, Either TimeSpan (MaybeOcc a))
+lookup' :: Time -> Timeline trace a -> Maybe (trace, Either SpanExc (MaybeOcc a))
 lookup' t (Timeline m n) = case M.lookup t n of
     Nothing -> case M.lookupLT (Just t) m of
         Nothing -> Nothing
         Just (lo, (tr, hi)) -> let
             tspan = spanExc lo hi
             in if tspan `contains` t
-                then Just (tr, Left (DS_SpanExc tspan))
+                then Just (tr, Left tspan)
                 else Nothing
-    Just (tr, NoOcc) -> Just (tr, Left (DS_Point t))
     Just (tr, a) -> Just (tr, Right a)
 
 
 -- | Look for a NoOcc span just after the given time.
-lookupJustBefore' :: Time -> Timeline trace a -> Maybe (trace, TimeSpan)
+lookupJustBefore' :: Time -> Timeline trace a -> Maybe (trace, SpanExc)
 lookupJustBefore' t tl = case elemsLT t tl of
     (tr, Left x@ts):_
         | DS_SpanExc tss <- ts -- lookupJustBefore' can only return a DS_SpanExc fact.
         , spanExcJustAfter tss == Just t
-        -> Just (tr, x)
+        -> Just (tr, tss)
     _ -> Nothing
 
 -- | Lookup for a NoOcc span just after the given time.
-lookupJustAfter' :: Time -> Timeline trace a -> Maybe (trace, TimeSpan)
+lookupJustAfter' :: Time -> Timeline trace a -> Maybe (trace, SpanExc)
 lookupJustAfter' t tl = case elemsGT t tl of
     (tr, Left x@ts):_
         | DS_SpanExc tss <- ts -- lookupJustAfter' can only return a DS_SpanExc fact.
         , spanExcJustBefore tss == Just t
-        -> Just (tr, x)
+        -> Just (tr, tss)
     _ -> Nothing
 
 -- Lookup the NoOcc fact spanning negative infinity.
-lookupNegInf' :: Timeline trace a -> Maybe (trace, TimeSpan)
+lookupNegInf' :: Timeline trace a -> Maybe (trace, SpanExc)
 lookupNegInf' tl = case elems tl of
     (tr, Left x@ts):_
         | DS_SpanExc tss <- ts
         , spanExcJustBefore tss == Nothing
-        -> Just (tr, x)
+        -> Just (tr, tss)
     _ -> Nothing
 
 -- | Lookup the fact equal to the point time or NoOcc fact spanning the start of
 -- the SpanExc timespan.
-lookupAtStartOf' :: TimeSpan -> Timeline trace a -> Maybe (trace, Either TimeSpan (MaybeOcc a))
+lookupAtStartOf' :: TimeSpan -> Timeline trace a -> Maybe (trace, Either SpanExc (MaybeOcc a))
 lookupAtStartOf' tts tl = case tts of
     DS_Point t -> lookup' t tl
     DS_SpanExc ts -> fmap Left <$> case spanExcJustBefore ts of

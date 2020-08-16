@@ -38,6 +38,7 @@ import qualified Data.Set as S
 import Data.Coerce (coerce)
 import Unsafe.Coerce
 import GHC.Exts (Any)
+import Safe (minimumMay)
 
 import Time
 import TimeSpan
@@ -98,7 +99,7 @@ derivations in each iteration.
 
 
 -- | Facts about a single value.
-type ValueTimeline a = Timeline (DerivationTrace a, a)
+type ValueTimeline a = Timeline (DerivationTrace a) a
 
 -- | A bunch of facts about possibly many values.
 newtype Facts = Facts (IntMap (ValueTimeline Any))
@@ -110,16 +111,10 @@ listToFacts :: [Th.SomeValueFact] -> Facts
 listToFacts someValueFacts = Facts $ IM.fromListWith (<>)
     [ ( vix
       , case fact of
-          Th.Fact_NoOcc derT _ a -> (derT, a)
-          Th.Fact_Point   derT _ a -> (derT, a)
+          Th.Fact_NoOcc derT tts -> T.singletonNoOcc derT tts
+          Th.Fact_Occ   derT t a -> T.singletonOcc derT t (unsafeCoerce a)
       )
     | Th.SomeValueFact (EIx vix :: EIx a) fact <- someValueFacts
-    -- , let (noOccs, Occs) = partitionEither
-    --       [(
-    --       factTSpan fact,
-    --       (unsafeCoerce :: (DerivationTrace a, a) -> (DerivationTrace Any, Any)) $
-
-    --       )]
     ]
 
 singletonFacts :: EIx a -> ValueTimeline a -> Facts
@@ -131,7 +126,6 @@ valueFacts :: EIx a -> Facts -> ValueTimeline a
 valueFacts (EIx vix) (Facts vb) = case IM.lookup vix vb of
   Nothing -> T.empty
   Just fs -> (unsafeCoerce :: ValueTimeline Any -> ValueTimeline a) fs
-
 type Derivations = [SomeDerivation]
 
 data KnowledgeBase = KnowledgeBase
@@ -153,24 +147,23 @@ data KnowledgeBase = KnowledgeBase
 kbValueFacts :: EIx a -> KnowledgeBase -> ValueTimeline a
 kbValueFacts vix kb = valueFacts vix (kbFacts kb)
 
-lookupVKB :: Time -> EIx a -> KnowledgeBase -> MaybeKnown a
+lookupVKB :: Time -> EIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
 lookupVKB t eix kb = lookupV t eix (kbFacts kb)
 
 lookupVKBTrace :: Time -> EIx a -> KnowledgeBase -> MaybeKnown (DerivationTrace a)
 lookupVKBTrace t eix kb = lookupVTrace t eix (kbFacts kb)
 
-lookupV :: Time -> EIx a -> Facts -> MaybeKnown a
+lookupV :: Time -> EIx a -> Facts -> MaybeKnown (MaybeOcc a)
 lookupV t eix facts = snd <$> lookupVFact t eix facts
 
 lookupVTrace :: Time -> EIx a -> Facts -> MaybeKnown (DerivationTrace a)
 lookupVTrace t vix facts = fst <$> lookupVFact t vix facts
 
-lookupVFact :: Time -> EIx a -> Facts -> MaybeKnown (DerivationTrace a, a)
+lookupVFact :: Time -> EIx a -> Facts -> MaybeKnown (DerivationTrace a, MaybeOcc a)
 lookupVFact t vix facts = MaybeKnown $ do
   let vfs = valueFacts vix facts
-  T.lookup t vfs
--- lookupVFact t vix facts = MaybeKnown $ listToMaybe $
---   filter ((`intersects` t) . factTSpan) (valueFacts vix facts)
+  (tr, eitherNoOccSpanOrOcc) <- T.lookup' t vfs
+  return (tr, either (const NoOcc) id eitherNoOccSpanOrOcc)
 
 type KnowledgeBaseM a = State KnowledgeBase a
 
@@ -198,7 +191,7 @@ type DbdDerivation_Value a = (EIx a, Derivation a)
 -- | Get the key in to dbdIxSpanLoJurisdiction
 dbdIxKeySpanLoJurisdiction :: EIx a -> Derivation a -> Maybe (SomeEIx, Maybe Time)
 dbdIxKeySpanLoJurisdiction vix der = case der of
-  Derivation _ (DS_SpanExc tspan) _ _ -> Just (SomeEIx vix, spanExcJustBefore tspan)
+  Derivation _ (DS_SpanExc tspan) _ _ _ -> Just (SomeEIx vix, spanExcJustBefore tspan)
   _ -> Nothing
 
 
@@ -294,6 +287,7 @@ dbdAffectedDers
   -- ^ New facts.
   -> [SomeDerivationID]
 dbdAffectedDers = error "TODO dbdAffectedDers"
+{-
 
 -- Now a natural fist attempt at a solution is obvious: start with an initial
 -- knowledge base and continue evaluating derivations until all terminate or
@@ -404,19 +398,20 @@ solution1 inputs = execState iterateUntilChange initialKb
     -- ^ Nothing if no progress. Else Just the new facts and new derivations.
   pokeDerivation eix derivation = case derivation of
       Derivation dtrace ttspan prevDeps contDerivation -> case contDerivation of
-        Pure a ->if null prevDeps
-          then pure $ Just $ case ttspan of
-              DS_Point t -> let
+        Pure NoOcc -> if null prevDeps
+          then let
                 dtrace' = appendDerTrace dtrace $
-                  "Jurisdiction is a point (t=" ++ show t ++ "), ValueM is `Pure a`."
-                in (T.singleton (DS_Point t) (dtrace', a), [])
+                  "Pure NoOcc (t=" ++ show ttspan ++ ")."
+                in Just ([T.singletonNoOcc dtrace' ttspan], [])
+          else stepCompleteNoOccWithPrevDeps
+        Pure (Occ a) -> case ttspan of
+          DS_SpanExc _ -> error "seenOcc=True when jurisdiction is not a point"
+          DS_Point t -> let
+                  dtrace' = appendDerTrace dtrace $
+                    "Jurisdiction is a point (t=" ++ show t ++ "), ValueM is `Pure a`."
+                  in Just ([T.singletonOcc dtrace' t a], [])
 
-              DS_SpanExc tspanSpan -> let
-                dtrace' = appendDerTrace dtrace $
-                  "Jurisdiction is (" ++ show tspanSpan ++ "), ValueM is `Pure a`."
-                in (T.singleton (DS_SpanExc tspanSpan) (dtrace', a), [])
-          else stepCompleteWithPrevDeps a
-        GetV vixb cont -> do
+        GetE vixb cont -> do
           factsBAndUnknownsMay <- if null prevDeps
                 then Just <$> spanLookupVFacts ttspan vixb
 
@@ -445,13 +440,13 @@ solution1 inputs = execState iterateUntilChange initialKb
                       newCont = cont valB
                       newDer  = Derivation dtrace (DS_SpanExc subTspan) prevDeps newCont
                                   `withDerTrace`
-                                  ("Split on GetV dep (" ++ show vixb ++ ") Fact_SpanExc")
+                                  ("Split on GetE dep (" ++ show vixb ++ ") Fact_SpanExc")
                       in (T.empty, [newDer])
                     DS_Point t -> let
                         newCont = cont valB
                         newDer  = Derivation dtrace (DS_Point t) prevDeps newCont
                                   `withDerTrace`
-                                  ("Split on GetV dep (" ++ show vixb ++ ") Fact_Point")
+                                  ("Split on GetE dep (" ++ show vixb ++ ") Fact_Point")
                         in (T.empty, [newDer])
                   | (ttspanB, (_, valB)) <- T.elems factsB
                   ]
@@ -461,7 +456,7 @@ solution1 inputs = execState iterateUntilChange initialKb
                 ( T.empty
                 , [ Derivation dtrace subTspan prevDeps contDerivation
                     `withDerTrace`
-                    ("Split on GetV dep (" ++ show vixb ++ ") unknown point or span.")
+                    ("Split on GetE dep (" ++ show vixb ++ ") unknown point or span.")
                   | subTspan <- unknowns
                   ]
                 )
@@ -782,6 +777,7 @@ solution1 inputs = execState iterateUntilChange initialKb
         -- We don't know any more info about the first occurrence so we
         -- cant make any more progress.
         Other -> Nothing
+-}
 
 -- | Result of searching for the first change of a specific value and time
 -- span.
@@ -811,18 +807,24 @@ searchForFirstChange
   -- ^ Event to lookup
   -> DerivationM FirstValueChange
 searchForFirstChange tspan vix = do
-  (factsTl, _) <- spanLookupVFacts (DS_SpanExc tspan) vix
+  (factsTl, unknownDSpans) <- spanLookupVFacts (DS_SpanExc tspan) vix
   let facts = T.elems factsTl
-  return $ case facts of
-    [] -> Other
-    (DS_SpanExc t0, _) : _
-      | t0 == tspan -> NoChangeInSpan
-      -- t0 is a strict subset of tspan. Here we test that they have the same
-      -- lower bound. Hence t0's upper bound is not Inf.
-      | spanExcSameLowerBound t0 tspan -> FirstChangeIsAt (fromJust (spanExcJustAfter t0))
-      -- t0 is strict subset of tspan and doesn't start at the same lower bound.
-      -- Hence the t0's lower bound must not be -Inf.
-      | otherwise -> FirstChangeIsAtOrBefore (fromJust (spanExcJustBefore t0))
+      firstKnownTChangeMay = minimumMay [ t | (_, Right (t, _))  <- facts]
+  return $ case firstKnownTChangeMay of
+      -- No known event occurrence
+      Nothing -> if null unknownDSpans
+        -- And we have full knowlage.
+        then NoChangeInSpan
+        -- but there is missing knowledge. TODO we could have
+        -- FirstChangeIsAtOrBefore by observing a span of NoOcc at the end of
+        -- tspan. I'm not sure if that's necessary or not.
+        else Other
+      -- There is some known first occurrence
+      Just t
+        -- It is the true first occurrence.
+        | any (intersects (fromJust $ tspan `intersect` (LeftSpaceExc t))) unknownDSpans -> FirstChangeIsAtOrBefore t
+        -- It may not be the the true first occurrence.
+        | otherwise -> FirstChangeIsAt t
 
 -- | Directly look up the previous value that satisfies the predicate
 -- (strictly before the given time).
@@ -831,23 +833,17 @@ lookupPrevV
   -- ^ Time t
   -> EIx a
   -- ^ Event to lookup.
-  -> (a -> Maybe b)
-  -- ^ predicate / projection.
-  -> DerivationM (MaybeKnown (Maybe b))
+  -> DerivationM (MaybeKnown (Maybe a))
   -- ^ Unknown: if unknown
-  -- Known Nothing: if no value satisfying the predicate occurs strictly before t.
-  -- Known (Just b): the latest (projected) value satisfying the predicate (strictly before time t).
-lookupPrevV t vix predicate = do
+  -- Known Nothing: if no event occurs strictly before t.
+  -- Known (Just a): the latest event value (strictly before time t).
+lookupPrevV t vix = do
   vMay <- lookupJustBefore' t vix
   case vMay of
     Nothing -> return Unknown
-    Just (ttspan, (_, a)) -> case ttspan of
-      DS_Point _ -> error "Impossible! lookupJustBefore' can't return a point"
-      DS_SpanExc tspan -> case predicate a of
-        Just b -> return $ Known (Just b)
-        Nothing -> case spanExcJustBefore tspan of
-                  Nothing -> return $ Known Nothing
-                  Just tLo -> lookupCurrV tLo vix predicate
+    Just (_, tspan) -> case spanExcJustBefore tspan of
+      Nothing -> return $ Known Nothing
+      Just tLo -> lookupCurrV tLo vix
 
 -- | Directly look up the current (i.e. latest) event occurrence (equal or before the given time).
 lookupCurrV
@@ -855,23 +851,19 @@ lookupCurrV
   -- ^ Time t
   -> EIx a
   -- ^ Event to lookup.
-  -> (a -> Maybe b)
-  -- ^ predicate / projection.
-  -> DerivationM (MaybeKnown (Maybe b))
+  -> DerivationM (MaybeKnown (Maybe a))
   -- ^ Unknown: if unknown
-  -- Known Nothing: if no value satisfying the predicate occurs at or before t.
-  -- Known (Just b): the latest (projected) value satisfying the predicate (at or before t).
-lookupCurrV t eix predicate = do
+  -- Known Nothing: if no event occurs at or before t.
+  -- Known (Just a): the latest event value (at or before time t).
+lookupCurrV t eix = do
   aMay <- lookupM' t eix
   case aMay of
     Nothing -> return Unknown
-    Just (ttspan', (_, a)) -> case predicate a of
-      Nothing -> case ttspan' of
-        DS_Point t' -> lookupPrevV t' eix predicate
-        DS_SpanExc tspan' -> case spanExcJustBefore tspan' of
-          Nothing -> return (Known Nothing)
-          Just t' -> lookupCurrV t' eix predicate
-      Just b -> return (Known (Just b))
+    Just (_, (Left tspan)) -> case spanExcJustBefore tspan of
+      Nothing -> return (Known Nothing)
+      Just t' -> lookupCurrV t' eix
+    Just (_, (Right NoOcc)) -> lookupPrevV t eix
+    Just (_, (Right (Occ a))) -> return (Known (Just a))
 
 -- | Directly lookup the previous value for an event over a span of time.
 spanLookupPrevV
@@ -879,15 +871,13 @@ spanLookupPrevV
   -- ^ Time or span to lookup
   -> EIx a
   -- ^ Event to lookup
-  -> (a -> Maybe b)
-  -- ^ predicate / projection.
-  -> DerivationM ([(TimeSpan, Maybe b)], [TimeSpan])
+  -> DerivationM ([(TimeSpan, Maybe a)], [TimeSpan])
   -- ^ ( Known values about the given EIx
   --   , unknown times and time spans )
   --   The union of these times and time spans should exactly
   --   equal the input time/time span.
-spanLookupPrevV tspan eix predicate = do
-  facts <- prevVFacts tspan eix predicate
+spanLookupPrevV tspan eix = do
+  facts <- prevVFacts tspan eix
   let knownFacts =
           [ (ttspan', aMay)
           | (factTspan, aMay) <- facts
@@ -900,31 +890,33 @@ spanLookupPrevV tspan eix predicate = do
 
 -- | Get all known PervV spans for an event cropped to the given time span.
 prevVFacts
-  :: forall a b
+  :: forall a
   .  TimeSpan
   -- ^ Time or span to lookup
   -> EIx a
   -- ^ Event to lookup
-  -> (a -> Maybe b)
-  -- ^ predicate / projection.
-  -> DerivationM [(TimeSpan, Maybe b)]
+  -> DerivationM [(TimeSpan, Maybe a)]
   -- ^ All known previous event values (if one exists)
-prevVFacts timeSpan vix predicate = do
+prevVFacts timeSpan vix = do
   (factsTl, _) <- spanLookupVFacts timeSpan vix
   fs' <- sequence
-    [ case ttspan of
-      DS_SpanExc tspan -> do
-        mayPrevVMay :: MaybeKnown (Maybe b) <- case spanExcJustBefore tspan of
+    [ case fact of
+      Left (DS_SpanExc tspan) -> do
+        mayPrevVMay <- case spanExcJustBefore tspan of
           -- Span starts at -∞ so that's a known Nothing previous event
           Nothing -> pure (Known Nothing)
           -- Span starts at a time prevT
-          Just prevT -> lookupCurrV prevT vix predicate
+          Just prevT -> lookupCurrV prevT vix
         return $ case mayPrevVMay of
             Unknown -> []
             Known prevVMay -> (DS_SpanExc tspan, prevVMay) : [(DS_Point nextT, prevVMay) | Just nextT <- [spanExcJustAfter tspan]]
             _ -> undefined
-      DS_Point _ -> pure [] -- Point knowledge is handled by the above case
-    | (ttspan, _) <- T.elems factsTl
+
+      -- Point knowledge is handled by the above case
+      Left (DS_Point t) -> pure []
+      Right _ -> pure []
+
+    | (_, fact) <- T.elems factsTl
     ]
   return $ concat fs'
 -- prevVFacts eix predicate allFacts = concat
@@ -943,6 +935,7 @@ prevVFacts timeSpan vix predicate = do
 --     DS_Point _ -> [] -- Point knowledge is handled by the above case
 --   | (ttspan, _) <- T.elems (valueFacts eix allFacts)
 --   ]
+
 
 --
 -- DerivationM a monad that tracks dependencies used while stepping a derivation.
@@ -999,36 +992,45 @@ spanLookupVFacts tspan vix = do
   tellDep (Dep_FactSpan tspan vix)
   facts <- valueFacts vix <$> untrackedAskFacts
   let knownFacts = T.cropTimeSpan tspan facts
-      knownTSpans = fst <$> T.elems knownFacts
+      knownTSpans = either id (DS_Point . fst) . snd <$> T.elems knownFacts
       unknownTSpans = tspan `difference` knownTSpans
   return (knownFacts, unknownTSpans)
 
 -- TODO rename all DerivationM primitives to `xyzM`
 
-lookupM' :: Time -> EIx a -> DerivationM (Maybe (TimeSpan, (DerivationTrace a, a)))
+lookupM'
+  :: Time
+  -- ^ Time t too look up
+  -> EIx a
+  -> DerivationM (Maybe (DerivationTrace a, Either SpanExc (MaybeOcc a)))
+  -- ^ If known, Left is the NoOcc fact's time span spanning t and Right is the
+  -- Occ or NoOcc point fact at time t.
 lookupM' t vix = do
   tellDep (Dep_FactSpan (DS_Point t) vix)
   T.lookup' t . valueFacts vix <$> untrackedAskFacts
 
-lookupNegInf' :: EIx a -> DerivationM (Maybe (TimeSpan, (DerivationTrace a, a)))
+lookupNegInf'
+  :: EIx a
+  -> DerivationM (Maybe (DerivationTrace a, SpanExc))
+  -- ^ If known, the NoOcc span covering -Inf
 lookupNegInf' vix = do
   tellDep (Dep_NegInf vix)
   T.lookupNegInf' . valueFacts vix <$> untrackedAskFacts
 
-lookupJustAfter' :: Time -> EIx a -> DerivationM (Maybe (TimeSpan, (DerivationTrace a, a)))
+lookupJustAfter' :: Time -> EIx a -> DerivationM (Maybe (DerivationTrace a, SpanExc))
 lookupJustAfter' t vix = do
   tellDep (Dep_JustAfter t vix)
   T.lookupJustAfter' t . valueFacts vix <$> untrackedAskFacts
 
-lookupJustBefore' :: Time -> EIx a -> DerivationM (Maybe (TimeSpan, (DerivationTrace a, a)))
+lookupJustBefore' :: Time -> EIx a -> DerivationM (Maybe (DerivationTrace a, SpanExc))
 lookupJustBefore' t vix = do
   tellDep (Dep_JustBefore t vix)
   T.lookupJustBefore' t . valueFacts vix <$> untrackedAskFacts
 
-lookupAtStartOf' :: TimeSpan -> EIx a -> DerivationM (Maybe (TimeSpan, (DerivationTrace a, a)))
+lookupAtStartOf' :: TimeSpan -> EIx a -> DerivationM (Maybe (DerivationTrace a, Either SpanExc (MaybeOcc a)))
 lookupAtStartOf' tts = case tts of
   DS_Point t -> lookupM' t
-  DS_SpanExc ts -> case spanExcJustBefore ts of
+  DS_SpanExc ts -> fmap (fmap (fmap Left)) <$> case spanExcJustBefore ts of
     Nothing -> lookupNegInf'
     Just t -> lookupJustAfter' t
 
@@ -1061,7 +1063,7 @@ withDerTrace
   -> Derivation a
   -- ^ Derivation with added traced entry.
 withDerTrace d msg = case d of
-  Derivation oldTrace ttspan prevDeps cont
+  Derivation oldTrace ttspan prevDeps cont seenOcc
     -> let dMsg = "Derivation "
                 ++ showTtspan ttspan ++ " "
                 ++ (if null prevDeps
@@ -1069,7 +1071,7 @@ withDerTrace d msg = case d of
                     else "(t ≤ first occ of " ++ show prevDeps ++ ") ")
                 ++ "cont=" ++ showPeakValueM cont
                 ++ ": " ++ msg
-        in Derivation (oldTrace `appendDerTrace` dMsg) ttspan prevDeps cont
+        in Derivation (oldTrace `appendDerTrace` dMsg) ttspan prevDeps cont seenOcc
 
   DeriveAfterFirstChange oldTrace tspan dep cont
     -> let dMsg = "After first occ of " ++ show dep
@@ -1084,5 +1086,5 @@ withDerTrace d msg = case d of
 
   showPeakValueM :: ValueM a -> String
   showPeakValueM (Pure _) = "Pure{}"
-  showPeakValueM (GetV ix _) = "(GetV " ++ show ix ++ " _)"
-  showPeakValueM (PrevV ix _ _) = "(PrevV " ++ show ix ++ " _ _)"
+  showPeakValueM (GetE ix _) = "(GetE " ++ show ix ++ " _)"
+  showPeakValueM (PrevV ix _) = "(PrevV " ++ show ix ++ " _)"
