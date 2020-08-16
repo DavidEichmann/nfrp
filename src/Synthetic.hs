@@ -34,7 +34,14 @@ syntheticN n =
                 x <- sum <$> mapM (getV . VIx) [0..(i-1)]
 
                 -- Depend on (prevV) higher ix odd values.
-                y <- sum . catMaybes <$> mapM (\j -> prevVWhere (VIx j) (\v -> if odd v then Just v else Nothing)) [(i+1)..m]
+                y <- sum . catMaybes
+                    <$> mapM
+                            (\j -> prevVWhere
+                                (VIx j)
+                                -- (\v -> if odd v then Just v else Nothing)
+                                (const (Just 1))
+                            )
+                            [(i+1)..m]
 
                 return (x+y)
 

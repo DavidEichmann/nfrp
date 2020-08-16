@@ -32,7 +32,7 @@ import qualified Data.Map as M
 import           Data.Map (Map)
 import qualified Data.IntMap as IM
 import           Data.IntMap (IntMap)
-import Data.Maybe (listToMaybe, fromJust)
+import Data.Maybe (fromJust)
 import Data.Set (Set)
 import qualified Data.Set as S
 import Data.Coerce (coerce)
@@ -78,7 +78,7 @@ import Theory
   , prevV
   , prevVWhere
   )
-import Control.Monad (when)
+-- import Control.Monad (when)
 import Data.List (foldl')
 
 
@@ -281,7 +281,18 @@ dbdDelete (DerivationID derIdInt) dbd = case IM.lookup derIdInt (dbdDerivation d
     }
 
 dbdSetDeps :: DerivationID a -> [DerivationDep] -> DerivationsByDeps -> DerivationsByDeps
-dbdSetDeps derID deps dbd = dbd
+dbdSetDeps _derID _deps dbd = dbd
+
+-- | Calcuate which derivations are affected (dependencies may have changed)
+-- given new facts and derivations.
+dbdAffectedDers
+  :: [SomeDerivation]
+  -- ^ New derivations. This is needed as it may affect Derivation based
+  -- clearances.
+  -> Facts
+  -- ^ New facts.
+  -> [SomeDerivationID]
+dbdAffectedDers = error "TODO dbdAffectedDers"
 
 -- Now a natural fist attempt at a solution is obvious: start with an initial
 -- knowledge base and continue evaluating derivations until all terminate or
@@ -316,8 +327,6 @@ solution1 inputs = execState iterateUntilChange initialKb
             modify (\kb -> kb { kbHotDerivations = newHotDers })
             return (Just derId)
 
-      pushHotDerivation derId = modify (\kb -> kb { kbHotDerivations = S.insert derId (kbHotDerivations kb) })
-
       go = do
         -- Pop a DerivatiopnID off the Hot list
         derIdMay <- popHotDerivation
@@ -331,19 +340,28 @@ solution1 inputs = execState iterateUntilChange initialKb
             allFacts <- gets kbFacts
             let (mayNewFactsAndDers, (), deps) = runRWS (pokeDerivation vix der) (allFacts, allDers) ()
             case mayNewFactsAndDers of
-              -- If no progress, simply update the deps (they have changed).
+              -- If no progress, simply update the deps (they may have changed).
               Nothing -> modify (\kb -> kb { kbDerivations = dbdSetDeps derId deps (kbDerivations kb) })
               -- Else we made progress and should add the new facts and (hot) derivations.
-              Just (newFacts, newDers) -> do
+              Just (newFactsTl, newDers) -> do
                 oldHotDers <- gets kbHotDerivations -- note we've already popped off derId
-                let (newDerIds, newKbDers)
-                      = dbdInsertsNoDeps (SomeDerivation vix <$> newDers)
+                let newSomeDers = SomeDerivation vix <$> newDers
+                    newFacts = singletonFacts vix newFactsTl
+                    (newDerIds, newKbDers)
+                      = dbdInsertsNoDeps newSomeDers
                       $ dbdDelete derId allDers
-                    newKbHotDers = S.union (S.fromList newDerIds) oldHotDers
-                modify (\kb -> kb
-                  { kbDerivations = newKbDers
+                    newKbHotDers
+                      = oldHotDers
+                      -- New derivations are all hot (we haven't calculated their deps yet)
+                      <> S.fromList newDerIds
+                      -- As dependencies have changed, more Derivations may be hot.
+                      <> S.fromList (dbdAffectedDers newSomeDers newFacts)
+                modify (\kb -> KnowledgeBase
+                  { kbFacts = kbFacts kb <> newFacts
+                  , kbDerivations = newKbDers
                   , kbHotDerivations = newKbHotDers
                   })
+            go
 
       -- loop_OLD i = do
       --     if i == n
@@ -698,7 +716,7 @@ solution1 inputs = execState iterateUntilChange initialKb
           neighborsAndClearanceByDerivation
             :: SomeVIx
             -> DerivationM (Maybe ([SomeVIx], Maybe Time))
-          neighborsAndClearanceByDerivation someDepIx@(SomeVIx depIx) = do
+          neighborsAndClearanceByDerivation (SomeVIx depIx) = do
             tellDep (Dep_DerivationClearance tLo depIx)
             derMay <- dbdLookupSpanDerJustAfter depIx tLo <$> untrackedAskDerivations
             return $ case derMay of

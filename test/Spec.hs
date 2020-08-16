@@ -33,7 +33,7 @@ main :: IO ()
 main = defaultMain tests
 
 tests :: TestTree
-tests = testGroup "lcTransaction"
+tests = testGroup "NFRP"
   [ testGroup "Model - Event"
     [ testCase "GetV Only" $ do
         let
@@ -79,6 +79,61 @@ tests = testGroup "lcTransaction"
         lookupVKB 6 eix3 kb @?= Unknown
         lookupVKB 7 eix3 kb @?= Known (Occ 189)
         lookupVKB 8 eix3 kb @?= Unknown
+
+      , testCase "Synthetic-ish 3" $ do
+        let
+            eix1, eix2, eix3 :: VIx Int
+            eix1 = VIx 1
+            eix2 = VIx 2
+            eix3 = VIx 3
+
+            kb :: KnowledgeBase
+            kb = solution1
+                    -- time: --0--------5-----7--------------
+                    -- 1       2   3    4  5  6     7
+                    [ InputEl eix1
+                        (Left [ Fact_SpanExc [] (spanExc Nothing (Just 0)) 1
+                            , Fact_Point   [] 0 2
+                            , Fact_SpanExc [] (spanExc (Just 0) (Just 5)) 3
+                            , Fact_Point   [] 5 4
+                            , Fact_SpanExc [] (spanExc (Just 5) (Just 7)) 5
+                            , Fact_Point   [] 7 6
+                            , Fact_SpanExc [] (spanExc (Just 7) Nothing) 7
+                            ]
+                        )
+                    -- time: --0--------5-----7--------------
+                    -- 1       2   3    4  5  6     7
+                    , InputEl eix2
+                        (Right $ do
+                            v1 <- getV eix1
+                            pv2 <- prevVWhere eix2 (const Nothing)
+                            return v1
+                        )
+                    -- time: --0--------5-----7--------------                    11111111111233333333455555677777777777777
+                    -- 2       4   6    8  10 12     14
+                    , InputEl eix3
+                        (Right $ do
+                            v1 <- getV eix1
+                            v2 <- getV eix2
+                            return (v1+v2)
+                        )
+                    ]
+
+        lookupVKB (-1) eix2 kb @?= Known 1
+        lookupVKB 0 eix2 kb @?= Known 2
+        lookupVKB 2 eix2 kb @?= Known 3
+        lookupVKB 5 eix2 kb @?= Known 4
+        lookupVKB 6 eix2 kb @?= Known 5
+        lookupVKB 7 eix2 kb @?= Known 6
+        lookupVKB 8 eix2 kb @?= Known 7
+
+        lookupVKB (-1) eix3 kb @?= Known 2
+        lookupVKB 0 eix3 kb @?= Known 4
+        lookupVKB 2 eix3 kb @?= Known 6
+        lookupVKB 5 eix3 kb @?= Known 8
+        lookupVKB 6 eix3 kb @?= Known 10
+        lookupVKB 7 eix3 kb @?= Known 12
+        lookupVKB 8 eix3 kb @?= Known 14
 
       , testCase "PrevV Only" $ do
         let
@@ -594,16 +649,18 @@ tests = testGroup "lcTransaction"
     ]
 
   , testGroup "TheoryFast"
-    [ testCase "vs Theory on Synthetic 10" $ do
-        let n = 10
-            (vixs, ts, ins) = syntheticN n
+    [ let n = 5 in testCase ("vs Theory on Synthetic " ++ show n) $ do
+        let (vixs, ts, ins) = syntheticN n
             lookupT  = let kb =  T.solution1 ins in \t vix -> T.lookupVKB t vix kb
             lookupTF = let kb = TF.solution1 ins in \t vix ->TF.lookupVKB t vix kb
         sequence_
-            [ lookupTF t vix @?= lookupT t vix
+            [ print (lookupT (-1000) vix) -- lookupTF t vix @?= lookupT t vix
             | vix <- vixs
-            , t <- ts
+            -- , t <- ts
             ]
+
+        True @?= False
+
     ]
   ]
 
