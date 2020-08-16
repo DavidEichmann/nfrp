@@ -21,11 +21,11 @@ import Generics.SOP
 
 -- import NFRP
 -- import FRP
-import Synthetic
+-- import Synthetic
 import Time (Time)
 import TimeSpan
 import Theory as T
-import qualified TheoryFast as TF
+-- import qualified TheoryFast as TF
 -- import KnowledgeBase
 -- import KnowledgeBase.Timeline
 
@@ -34,637 +34,640 @@ main = defaultMain tests
 
 tests :: TestTree
 tests = testGroup "NFRP"
-  [ testGroup "Model - Event"
-    [ testCase "GetV Only" $ do
+  [ testGroup "Model - Event based"
+      [ testCase "Synthetic-ish 3" $ do
         let
-          eix1, eix2, eix3 :: VIx (MaybeOcc Int)
-          eix1 = VIx 1
-          eix2 = VIx 2
-          eix3 = VIx 3
-
-          kb :: KnowledgeBase
-          kb = solution1
-                -- time: --0--------5-----7--------------
-                --------------------------9______________
-                [ InputEl eix1
-                    (Left [ Fact_SpanExc [] (spanExc Nothing (Just 7)) NoOcc
-                          , Fact_Point   [] 7 (Occ 9)
-                          ]
-                    )
-                -- time: --0--------5-----7--------------
-                -------------------90____80______________
-                , InputEl eix2
-                    (Left [ Fact_SpanExc [] (spanExc Nothing (Just 5)) NoOcc
-                          , Fact_Point   [] 5 (Occ 90)
-                          , Fact_Point   [] 7 (Occ 80)
-                          ]
-                    )
-                -- time: --0--------5-----7--------------
-                ------------------190____189_____________
-                , InputEl eix3
-                    (Right $ do
-                        e1 <- getV eix1
-                        e2 <- getV eix2
-                        return $ case (e1, e2) of
-                            (NoOcc, NoOcc) -> NoOcc
-                            _ -> Occ $ 100
-                                        + fromMaybe 0 (maybeOccToMaybe e1)
-                                        + fromMaybe 0 (maybeOccToMaybe e2)
-                    )
-                ]
-
-        -- lookupVKB :: Time -> VIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
-        lookupVKB 0 eix3 kb @?= Known NoOcc
-        lookupVKB 5 eix3 kb @?= Known (Occ 190)
-        lookupVKB 6 eix3 kb @?= Unknown
-        lookupVKB 7 eix3 kb @?= Known (Occ 189)
-        lookupVKB 8 eix3 kb @?= Unknown
-
-      , testCase "Synthetic-ish 3" $ do
-        let
-            eix1, eix2, eix3 :: VIx Int
-            eix1 = VIx 1
-            eix2 = VIx 2
-            eix3 = VIx 3
+            eix1, eix2, eix3 :: EIx Int
+            eix1 = EIx 1
+            eix2 = EIx 2
+            eix3 = EIx 3
 
             kb :: KnowledgeBase
             kb = solution1
                     -- time: --0--------5-----7--------------
-                    -- 1       2   3    4  5  6     7
+                    --         2        4     6
                     [ InputEl eix1
-                        (Left [ Fact_SpanExc [] (spanExc Nothing (Just 0)) 1
-                            , Fact_Point   [] 0 2
-                            , Fact_SpanExc [] (spanExc (Just 0) (Just 5)) 3
-                            , Fact_Point   [] 5 4
-                            , Fact_SpanExc [] (spanExc (Just 5) (Just 7)) 5
-                            , Fact_Point   [] 7 6
-                            , Fact_SpanExc [] (spanExc (Just 7) Nothing) 7
+                        (Left [ Fact_NoOcc [] (DS_SpanExc $ spanExc Nothing (Just 0))
+                            , Fact_Occ   [] 0 2
+                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 0) (Just 5))
+                            , Fact_Occ   [] 5 4
+                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 5) (Just 7))
+                            , Fact_Occ   [] 7 6
+                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 7) Nothing)
                             ]
                         )
                     -- time: --0--------5-----7--------------
-                    -- 1       2   3    4  5  6     7
+                    --         2        8    18
                     , InputEl eix2
                         (Right $ do
-                            v1 <- getV eix1
-                            pv2 <- prevVWhere eix2 (const Nothing)
-                            return v1
+                            v1 <- requireE eix1
+                            pv2 <- fromMaybe 0 <$> prevV eix3
+                            return (v1 + pv2)
                         )
-                    -- time: --0--------5-----7--------------                    11111111111233333333455555677777777777777
-                    -- 2       4   6    8  10 12     14
+                    -- time: --0--------5-----7--------------
+                    --         4       12    24
                     , InputEl eix3
                         (Right $ do
-                            v1 <- getV eix1
-                            v2 <- getV eix2
+                            v1 <- requireE eix1
+                            v2 <- requireE eix2
                             return (v1+v2)
                         )
                     ]
 
-        lookupVKB (-1) eix2 kb @?= Known 1
-        lookupVKB 0 eix2 kb @?= Known 2
-        lookupVKB 2 eix2 kb @?= Known 3
-        lookupVKB 5 eix2 kb @?= Known 4
-        lookupVKB 6 eix2 kb @?= Known 5
-        lookupVKB 7 eix2 kb @?= Known 6
-        lookupVKB 8 eix2 kb @?= Known 7
-
-        lookupVKB (-1) eix3 kb @?= Known 2
-        lookupVKB 0 eix3 kb @?= Known 4
-        lookupVKB 2 eix3 kb @?= Known 6
-        lookupVKB 5 eix3 kb @?= Known 8
-        lookupVKB 6 eix3 kb @?= Known 10
-        lookupVKB 7 eix3 kb @?= Known 12
-        lookupVKB 8 eix3 kb @?= Known 14
-
-      , testCase "PrevV Only" $ do
-        let
-          eix1, eix2 :: VIx (MaybeOcc Int)
-          eix1 = VIx 1
-          eix2 = VIx 2
-
-          kb :: KnowledgeBase
-          kb = solution1
-                -- time: --0--------5-----7--------------
-                -----------7--------8_____9______________
-                [ InputEl eix1
-                    (Left [ Fact_SpanExc [] (spanExc Nothing (Just 0)) NoOcc
-                          , Fact_Point   [] 0 (Occ 7)
-                          , Fact_SpanExc [] (spanExc (Just 0) (Just 5)) NoOcc
-                          , Fact_Point   [] 5 (Occ 8)
-                          , Fact_Point   [] 7 (Occ 9)
-                          ]
-                    )
-                -- time: --0--------5-----7--------------
-                ---------100------107____________________
-                , InputEl eix2
-                    (Right $ do
-                        onEvent eix1 $ \_ -> do
-                            e1 <- prevE 0 eix1
-                            return (e1+100)
-                    )
-                ]
-
-        -- lookupVKB :: Time -> VIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
         lookupVKB (-1) eix2 kb @?= Known NoOcc
-        lookupVKB 0 eix2 kb @?= Known (Occ 100)
+        lookupVKB 0 eix2 kb @?= Known (Occ 2)
         lookupVKB 2 eix2 kb @?= Known NoOcc
-        lookupVKB 5 eix2 kb @?= Known (Occ 107)
-        lookupVKB 6 eix2 kb @?= Unknown
-        lookupVKB 7 eix2 kb @?= Unknown
-        lookupVKB 8 eix2 kb @?= Unknown
-
-
-      , testCase "GetV and PrevV (no self reference)" $ do
-        let
-          eix1, eix2, eix3 :: VIx (MaybeOcc Int)
-          eix1 = VIx 1
-          eix2 = VIx 2
-          eix3 = VIx 3
-
-          kb :: KnowledgeBase
-          kb = solution1
-                -- time: --0--------5-----7-----9--------
-                --------------------3-----1----__________
-                [ InputEl eix1
-                    (Left [ Fact_SpanExc [] (spanExc Nothing (Just 5)) NoOcc
-                          , Fact_Point   [] 5 (Occ 3)
-                          , Fact_SpanExc [] (spanExc (Just 5) (Just 7)) NoOcc
-                          , Fact_Point   [] 7 (Occ 1)
-                          , Fact_SpanExc [] (spanExc (Just 7) (Just 9)) NoOcc
-                          ]
-                    )
-                -- time: --0--------5-----7-----9--------
-                -------------------90____80____70________
-                , InputEl eix2
-                    (Left [ Fact_SpanExc [] (spanExc Nothing (Just 5)) NoOcc
-                          , Fact_Point   [] 5 (Occ 90)
-                          , Fact_Point   [] 7 (Occ 80)
-                          , Fact_Point   [] 9 (Occ 70)
-                          ]
-                    )
-                -- time: --0--------5-----7-----9--------
-                -------------------190___183___171_______
-                , InputEl eix3
-                    (Right $ do
-                        e1 <- prevE 0 eix1
-                        e2May <- getV eix2
-                        return $ case e2May of
-                            NoOcc -> NoOcc
-                            Occ e2 -> Occ (e1+e2+100)
-                    )
-                ]
-
-        -- lookupVKB :: Time -> VIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
-        lookupVKB 0 eix3 kb @?= Known NoOcc
-        lookupVKB 5 eix3 kb @?= Known (Occ 190)
-        lookupVKB 6 eix3 kb @?= Unknown
-        lookupVKB 7 eix3 kb @?= Known (Occ 183)
-        lookupVKB 8 eix3 kb @?= Unknown
-        lookupVKB 9 eix3 kb @?= Known (Occ 171)
-
-
-      , testCase "GetV and PrevV (with self reference after onEvent)" $ do
-        let
-          eix1, eix2 :: VIx (MaybeOcc Int)
-          eix1 = VIx 1
-          eix2 = VIx 2
-
-          kb :: KnowledgeBase
-          kb = solution1
-                -- time: --0--------5-----7-----9--------
-                --------------------3-----1_____5____
-                [ InputEl eix1
-                    (Left [ Fact_SpanExc [] (spanExc Nothing (Just 5)) NoOcc
-                          , Fact_Point   [] 5 (Occ 3)
-                          , Fact_SpanExc [] (spanExc (Just 5) (Just 7)) NoOcc
-                          , Fact_Point   [] 7 (Occ 1)
-                          , Fact_Point   [] 9 (Occ 5)
-                          ]
-                    )
-                -- time: --0--------5-----7-----9--------
-                --------------------3-----4______________
-                , InputEl eix2
-                    (Right $ do
-                        onEvent eix1 $ \delta -> do
-                            sumSoFar <- prevE 0 eix2 -- Self reference
-                            return (sumSoFar + delta)
-                    )
-                ]
-
-        -- lookupVKB :: Time -> VIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
-        lookupVKB 0 eix2 kb @?= Known NoOcc
-        lookupVKB 5 eix2 kb @?= Known (Occ 3)
+        lookupVKB 5 eix2 kb @?= Known (Occ 8)
         lookupVKB 6 eix2 kb @?= Known NoOcc
-        lookupVKB 7 eix2 kb @?= Known (Occ 4)
-        lookupVKB 8 eix2 kb @?= Unknown
-        lookupVKB 9 eix2 kb @?= Unknown
-        lookupVKB 10 eix2 kb @?= Unknown
+        lookupVKB 7 eix2 kb @?= Known (Occ 18)
+        lookupVKB 8 eix2 kb @?= Known NoOcc
 
-
-      -- | This is the same as the last test, but the order of the GetV and
-      -- PrevV swapped. This is significantly harder for the solver.
-      , testCase "PrevV and GetV (with self reference before onEvent)" $ do
-        let
-          eix1, eix2 :: VIx (MaybeOcc Int)
-          eix1 = VIx 1
-          eix2 = VIx 2
-
-          kb :: KnowledgeBase
-          kb = solution1
-                -- time: -----------5-----7-----111--------
-                --------------------3-----1_____5____
-                [ InputEl eix1
-                    (Left [ Fact_SpanExc [] (spanExc Nothing (Just 5)) NoOcc
-                          , Fact_Point   [] 5 (Occ 3)
-                          , Fact_SpanExc [] (spanExc (Just 5) (Just 7)) NoOcc
-                          , Fact_Point   [] 7 (Occ 1)
-                          , Fact_Point   [] 111 (Occ 5)
-                          ]
-                    )
-                -- time: -----------5-----7-----111--------
-                --------------------3-----4______________
-                , InputEl eix2
-                    (Right $ do
-                        sumSoFar <- prevE 0 eix2 -- Self reference
-                        -- Require happens after self reference which disallows
-                        -- short circuiting when eix1 is not occurring.
-                        onEvent eix1 $ \delta ->
-                            return (sumSoFar + delta)
-                    )
-                ]
-
-        -- lookupVKB :: Time -> VIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
-        lookupVKB 0 eix2 kb @?= Known NoOcc
-        lookupVKB 5 eix2 kb @?= Known (Occ 3)
-        lookupVKB 6 eix2 kb @?= Known NoOcc
-        lookupVKB 7 eix2 kb @?= Known (Occ 4)
-        lookupVKB 8 eix2 kb @?= Unknown
-        lookupVKB 111 eix2 kb @?= Unknown
-        lookupVKB 112 eix2 kb @?= Unknown
-
-
-      , testCase "GetV and PrevV (with self reference after onEvent and missing info)" $ do
-        let
-          eix1, eix2 :: VIx (MaybeOcc Int)
-          eix1 = VIx 1
-          eix2 = VIx 2
-
-          kb :: KnowledgeBase
-          kb = solution1
-                -- time: --0--------5-----7-----9--------
-                -----------_--------3-----1_____5____
-                [ InputEl eix1
-                    (Left [ Fact_SpanExc [] (spanExc Nothing (Just 0)) NoOcc
-                          , Fact_SpanExc [] (spanExc (Just 0) (Just 5)) NoOcc
-                          , Fact_Point   [] 5 (Occ 3)
-                          , Fact_SpanExc [] (spanExc (Just 5) (Just 7)) NoOcc
-                          , Fact_Point   [] 7 (Occ 1)
-                          , Fact_Point   [] 9 (Occ 5)
-                          ]
-                    )
-                -- time: --0--------5-----7-----9--------
-                -----------_--------_-----_______________
-                -- Note that because of the use of `onEvent`, exi2 is not a
-                -- dependency at e.g. t∈{2,6} so we know that the event isn't
-                -- occurring.
-                , InputEl eix2
-                    (Right $ do
-                        onEvent eix1 $ \delta -> do
-                            sumSoFar <- prevE 0 eix2 -- Self reference
-                            return (sumSoFar + delta)
-                    )
-                ]
-
-        -- lookupVKB :: Time -> VIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
-        lookupVKB (-1) eix2 kb @?= Known NoOcc
-        lookupVKB 0 eix2 kb @?= Unknown
-        lookupVKB 1 eix2 kb @?= Known NoOcc
-        lookupVKB 5 eix2 kb @?= Unknown
-        lookupVKB 6 eix2 kb @?= Known NoOcc
-        lookupVKB 7 eix2 kb @?= Unknown
-        lookupVKB 8 eix2 kb @?= Unknown
-        lookupVKB 9 eix2 kb @?= Unknown
-        lookupVKB 10 eix2 kb @?= Unknown
-
-    , testCase "Swap values (transitive self reference)" $ do
-        let
-          swapE :: VIx (MaybeOcc ())
-          swapE = VIx 1
-
-          a, b :: VIx (MaybeOcc String)
-          a = VIx 2
-          b = VIx 3
-
-          kb :: KnowledgeBase
-          kb = solution1
-                -- time: --0--------5-----7-----9--------
-                --------------------()----()____()_______
-                [ InputEl swapE
-                    (Left [ Fact_SpanExc [] (spanExc Nothing (Just 5)) NoOcc
-                          , Fact_Point   [] 5 (Occ ())
-                          , Fact_SpanExc [] (spanExc (Just 5) (Just 7)) NoOcc
-                          , Fact_Point   [] 7 (Occ ())
-                          , Fact_Point   [] 9 (Occ ())
-                          ]
-                    )
-                -- time: --0--------5-----7-----9--------
-                --------------------y-----x_______________
-                , InputEl a
-                    (Right $ do
-                        onEvent swapE $ \() -> do
-                            bVal <- prevE "y" b
-                            return bVal
-                    )
-                -- time: --0--------5-----7-----9--------
-                --------------------x-----y_______________
-                , InputEl b
-                    (Right $ do
-                        onEvent swapE $ \() -> do
-                            aVal <- prevE "x" a
-                            return aVal
-                    )
-                ]
-
-        lookupVKB 0  a kb @?= Known NoOcc
-        lookupVKB 0  b kb @?= Known NoOcc
-        lookupVKB 1  a kb @?= Known NoOcc
-        lookupVKB 1  b kb @?= Known NoOcc
-        lookupVKB 5  a kb @?= Known (Occ "y")
-        lookupVKB 5  b kb @?= Known (Occ "x")
-        lookupVKB 6  a kb @?= Known NoOcc
-        lookupVKB 6  b kb @?= Known NoOcc
-        lookupVKB 7  a kb @?= Known (Occ "x")
-        lookupVKB 7  b kb @?= Known (Occ "y")
-        lookupVKB 8  a kb @?= Unknown
-        lookupVKB 8  b kb @?= Unknown
-        lookupVKB 9  a kb @?= Unknown
-        lookupVKB 9  b kb @?= Unknown
-        lookupVKB 10 a kb @?= Unknown
-        lookupVKB 10 b kb @?= Unknown
-
-
-    , testCase "Switching" $ do
-        let
-          a, b, c :: VIx (MaybeOcc Int)
-          a      = VIx 1
-          b      = VIx 2
-          c      = VIx 3
-
-          switch :: VIx (MaybeOcc Int)
-          switch = VIx 4
-
-          out :: VIx (MaybeOcc Int)
-          out    = VIx 5
-
-          kb :: KnowledgeBase
-          kb = solution1
-                -- time: --0--2--4--6--8--10-12-14-16---
-                -----------11-12-13-14-15-16-17-18-19---
-                [ InputEl a
-                    (Left [ Fact_SpanExc [] (spanExc Nothing (Just 0)) NoOcc
-                          , Fact_Point [] 0 (Occ 11)
-                          , Fact_SpanExc [] (spanExc (Just 0) (Just 2)) NoOcc
-                          , Fact_Point [] 2 (Occ 12)
-                          , Fact_SpanExc [] (spanExc (Just 0) (Just 4)) NoOcc
-                          , Fact_Point [] 4 (Occ 13)
-                          , Fact_SpanExc [] (spanExc (Just 4) (Just 6)) NoOcc
-                          , Fact_Point [] 6 (Occ 14)
-                          , Fact_SpanExc [] (spanExc (Just 6) (Just 8)) NoOcc
-                          , Fact_Point [] 8 (Occ 15)
-                          , Fact_SpanExc [] (spanExc (Just 8) (Just 10)) NoOcc
-                          , Fact_Point [] 10 (Occ 16)
-                          , Fact_SpanExc [] (spanExc (Just 10) (Just 12)) NoOcc
-                          , Fact_Point [] 12 (Occ 17)
-                          , Fact_SpanExc [] (spanExc (Just 12) (Just 14)) NoOcc
-                          , Fact_Point [] 14 (Occ 18)
-                          , Fact_SpanExc [] (spanExc (Just 14) (Just 16)) NoOcc
-                          , Fact_Point [] 16 (Occ 19)
-                          , Fact_SpanExc [] (spanExc (Just 16) Nothing) NoOcc
-                          ]
-                    )
-                -- time: --0--2--4--6--8--10-12-14-16---
-                -----------21-22-23-24-25-26-27-28-29---
-                ,  InputEl b
-                    (Left [ Fact_SpanExc [] (spanExc Nothing (Just 0)) NoOcc
-                          , Fact_Point [] 0 (Occ 21)
-                          , Fact_SpanExc [] (spanExc (Just 0) (Just 2)) NoOcc
-                          , Fact_Point [] 2 (Occ 22)
-                          , Fact_SpanExc [] (spanExc (Just 0) (Just 4)) NoOcc
-                          , Fact_Point [] 4 (Occ 23)
-                          , Fact_SpanExc [] (spanExc (Just 4) (Just 6)) NoOcc
-                          , Fact_Point [] 6 (Occ 24)
-                          , Fact_SpanExc [] (spanExc (Just 6) (Just 8)) NoOcc
-                          , Fact_Point [] 8 (Occ 25)
-                          , Fact_SpanExc [] (spanExc (Just 8) (Just 10)) NoOcc
-                          , Fact_Point [] 10 (Occ 26)
-                          , Fact_SpanExc [] (spanExc (Just 10) (Just 12)) NoOcc
-                          , Fact_Point [] 12 (Occ 27)
-                          , Fact_SpanExc [] (spanExc (Just 12) (Just 14)) NoOcc
-                          , Fact_Point [] 14 (Occ 28)
-                          , Fact_SpanExc [] (spanExc (Just 14) (Just 16)) NoOcc
-                          , Fact_Point [] 16 (Occ 29)
-                          , Fact_SpanExc [] (spanExc (Just 16) Nothing) NoOcc
-                          ]
-                    )
-                -- time: --0--2--4--6--8--10-12-14-16---
-                -----------31-32-33-34-35-36-37-38-39---
-                ,  InputEl c
-                    (Left [ Fact_SpanExc [] (spanExc Nothing (Just 0)) NoOcc
-                          , Fact_Point [] 0 (Occ 31)
-                          , Fact_SpanExc [] (spanExc (Just 0) (Just 2)) NoOcc
-                          , Fact_Point [] 2 (Occ 32)
-                          , Fact_SpanExc [] (spanExc (Just 0) (Just 4)) NoOcc
-                          , Fact_Point [] 4 (Occ 33)
-                          , Fact_SpanExc [] (spanExc (Just 4) (Just 6)) NoOcc
-                          , Fact_Point [] 6 (Occ 34)
-                          , Fact_SpanExc [] (spanExc (Just 6) (Just 8)) NoOcc
-                          , Fact_Point [] 8 (Occ 35)
-                          , Fact_SpanExc [] (spanExc (Just 8) (Just 10)) NoOcc
-                          , Fact_Point [] 10 (Occ 36)
-                          , Fact_SpanExc [] (spanExc (Just 10) (Just 12)) NoOcc
-                          , Fact_Point [] 12 (Occ 37)
-                          , Fact_SpanExc [] (spanExc (Just 12) (Just 14)) NoOcc
-                          , Fact_Point [] 14 (Occ 38)
-                          , Fact_SpanExc [] (spanExc (Just 14) (Just 16)) NoOcc
-                          , Fact_Point [] 16 (Occ 39)
-                          , Fact_SpanExc [] (spanExc (Just 16) Nothing) NoOcc
-                          ]
-                    )
-                -- time: --0--2--4--6--8--10-12-14-16---
-                -- (1) -------2-----3------1--_--2------
-                ,  InputEl switch
-                    (Left [ Fact_SpanExc [] (spanExc Nothing (Just 0)) NoOcc
-                          , Fact_Point [] 0 NoOcc
-                          , Fact_SpanExc [] (spanExc (Just 0) (Just 2)) NoOcc
-                          , Fact_Point [] 2 (Occ 2)
-                          , Fact_SpanExc [] (spanExc (Just 2) (Just 6)) NoOcc
-                          , Fact_Point [] 6 (Occ 3)
-                          , Fact_SpanExc [] (spanExc (Just 6) (Just 10)) NoOcc
-                          , Fact_Point [] 10 (Occ 1)
-                          , Fact_SpanExc [] (spanExc (Just 10) (Just 12)) NoOcc
-                          -- Unknown at t=12
-                          , Fact_SpanExc [] (spanExc (Just 12) (Just 14)) NoOcc
-                          , Fact_Point [] 14 (Occ 2)
-                          , Fact_SpanExc [] (spanExc (Just 14) Nothing) NoOcc
-                          ]
-                    )
-                -- time: --0--2--4--6--8--10-12---14-16---
-                -----------11-12-23-24-35-36-17_____------
-                , InputEl out
-                    (Right $ do
-                        switchVal <- prevE 1 switch
-                        getV $ case switchVal of
-                                1 -> a
-                                2 -> b
-                                3 -> c
-                                x -> error $ "Unexpected switch value of: " ++ show x
-                    )
-                ]
-
-        lookupVKB (-1) out kb @?= Known NoOcc
-        lookupVKB 0  out kb @?= Known (Occ 11)
-        lookupVKB 1  out kb @?= Known NoOcc
-        lookupVKB 2  out kb @?= Known (Occ 12)
-        lookupVKB 3  out kb @?= Known NoOcc
-        lookupVKB 4  out kb @?= Known (Occ 23)
-        lookupVKB 5  out kb @?= Known NoOcc
-        lookupVKB 6  out kb @?= Known (Occ 24)
-        lookupVKB 7  out kb @?= Known NoOcc
-        lookupVKB 8  out kb @?= Known (Occ 35)
-        lookupVKB 9  out kb @?= Known NoOcc
-        lookupVKB 10 out kb @?= Known (Occ 36)
-        lookupVKB 11 out kb @?= Known NoOcc
-        lookupVKB 12 out kb @?= Known (Occ 17)
-        lookupVKB 13 out kb @?= Unknown
-        lookupVKB 14 out kb @?= Unknown
-        lookupVKB 15 out kb @?= Known NoOcc
-        lookupVKB 16 out kb @?= Known (Occ 29)
-        lookupVKB 17 out kb @?= Known NoOcc
-    ]
-
-  , testGroup "Model - Behavior"
-    [ testCase "Switching" $ do
-        let
-          a, b, c :: VIx Int
-          a      = VIx 1
-          b      = VIx 2
-          c      = VIx 3
-
-          switch :: VIx (MaybeOcc Int)
-          switch = VIx 4
-
-          out :: VIx Int
-          out    = VIx 5
-
-          kb :: KnowledgeBase
-          kb = solution1
-                -- time:      0      10      20
-                --     <--0-> 1 <-2-> 3 <-4-> 5 <-6-->
-                [ InputEl a
-                    (Left [ Fact_SpanExc [] (spanExc Nothing (Just 0))    0
-                          , Fact_Point   [] 0                             1
-                          , Fact_SpanExc [] (spanExc (Just 0) (Just 10))  2
-                          , Fact_Point   [] 10                            3
-                          , Fact_SpanExc [] (spanExc (Just 10) (Just 20)) 4
-                          , Fact_Point   [] 20                            5
-                          , Fact_SpanExc [] (spanExc (Just 20) Nothing)   6
-                          ]
-                    )
-                -- time:        5        10        25
-                --     <--10-> 11 <-12-> 13 <-14-> 15 <-16-->
-                ,  InputEl b
-                    (Left [ Fact_SpanExc [] (spanExc Nothing (Just 5))    10
-                          , Fact_Point   [] 5                             11
-                          , Fact_SpanExc [] (spanExc (Just 5) (Just 10))  12
-                          , Fact_Point   [] 10                            13
-                          , Fact_SpanExc [] (spanExc (Just 10) (Just 25)) 14
-                          , Fact_Point   [] 25                            15
-                          , Fact_SpanExc [] (spanExc (Just 25) Nothing)   16
-                          ]
-                    )
-                -- time:        7        10        25
-                --     <--20-> 21 <-22-> 23 <-24-> 25 <-26-->
-                ,  InputEl c
-                    (Left [ Fact_SpanExc [] (spanExc Nothing (Just 7))    20
-                          , Fact_Point   [] 7                             21
-                          , Fact_SpanExc [] (spanExc (Just 7) (Just 10))  22
-                          , Fact_Point   [] 10                            23
-                          , Fact_SpanExc [] (spanExc (Just 10) (Just 25)) 24
-                          , Fact_Point   [] 25                            25
-                          , Fact_SpanExc [] (spanExc (Just 25) Nothing)   26
-                          ]
-                    )
-                -- time: --0--2-----6-----10-20-25---30--
-                -- (1) -------2-----3------1--_--2----1--
-                ,  InputEl switch
-                    (Left [ Fact_SpanExc [] (spanExc Nothing (Just 0))    NoOcc
-                          , Fact_Point   [] 0                             NoOcc
-                          , Fact_SpanExc [] (spanExc (Just 0) (Just 2))   NoOcc
-                          , Fact_Point   [] 2                             (Occ 2)
-                          , Fact_SpanExc [] (spanExc (Just 2) (Just 6))   NoOcc
-                          , Fact_Point   [] 6                             (Occ 3)
-                          , Fact_SpanExc [] (spanExc (Just 6) (Just 10))  NoOcc
-                          , Fact_Point   [] 10                            (Occ 1)
-                          , Fact_SpanExc [] (spanExc (Just 10) (Just 20)) NoOcc
-                          -- Unknown at t=20
-                          , Fact_SpanExc [] (spanExc (Just 20) (Just 25)) NoOcc
-                          , Fact_Point   [] 25                            (Occ 2)
-                          , Fact_SpanExc [] (spanExc (Just 25) (Just 30)) NoOcc
-                          , Fact_Point   [] 30                            (Occ 1)
-                          , Fact_SpanExc [] (spanExc (Just 30) Nothing)   NoOcc
-                          ]
-                    )
-                -- time:   0       2         5         6         7        10       20      25        30
-                -- prevE 1 switch:
-                --   <-1-> 1 <-1-> 1 <- 2->  2 <- 2->  2 <- 3->  3 <- 3->  3 <-1->  _ <-_-> _ <- 2->  2 <-1-->
-                -- out:
-                --   <-0-> 1 <-2-> 2 <-10-> 11 <-12-> 12 <-20-> 21 <-22-> 23 <-4->  5 <-_-> _ <-16-> 16 <-6-->
-                , InputEl out
-                    (Right $ do
-                        switchVal <- prevE 1 switch
-                        getV $ case switchVal of
-                                1 -> a
-                                2 -> b
-                                3 -> c
-                                x -> error $ "Unexpected switch value of: " ++ show x
-                    )
-                ]
-
-        lookupVKB (-1) out kb @?= Known 0
-        lookupVKB 0  out kb @?= Known 1
-        lookupVKB 1  out kb @?= Known 2
-        lookupVKB 2  out kb @?= Known 2
-        lookupVKB 3  out kb @?= Known 10
-        lookupVKB 5  out kb @?= Known 11
-        lookupVKB 6  out kb @?= Known 12
-        lookupVKB 7  out kb @?= Known 21
-        lookupVKB 8  out kb @?= Known 22
-        lookupVKB 10 out kb @?= Known 23
-        lookupVKB 15 out kb @?= Known 4
-        lookupVKB 20 out kb @?= Known 5
-        lookupVKB 23 out kb @?= Unknown
-        lookupVKB 25 out kb @?= Unknown
-        lookupVKB 27 out kb @?= Known 16
-        lookupVKB 30 out kb @?= Known 16
-        lookupVKB 35 out kb @?= Known 6
-    ]
-
-  , testGroup "TheoryFast"
-    [ let n = 5 in testCase ("vs Theory on Synthetic " ++ show n) $ do
-        let (vixs, ts, ins) = syntheticN n
-            lookupT  = let kb =  T.solution1 ins in \t vix -> T.lookupVKB t vix kb
-            lookupTF = let kb = TF.solution1 ins in \t vix ->TF.lookupVKB t vix kb
-        sequence_
-            [ print (lookupT (-1000) vix) -- lookupTF t vix @?= lookupT t vix
-            | vix <- vixs
-            -- , t <- ts
-            ]
-
-        True @?= False
-
-    ]
+        lookupVKB (-1) eix3 kb @?= Known NoOcc
+        lookupVKB 0 eix3 kb @?= Known (Occ 4)
+        lookupVKB 2 eix3 kb @?= Known NoOcc
+        lookupVKB 5 eix3 kb @?= Known (Occ 12)
+        lookupVKB 6 eix3 kb @?= Known NoOcc
+        lookupVKB 7 eix3 kb @?= Known (Occ 24)
+        lookupVKB 8 eix3 kb @?= Known NoOcc
+      ]
   ]
 
-showDerivationStack :: Time -> VIx a -> KnowledgeBase -> String
+--   [ testGroup "Model - Event"
+--     [ testCase "GetE Only" $ do
+--         let
+--           eix1, eix2, eix3 :: EIx (MaybeOcc Int)
+--           eix1 = EIx 1
+--           eix2 = EIx 2
+--           eix3 = EIx 3
+
+--           kb :: KnowledgeBase
+--           kb = solution1
+--                 -- time: --0--------5-----7--------------
+--                 --------------------------9______________
+--                 [ InputEl eix1
+--                     (Left [ Fact_NoOcc [] (spanExc Nothing (Just 7)) NoOcc
+--                           , Fact_Occ   [] 7 (Occ 9)
+--                           ]
+--                     )
+--                 -- time: --0--------5-----7--------------
+--                 -------------------90____80______________
+--                 , InputEl eix2
+--                     (Left [ Fact_NoOcc [] (spanExc Nothing (Just 5)) NoOcc
+--                           , Fact_Occ   [] 5 (Occ 90)
+--                           , Fact_Occ   [] 7 (Occ 80)
+--                           ]
+--                     )
+--                 -- time: --0--------5-----7--------------
+--                 ------------------190____189_____________
+--                 , InputEl eix3
+--                     (Right $ do
+--                         e1 <- getE eix1
+--                         e2 <- getE eix2
+--                         return $ case (e1, e2) of
+--                             (NoOcc, NoOcc) -> NoOcc
+--                             _ -> Occ $ 100
+--                                         + fromMaybe 0 (maybeOccToMaybe e1)
+--                                         + fromMaybe 0 (maybeOccToMaybe e2)
+--                     )
+--                 ]
+
+--         -- lookupVKB :: Time -> EIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
+--         lookupVKB 0 eix3 kb @?= Known NoOcc
+--         lookupVKB 5 eix3 kb @?= Known (Occ 190)
+--         lookupVKB 6 eix3 kb @?= Unknown
+--         lookupVKB 7 eix3 kb @?= Known (Occ 189)
+--         lookupVKB 8 eix3 kb @?= Unknown
+
+--       , testCase "PrevV Only" $ do
+--         let
+--           eix1, eix2 :: EIx (MaybeOcc Int)
+--           eix1 = EIx 1
+--           eix2 = EIx 2
+
+--           kb :: KnowledgeBase
+--           kb = solution1
+--                 -- time: --0--------5-----7--------------
+--                 -----------7--------8_____9______________
+--                 [ InputEl eix1
+--                     (Left [ Fact_NoOcc [] (spanExc Nothing (Just 0)) NoOcc
+--                           , Fact_Occ   [] 0 (Occ 7)
+--                           , Fact_NoOcc [] (spanExc (Just 0) (Just 5)) NoOcc
+--                           , Fact_Occ   [] 5 (Occ 8)
+--                           , Fact_Occ   [] 7 (Occ 9)
+--                           ]
+--                     )
+--                 -- time: --0--------5-----7--------------
+--                 ---------100------107____________________
+--                 , InputEl eix2
+--                     (Right $ do
+--                         onEvent eix1 $ \_ -> do
+--                             e1 <- prevV 0 eix1
+--                             return (e1+100)
+--                     )
+--                 ]
+
+--         -- lookupVKB :: Time -> EIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
+--         lookupVKB (-1) eix2 kb @?= Known NoOcc
+--         lookupVKB 0 eix2 kb @?= Known (Occ 100)
+--         lookupVKB 2 eix2 kb @?= Known NoOcc
+--         lookupVKB 5 eix2 kb @?= Known (Occ 107)
+--         lookupVKB 6 eix2 kb @?= Unknown
+--         lookupVKB 7 eix2 kb @?= Unknown
+--         lookupVKB 8 eix2 kb @?= Unknown
+
+
+--       , testCase "GetE and PrevV (no self reference)" $ do
+--         let
+--           eix1, eix2, eix3 :: EIx (MaybeOcc Int)
+--           eix1 = EIx 1
+--           eix2 = EIx 2
+--           eix3 = EIx 3
+
+--           kb :: KnowledgeBase
+--           kb = solution1
+--                 -- time: --0--------5-----7-----9--------
+--                 --------------------3-----1----__________
+--                 [ InputEl eix1
+--                     (Left [ Fact_NoOcc [] (spanExc Nothing (Just 5)) NoOcc
+--                           , Fact_Occ   [] 5 (Occ 3)
+--                           , Fact_NoOcc [] (spanExc (Just 5) (Just 7)) NoOcc
+--                           , Fact_Occ   [] 7 (Occ 1)
+--                           , Fact_NoOcc [] (spanExc (Just 7) (Just 9)) NoOcc
+--                           ]
+--                     )
+--                 -- time: --0--------5-----7-----9--------
+--                 -------------------90____80____70________
+--                 , InputEl eix2
+--                     (Left [ Fact_NoOcc [] (spanExc Nothing (Just 5)) NoOcc
+--                           , Fact_Occ   [] 5 (Occ 90)
+--                           , Fact_Occ   [] 7 (Occ 80)
+--                           , Fact_Occ   [] 9 (Occ 70)
+--                           ]
+--                     )
+--                 -- time: --0--------5-----7-----9--------
+--                 -------------------190___183___171_______
+--                 , InputEl eix3
+--                     (Right $ do
+--                         e1 <- prevV 0 eix1
+--                         e2May <- getE eix2
+--                         return $ case e2May of
+--                             NoOcc -> NoOcc
+--                             Occ e2 -> Occ (e1+e2+100)
+--                     )
+--                 ]
+
+--         -- lookupVKB :: Time -> EIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
+--         lookupVKB 0 eix3 kb @?= Known NoOcc
+--         lookupVKB 5 eix3 kb @?= Known (Occ 190)
+--         lookupVKB 6 eix3 kb @?= Unknown
+--         lookupVKB 7 eix3 kb @?= Known (Occ 183)
+--         lookupVKB 8 eix3 kb @?= Unknown
+--         lookupVKB 9 eix3 kb @?= Known (Occ 171)
+
+
+--       , testCase "GetE and PrevV (with self reference after onEvent)" $ do
+--         let
+--           eix1, eix2 :: EIx (MaybeOcc Int)
+--           eix1 = EIx 1
+--           eix2 = EIx 2
+
+--           kb :: KnowledgeBase
+--           kb = solution1
+--                 -- time: --0--------5-----7-----9--------
+--                 --------------------3-----1_____5____
+--                 [ InputEl eix1
+--                     (Left [ Fact_NoOcc [] (spanExc Nothing (Just 5)) NoOcc
+--                           , Fact_Occ   [] 5 (Occ 3)
+--                           , Fact_NoOcc [] (spanExc (Just 5) (Just 7)) NoOcc
+--                           , Fact_Occ   [] 7 (Occ 1)
+--                           , Fact_Occ   [] 9 (Occ 5)
+--                           ]
+--                     )
+--                 -- time: --0--------5-----7-----9--------
+--                 --------------------3-----4______________
+--                 , InputEl eix2
+--                     (Right $ do
+--                         onEvent eix1 $ \delta -> do
+--                             sumSoFar <- prevV 0 eix2 -- Self reference
+--                             return (sumSoFar + delta)
+--                     )
+--                 ]
+
+--         -- lookupVKB :: Time -> EIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
+--         lookupVKB 0 eix2 kb @?= Known NoOcc
+--         lookupVKB 5 eix2 kb @?= Known (Occ 3)
+--         lookupVKB 6 eix2 kb @?= Known NoOcc
+--         lookupVKB 7 eix2 kb @?= Known (Occ 4)
+--         lookupVKB 8 eix2 kb @?= Unknown
+--         lookupVKB 9 eix2 kb @?= Unknown
+--         lookupVKB 10 eix2 kb @?= Unknown
+
+
+--       -- | This is the same as the last test, but the order of the GetE and
+--       -- PrevV swapped. This is significantly harder for the solver.
+--       , testCase "PrevV and GetE (with self reference before onEvent)" $ do
+--         let
+--           eix1, eix2 :: EIx (MaybeOcc Int)
+--           eix1 = EIx 1
+--           eix2 = EIx 2
+
+--           kb :: KnowledgeBase
+--           kb = solution1
+--                 -- time: -----------5-----7-----111--------
+--                 --------------------3-----1_____5____
+--                 [ InputEl eix1
+--                     (Left [ Fact_NoOcc [] (spanExc Nothing (Just 5)) NoOcc
+--                           , Fact_Occ   [] 5 (Occ 3)
+--                           , Fact_NoOcc [] (spanExc (Just 5) (Just 7)) NoOcc
+--                           , Fact_Occ   [] 7 (Occ 1)
+--                           , Fact_Occ   [] 111 (Occ 5)
+--                           ]
+--                     )
+--                 -- time: -----------5-----7-----111--------
+--                 --------------------3-----4______________
+--                 , InputEl eix2
+--                     (Right $ do
+--                         sumSoFar <- prevV 0 eix2 -- Self reference
+--                         -- Require happens after self reference which disallows
+--                         -- short circuiting when eix1 is not occurring.
+--                         onEvent eix1 $ \delta ->
+--                             return (sumSoFar + delta)
+--                     )
+--                 ]
+
+--         -- lookupVKB :: Time -> EIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
+--         lookupVKB 0 eix2 kb @?= Known NoOcc
+--         lookupVKB 5 eix2 kb @?= Known (Occ 3)
+--         lookupVKB 6 eix2 kb @?= Known NoOcc
+--         lookupVKB 7 eix2 kb @?= Known (Occ 4)
+--         lookupVKB 8 eix2 kb @?= Unknown
+--         lookupVKB 111 eix2 kb @?= Unknown
+--         lookupVKB 112 eix2 kb @?= Unknown
+
+
+--       , testCase "GetE and PrevV (with self reference after onEvent and missing info)" $ do
+--         let
+--           eix1, eix2 :: EIx (MaybeOcc Int)
+--           eix1 = EIx 1
+--           eix2 = EIx 2
+
+--           kb :: KnowledgeBase
+--           kb = solution1
+--                 -- time: --0--------5-----7-----9--------
+--                 -----------_--------3-----1_____5____
+--                 [ InputEl eix1
+--                     (Left [ Fact_NoOcc [] (spanExc Nothing (Just 0)) NoOcc
+--                           , Fact_NoOcc [] (spanExc (Just 0) (Just 5)) NoOcc
+--                           , Fact_Occ   [] 5 (Occ 3)
+--                           , Fact_NoOcc [] (spanExc (Just 5) (Just 7)) NoOcc
+--                           , Fact_Occ   [] 7 (Occ 1)
+--                           , Fact_Occ   [] 9 (Occ 5)
+--                           ]
+--                     )
+--                 -- time: --0--------5-----7-----9--------
+--                 -----------_--------_-----_______________
+--                 -- Note that because of the use of `onEvent`, exi2 is not a
+--                 -- dependency at e.g. t∈{2,6} so we know that the event isn't
+--                 -- occurring.
+--                 , InputEl eix2
+--                     (Right $ do
+--                         onEvent eix1 $ \delta -> do
+--                             sumSoFar <- prevV 0 eix2 -- Self reference
+--                             return (sumSoFar + delta)
+--                     )
+--                 ]
+
+--         -- lookupVKB :: Time -> EIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
+--         lookupVKB (-1) eix2 kb @?= Known NoOcc
+--         lookupVKB 0 eix2 kb @?= Unknown
+--         lookupVKB 1 eix2 kb @?= Known NoOcc
+--         lookupVKB 5 eix2 kb @?= Unknown
+--         lookupVKB 6 eix2 kb @?= Known NoOcc
+--         lookupVKB 7 eix2 kb @?= Unknown
+--         lookupVKB 8 eix2 kb @?= Unknown
+--         lookupVKB 9 eix2 kb @?= Unknown
+--         lookupVKB 10 eix2 kb @?= Unknown
+
+--     , testCase "Swap values (transitive self reference)" $ do
+--         let
+--           swapE :: EIx (MaybeOcc ())
+--           swapE = EIx 1
+
+--           a, b :: EIx (MaybeOcc String)
+--           a = EIx 2
+--           b = EIx 3
+
+--           kb :: KnowledgeBase
+--           kb = solution1
+--                 -- time: --0--------5-----7-----9--------
+--                 --------------------()----()____()_______
+--                 [ InputEl swapE
+--                     (Left [ Fact_NoOcc [] (spanExc Nothing (Just 5)) NoOcc
+--                           , Fact_Occ   [] 5 (Occ ())
+--                           , Fact_NoOcc [] (spanExc (Just 5) (Just 7)) NoOcc
+--                           , Fact_Occ   [] 7 (Occ ())
+--                           , Fact_Occ   [] 9 (Occ ())
+--                           ]
+--                     )
+--                 -- time: --0--------5-----7-----9--------
+--                 --------------------y-----x_______________
+--                 , InputEl a
+--                     (Right $ do
+--                         onEvent swapE $ \() -> do
+--                             bVal <- prevV "y" b
+--                             return bVal
+--                     )
+--                 -- time: --0--------5-----7-----9--------
+--                 --------------------x-----y_______________
+--                 , InputEl b
+--                     (Right $ do
+--                         onEvent swapE $ \() -> do
+--                             aVal <- prevV "x" a
+--                             return aVal
+--                     )
+--                 ]
+
+--         lookupVKB 0  a kb @?= Known NoOcc
+--         lookupVKB 0  b kb @?= Known NoOcc
+--         lookupVKB 1  a kb @?= Known NoOcc
+--         lookupVKB 1  b kb @?= Known NoOcc
+--         lookupVKB 5  a kb @?= Known (Occ "y")
+--         lookupVKB 5  b kb @?= Known (Occ "x")
+--         lookupVKB 6  a kb @?= Known NoOcc
+--         lookupVKB 6  b kb @?= Known NoOcc
+--         lookupVKB 7  a kb @?= Known (Occ "x")
+--         lookupVKB 7  b kb @?= Known (Occ "y")
+--         lookupVKB 8  a kb @?= Unknown
+--         lookupVKB 8  b kb @?= Unknown
+--         lookupVKB 9  a kb @?= Unknown
+--         lookupVKB 9  b kb @?= Unknown
+--         lookupVKB 10 a kb @?= Unknown
+--         lookupVKB 10 b kb @?= Unknown
+
+
+--     , testCase "Switching" $ do
+--         let
+--           a, b, c :: EIx (MaybeOcc Int)
+--           a      = EIx 1
+--           b      = EIx 2
+--           c      = EIx 3
+
+--           switch :: EIx (MaybeOcc Int)
+--           switch = EIx 4
+
+--           out :: EIx (MaybeOcc Int)
+--           out    = EIx 5
+
+--           kb :: KnowledgeBase
+--           kb = solution1
+--                 -- time: --0--2--4--6--8--10-12-14-16---
+--                 -----------11-12-13-14-15-16-17-18-19---
+--                 [ InputEl a
+--                     (Left [ Fact_NoOcc [] (spanExc Nothing (Just 0)) NoOcc
+--                           , Fact_Occ [] 0 (Occ 11)
+--                           , Fact_NoOcc [] (spanExc (Just 0) (Just 2)) NoOcc
+--                           , Fact_Occ [] 2 (Occ 12)
+--                           , Fact_NoOcc [] (spanExc (Just 0) (Just 4)) NoOcc
+--                           , Fact_Occ [] 4 (Occ 13)
+--                           , Fact_NoOcc [] (spanExc (Just 4) (Just 6)) NoOcc
+--                           , Fact_Occ [] 6 (Occ 14)
+--                           , Fact_NoOcc [] (spanExc (Just 6) (Just 8)) NoOcc
+--                           , Fact_Occ [] 8 (Occ 15)
+--                           , Fact_NoOcc [] (spanExc (Just 8) (Just 10)) NoOcc
+--                           , Fact_Occ [] 10 (Occ 16)
+--                           , Fact_NoOcc [] (spanExc (Just 10) (Just 12)) NoOcc
+--                           , Fact_Occ [] 12 (Occ 17)
+--                           , Fact_NoOcc [] (spanExc (Just 12) (Just 14)) NoOcc
+--                           , Fact_Occ [] 14 (Occ 18)
+--                           , Fact_NoOcc [] (spanExc (Just 14) (Just 16)) NoOcc
+--                           , Fact_Occ [] 16 (Occ 19)
+--                           , Fact_NoOcc [] (spanExc (Just 16) Nothing) NoOcc
+--                           ]
+--                     )
+--                 -- time: --0--2--4--6--8--10-12-14-16---
+--                 -----------21-22-23-24-25-26-27-28-29---
+--                 ,  InputEl b
+--                     (Left [ Fact_NoOcc [] (spanExc Nothing (Just 0)) NoOcc
+--                           , Fact_Occ [] 0 (Occ 21)
+--                           , Fact_NoOcc [] (spanExc (Just 0) (Just 2)) NoOcc
+--                           , Fact_Occ [] 2 (Occ 22)
+--                           , Fact_NoOcc [] (spanExc (Just 0) (Just 4)) NoOcc
+--                           , Fact_Occ [] 4 (Occ 23)
+--                           , Fact_NoOcc [] (spanExc (Just 4) (Just 6)) NoOcc
+--                           , Fact_Occ [] 6 (Occ 24)
+--                           , Fact_NoOcc [] (spanExc (Just 6) (Just 8)) NoOcc
+--                           , Fact_Occ [] 8 (Occ 25)
+--                           , Fact_NoOcc [] (spanExc (Just 8) (Just 10)) NoOcc
+--                           , Fact_Occ [] 10 (Occ 26)
+--                           , Fact_NoOcc [] (spanExc (Just 10) (Just 12)) NoOcc
+--                           , Fact_Occ [] 12 (Occ 27)
+--                           , Fact_NoOcc [] (spanExc (Just 12) (Just 14)) NoOcc
+--                           , Fact_Occ [] 14 (Occ 28)
+--                           , Fact_NoOcc [] (spanExc (Just 14) (Just 16)) NoOcc
+--                           , Fact_Occ [] 16 (Occ 29)
+--                           , Fact_NoOcc [] (spanExc (Just 16) Nothing) NoOcc
+--                           ]
+--                     )
+--                 -- time: --0--2--4--6--8--10-12-14-16---
+--                 -----------31-32-33-34-35-36-37-38-39---
+--                 ,  InputEl c
+--                     (Left [ Fact_NoOcc [] (spanExc Nothing (Just 0)) NoOcc
+--                           , Fact_Occ [] 0 (Occ 31)
+--                           , Fact_NoOcc [] (spanExc (Just 0) (Just 2)) NoOcc
+--                           , Fact_Occ [] 2 (Occ 32)
+--                           , Fact_NoOcc [] (spanExc (Just 0) (Just 4)) NoOcc
+--                           , Fact_Occ [] 4 (Occ 33)
+--                           , Fact_NoOcc [] (spanExc (Just 4) (Just 6)) NoOcc
+--                           , Fact_Occ [] 6 (Occ 34)
+--                           , Fact_NoOcc [] (spanExc (Just 6) (Just 8)) NoOcc
+--                           , Fact_Occ [] 8 (Occ 35)
+--                           , Fact_NoOcc [] (spanExc (Just 8) (Just 10)) NoOcc
+--                           , Fact_Occ [] 10 (Occ 36)
+--                           , Fact_NoOcc [] (spanExc (Just 10) (Just 12)) NoOcc
+--                           , Fact_Occ [] 12 (Occ 37)
+--                           , Fact_NoOcc [] (spanExc (Just 12) (Just 14)) NoOcc
+--                           , Fact_Occ [] 14 (Occ 38)
+--                           , Fact_NoOcc [] (spanExc (Just 14) (Just 16)) NoOcc
+--                           , Fact_Occ [] 16 (Occ 39)
+--                           , Fact_NoOcc [] (spanExc (Just 16) Nothing) NoOcc
+--                           ]
+--                     )
+--                 -- time: --0--2--4--6--8--10-12-14-16---
+--                 -- (1) -------2-----3------1--_--2------
+--                 ,  InputEl switch
+--                     (Left [ Fact_NoOcc [] (spanExc Nothing (Just 0)) NoOcc
+--                           , Fact_Occ [] 0 NoOcc
+--                           , Fact_NoOcc [] (spanExc (Just 0) (Just 2)) NoOcc
+--                           , Fact_Occ [] 2 (Occ 2)
+--                           , Fact_NoOcc [] (spanExc (Just 2) (Just 6)) NoOcc
+--                           , Fact_Occ [] 6 (Occ 3)
+--                           , Fact_NoOcc [] (spanExc (Just 6) (Just 10)) NoOcc
+--                           , Fact_Occ [] 10 (Occ 1)
+--                           , Fact_NoOcc [] (spanExc (Just 10) (Just 12)) NoOcc
+--                           -- Unknown at t=12
+--                           , Fact_NoOcc [] (spanExc (Just 12) (Just 14)) NoOcc
+--                           , Fact_Occ [] 14 (Occ 2)
+--                           , Fact_NoOcc [] (spanExc (Just 14) Nothing) NoOcc
+--                           ]
+--                     )
+--                 -- time: --0--2--4--6--8--10-12---14-16---
+--                 -----------11-12-23-24-35-36-17_____------
+--                 , InputEl out
+--                     (Right $ do
+--                         switchVal <- prevV 1 switch
+--                         getE $ case switchVal of
+--                                 1 -> a
+--                                 2 -> b
+--                                 3 -> c
+--                                 x -> error $ "Unexpected switch value of: " ++ show x
+--                     )
+--                 ]
+
+--         lookupVKB (-1) out kb @?= Known NoOcc
+--         lookupVKB 0  out kb @?= Known (Occ 11)
+--         lookupVKB 1  out kb @?= Known NoOcc
+--         lookupVKB 2  out kb @?= Known (Occ 12)
+--         lookupVKB 3  out kb @?= Known NoOcc
+--         lookupVKB 4  out kb @?= Known (Occ 23)
+--         lookupVKB 5  out kb @?= Known NoOcc
+--         lookupVKB 6  out kb @?= Known (Occ 24)
+--         lookupVKB 7  out kb @?= Known NoOcc
+--         lookupVKB 8  out kb @?= Known (Occ 35)
+--         lookupVKB 9  out kb @?= Known NoOcc
+--         lookupVKB 10 out kb @?= Known (Occ 36)
+--         lookupVKB 11 out kb @?= Known NoOcc
+--         lookupVKB 12 out kb @?= Known (Occ 17)
+--         lookupVKB 13 out kb @?= Unknown
+--         lookupVKB 14 out kb @?= Unknown
+--         lookupVKB 15 out kb @?= Known NoOcc
+--         lookupVKB 16 out kb @?= Known (Occ 29)
+--         lookupVKB 17 out kb @?= Known NoOcc
+--     ]
+
+--   , testGroup "Model - Behavior"
+--     [ testCase "Switching" $ do
+--         let
+--           a, b, c :: EIx Int
+--           a      = EIx 1
+--           b      = EIx 2
+--           c      = EIx 3
+
+--           switch :: EIx (MaybeOcc Int)
+--           switch = EIx 4
+
+--           out :: EIx Int
+--           out    = EIx 5
+
+--           kb :: KnowledgeBase
+--           kb = solution1
+--                 -- time:      0      10      20
+--                 --     <--0-> 1 <-2-> 3 <-4-> 5 <-6-->
+--                 [ InputEl a
+--                     (Left [ Fact_NoOcc [] (spanExc Nothing (Just 0))    0
+--                           , Fact_Occ   [] 0                             1
+--                           , Fact_NoOcc [] (spanExc (Just 0) (Just 10))  2
+--                           , Fact_Occ   [] 10                            3
+--                           , Fact_NoOcc [] (spanExc (Just 10) (Just 20)) 4
+--                           , Fact_Occ   [] 20                            5
+--                           , Fact_NoOcc [] (spanExc (Just 20) Nothing)   6
+--                           ]
+--                     )
+--                 -- time:        5        10        25
+--                 --     <--10-> 11 <-12-> 13 <-14-> 15 <-16-->
+--                 ,  InputEl b
+--                     (Left [ Fact_NoOcc [] (spanExc Nothing (Just 5))    10
+--                           , Fact_Occ   [] 5                             11
+--                           , Fact_NoOcc [] (spanExc (Just 5) (Just 10))  12
+--                           , Fact_Occ   [] 10                            13
+--                           , Fact_NoOcc [] (spanExc (Just 10) (Just 25)) 14
+--                           , Fact_Occ   [] 25                            15
+--                           , Fact_NoOcc [] (spanExc (Just 25) Nothing)   16
+--                           ]
+--                     )
+--                 -- time:        7        10        25
+--                 --     <--20-> 21 <-22-> 23 <-24-> 25 <-26-->
+--                 ,  InputEl c
+--                     (Left [ Fact_NoOcc [] (spanExc Nothing (Just 7))    20
+--                           , Fact_Occ   [] 7                             21
+--                           , Fact_NoOcc [] (spanExc (Just 7) (Just 10))  22
+--                           , Fact_Occ   [] 10                            23
+--                           , Fact_NoOcc [] (spanExc (Just 10) (Just 25)) 24
+--                           , Fact_Occ   [] 25                            25
+--                           , Fact_NoOcc [] (spanExc (Just 25) Nothing)   26
+--                           ]
+--                     )
+--                 -- time: --0--2-----6-----10-20-25---30--
+--                 -- (1) -------2-----3------1--_--2----1--
+--                 ,  InputEl switch
+--                     (Left [ Fact_NoOcc [] (spanExc Nothing (Just 0))    NoOcc
+--                           , Fact_Occ   [] 0                             NoOcc
+--                           , Fact_NoOcc [] (spanExc (Just 0) (Just 2))   NoOcc
+--                           , Fact_Occ   [] 2                             (Occ 2)
+--                           , Fact_NoOcc [] (spanExc (Just 2) (Just 6))   NoOcc
+--                           , Fact_Occ   [] 6                             (Occ 3)
+--                           , Fact_NoOcc [] (spanExc (Just 6) (Just 10))  NoOcc
+--                           , Fact_Occ   [] 10                            (Occ 1)
+--                           , Fact_NoOcc [] (spanExc (Just 10) (Just 20)) NoOcc
+--                           -- Unknown at t=20
+--                           , Fact_NoOcc [] (spanExc (Just 20) (Just 25)) NoOcc
+--                           , Fact_Occ   [] 25                            (Occ 2)
+--                           , Fact_NoOcc [] (spanExc (Just 25) (Just 30)) NoOcc
+--                           , Fact_Occ   [] 30                            (Occ 1)
+--                           , Fact_NoOcc [] (spanExc (Just 30) Nothing)   NoOcc
+--                           ]
+--                     )
+--                 -- time:   0       2         5         6         7        10       20      25        30
+--                 -- prevV 1 switch:
+--                 --   <-1-> 1 <-1-> 1 <- 2->  2 <- 2->  2 <- 3->  3 <- 3->  3 <-1->  _ <-_-> _ <- 2->  2 <-1-->
+--                 -- out:
+--                 --   <-0-> 1 <-2-> 2 <-10-> 11 <-12-> 12 <-20-> 21 <-22-> 23 <-4->  5 <-_-> _ <-16-> 16 <-6-->
+--                 , InputEl out
+--                     (Right $ do
+--                         switchVal <- fromMaybe 1 <$> prevV switch
+--                         getE $ case switchVal of
+--                                 1 -> a
+--                                 2 -> b
+--                                 3 -> c
+--                                 x -> error $ "Unexpected switch value of: " ++ show x
+--                     )
+--                 ]
+
+--         lookupVKB (-1) out kb @?= Known 0
+--         lookupVKB 0  out kb @?= Known 1
+--         lookupVKB 1  out kb @?= Known 2
+--         lookupVKB 2  out kb @?= Known 2
+--         lookupVKB 3  out kb @?= Known 10
+--         lookupVKB 5  out kb @?= Known 11
+--         lookupVKB 6  out kb @?= Known 12
+--         lookupVKB 7  out kb @?= Known 21
+--         lookupVKB 8  out kb @?= Known 22
+--         lookupVKB 10 out kb @?= Known 23
+--         lookupVKB 15 out kb @?= Known 4
+--         lookupVKB 20 out kb @?= Known 5
+--         lookupVKB 23 out kb @?= Unknown
+--         lookupVKB 25 out kb @?= Unknown
+--         lookupVKB 27 out kb @?= Known 16
+--         lookupVKB 30 out kb @?= Known 16
+--         lookupVKB 35 out kb @?= Known 6
+--     ]
+
+--   , testGroup "TheoryFast"
+--     [ let n = 5 in testCase ("vs Theory on Synthetic " ++ show n) $ do
+--         let (vixs, ts, ins) = syntheticN n
+--             lookupT  = let kb =  T.solution1 ins in \t vix -> T.lookupVKB t vix kb
+--             lookupTF = let kb = TF.solution1 ins in \t vix ->TF.lookupVKB t vix kb
+--         sequence_
+--             [ print (lookupT (-1000) vix) -- lookupTF t vix @?= lookupT t vix
+--             | vix <- vixs
+--             -- , t <- ts
+--             ]
+
+--         True @?= False
+
+--     ]
+  -- ]
+
+showDerivationStack :: Time -> EIx a -> KnowledgeBase -> String
 showDerivationStack t eix kn = case lookupVKBTrace t eix kn of
     Unknown -> "Unknown"
     Known dtrace -> "\n" ++ (unlines $ reverse $ dtrace)
@@ -801,18 +804,18 @@ showDerivationStack t eix kn = case lookupVKBTrace t eix kn of
 
 --     -- Map source event.
 --     , mappedEvent1 = event $ do
---         occ <- getV sourceEvent1
+--         occ <- getE sourceEvent1
 --         return $ ("hello " ++) <$> occ
 
 --     -- Map a mapped event
 --     , mappedEvent1x = event $ do
---         occ <- getV mappedEvent1
+--         occ <- getE mappedEvent1
 --         return $ ("x" ++) <$> occ
 
 --     -- Combine multiple events.
 --     , simultaneousEvent = event $ do
---         occA <- getV sourceEvent1
---         occB <- getV sourceEvent2
+--         occA <- getE sourceEvent1
+--         occB <- getE sourceEvent2
 --         return $ (++) <$> occA <*> occB
 
 --       -- TODO How do we implement step correctly? We should support both:
@@ -823,21 +826,21 @@ showDerivationStack t eix kn = case lookupVKBTrace t eix kn of
 --       --       value should use `step` or `behavior`
 --       --   * Allow this rule to return MaybeChange.
 --     , steppedSE1 = foldB "init" $ do
---         occ <- getV sourceEvent1
+--         occ <- getE sourceEvent1
 --         oldVal <- getB steppedSE1
 --         return (fromMaybe oldVal occ)
 
 --     -- , steppedSE1' = step "init" $ do
---     --     occ <- getV sourceEvent1
+--     --     occ <- getE sourceEvent1
 --     --     return occ
 
 --     , steppedSimultaneousEvent = foldB "init" $ do
---         occ <- getV simultaneousEvent
+--         occ <- getE simultaneousEvent
 --         oldVal <- getB steppedSimultaneousEvent
 --         return (fromMaybe oldVal occ)
 
 --     -- , steppedSimultaneousEvent' = step "init" $ do
---     --     occ <- getV simultaneousEvent
+--     --     occ <- getE simultaneousEvent
 --     --     return occ
 --     }
 
