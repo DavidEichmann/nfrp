@@ -715,12 +715,15 @@ instance Contains TimeSpan Time where
     contains (DS_SpanExc tspan) t = contains tspan t
 
 instance Difference TimeSpan TimeSpan [TimeSpan] where
-    difference (DS_Point a) (DS_Point b)
-        | a == b = []
-        | otherwise = [DS_Point a]
-    difference (DS_Point a) (DS_SpanExc b) = fmap DS_Point . maybeToList $ a `difference` b
-    difference (DS_SpanExc a) (DS_Point b) = DS_SpanExc <$> a `difference` b
-    difference (DS_SpanExc a) (DS_SpanExc b) = concat
+    difference ts (DS_SpanExc b) = difference ts b
+    difference ts (DS_Point t) = difference ts t
+instance Difference [TimeSpan] TimeSpan [TimeSpan] where
+    difference a b = concatMap (`difference` b) a
+instance Difference TimeSpan [TimeSpan] [TimeSpan] where
+    difference a bs = foldl' difference [a] bs
+instance Difference TimeSpan SpanExc [TimeSpan] where
+    difference (DS_Point a) b = fmap DS_Point . maybeToList $ a `difference` b
+    difference (DS_SpanExc a) b = concat
         [ l ++ r
         | let (x, y) = a `difference` b
         , let l = case x of
@@ -730,7 +733,8 @@ instance Difference TimeSpan TimeSpan [TimeSpan] where
                 Nothing -> []
                 Just (t, tspan) -> [DS_SpanExc tspan, DS_Point t]
         ]
-instance Difference [TimeSpan] TimeSpan [TimeSpan] where
-    difference a b = concatMap (`difference` b) a
-instance Difference TimeSpan [TimeSpan] [TimeSpan] where
-    difference a bs = foldl' difference [a] bs
+instance Difference TimeSpan Time [TimeSpan] where
+    difference (DS_Point a) b
+        | a == b = []
+        | otherwise = [DS_Point a]
+    difference (DS_SpanExc a) b = DS_SpanExc <$> a `difference` b

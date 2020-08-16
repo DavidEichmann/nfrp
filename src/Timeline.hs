@@ -1,3 +1,4 @@
+{-# LANGUAGE TupleSections #-}
 {-# OPTIONS_GHC -Wno-partial-type-signatures #-}
 {-# OPTIONS_GHC -fdefer-typed-holes #-}
 {-# OPTIONS_GHC -Wno-unused-top-binds #-}
@@ -258,7 +259,7 @@ lookup' t (Timeline m n) = case M.lookup t n of
 -- | Look for a NoOcc span just after the given time.
 lookupJustBefore' :: Time -> Timeline trace a -> Maybe (trace, SpanExc)
 lookupJustBefore' t tl = case elemsLT t tl of
-    (tr, Left x@ts):_
+    (tr, Left ts):_
         | DS_SpanExc tss <- ts -- lookupJustBefore' can only return a DS_SpanExc fact.
         , spanExcJustAfter tss == Just t
         -> Just (tr, tss)
@@ -267,7 +268,7 @@ lookupJustBefore' t tl = case elemsLT t tl of
 -- | Lookup for a NoOcc span just after the given time.
 lookupJustAfter' :: Time -> Timeline trace a -> Maybe (trace, SpanExc)
 lookupJustAfter' t tl = case elemsGT t tl of
-    (tr, Left x@ts):_
+    (tr, Left ts):_
         | DS_SpanExc tss <- ts -- lookupJustAfter' can only return a DS_SpanExc fact.
         , spanExcJustBefore tss == Just t
         -> Just (tr, tss)
@@ -276,7 +277,7 @@ lookupJustAfter' t tl = case elemsGT t tl of
 -- Lookup the NoOcc fact spanning negative infinity.
 lookupNegInf' :: Timeline trace a -> Maybe (trace, SpanExc)
 lookupNegInf' tl = case elems tl of
-    (tr, Left x@ts):_
+    (tr, Left ts):_
         | DS_SpanExc tss <- ts
         , spanExcJustBefore tss == Nothing
         -> Just (tr, tss)
@@ -284,9 +285,9 @@ lookupNegInf' tl = case elems tl of
 
 -- | Lookup the fact equal to the point time or NoOcc fact spanning the start of
 -- the SpanExc timespan.
-lookupAtStartOf' :: TimeSpan -> Timeline trace a -> Maybe (trace, Either SpanExc (MaybeOcc a))
+lookupAtStartOf' :: TimeSpan -> Timeline trace a -> Maybe (trace, Either SpanExc (Time, MaybeOcc a))
 lookupAtStartOf' tts tl = case tts of
-    DS_Point t -> lookup' t tl
+    DS_Point t -> (fmap . fmap) (t,) <$> lookup' t tl
     DS_SpanExc ts -> fmap Left <$> case spanExcJustBefore ts of
         Nothing -> lookupNegInf' tl
         Just tLo -> lookupJustAfter' tLo tl

@@ -377,13 +377,6 @@ module Theory
               )
 
         PrevV eixB mayPrevToCont -> case ttspan of
-          -- For reference:
-          --   deriveEgo t (PrevV eixB cont)
-          --   = if ∃ t'  .  t' < t
-          --        ∧  isJust (lookupV t' exiB)
-          --        ∧  (∀ t' < t'' < t  .  lookupV t'' exiB == Nothing)
-          --     then deriveEgo t (cont (lookupV t' exiB))
-          --     else Nothing
           DS_Point t -> case lookupPrevV t eixB facts of
             Unknown -> Nothing
             Known prevBMay -> Just $ let

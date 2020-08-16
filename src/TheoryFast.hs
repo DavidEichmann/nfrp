@@ -340,27 +340,6 @@ solution1 inputs = execState iterateUntilChange initialKb
                   })
             go
 
-      -- loop_OLD i = do
-      --     if i == n
-      --       then return ()
-      --       else do
-      --         allDers <- gets kbDerivations
-      --         allFacts <- gets kbFacts
-      --         case allDers !! i of
-      --           SomeDerivation vix der -> do
-      --             -- case pokeDerivation vix allDers allFacts der of
-      --             let (mayNewFactsAndDers, (), deps) = runRWS (pokeDerivation vix der) (allFacts, allDers) ()
-      --             case mayNewFactsAndDers of
-      --               Nothing -> do
-      --                 -- TODO Poke this derivation when `deps` have changed
-      --                 loop (i + 1)
-      --               Just (newFacts, newDers) -> do
-      --                 modify (\_ -> KnowledgeBase
-      --                   { kbFacts = (singletonFacts vix newFacts) <> allFacts
-      --                   , kbDerivations = (SomeDerivation vix <$> newDers) <> take i allDers <> drop (i+1) allDers
-      --                   , kbDirty = True
-      --                   })
-
   -- This is the important part. Is corresponds to the `deriveE` denotation.
   pokeDerivation
     :: forall a
@@ -393,22 +372,28 @@ solution1 inputs = execState iterateUntilChange initialKb
                     "Jurisdiction is a point (t=" ++ show t ++ "), ValueM is `Pure a`."
                   in Just (T.singletonOcc dtrace' t a, [])
 
-{-
-        GetE vixb cont -> do
+        GetE eixb cont -> do
           factsBAndUnknownsMay <- if null prevDeps
-                then Just <$> spanLookupVFacts ttspan vixb
+                then Just <$> spanLookupVFacts ttspan eixb
 
                 -- chronological version of the above with PrevV deps.
                 -- TODO this and the above "then" and also the PrevV cases
                 -- have very similar code (split on other facts). Try to DRY
                 -- it.
                 else do
-                  valMay <- lookupAtStartOf' ttspan vixb
+                  valMay <- lookupAtStartOf' ttspan eixb
                   pure $ case valMay of
                     Nothing -> Nothing
-                    Just (ttspanB, b) -> Just
-                      ( T.singleton (fromJust $ ttspanB `intersect` ttspan) b
+                    Just (tr, Left ttspanB) -> Just
+                      ( T.singletonNoOcc tr (fromJust $ ttspanB `intersect` ttspan)
                       , ttspan `difference` ttspanB
+                      )
+                    -- ttspan is a point
+                    Just (tr, Right (t, occMay)) -> Just
+                      ( case occMay of
+                          NoOcc -> T.singletonNoOcc tr ttspan
+                          Occ a -> T.singletonOcc tr t a
+                      , ttspan `difference` t
                       )
 
           pure $ case factsBAndUnknownsMay of
@@ -418,48 +403,44 @@ solution1 inputs = execState iterateUntilChange initialKb
               | otherwise -> Just $ (
                 -- For knowns, split and try to progress the derivation.
                 mconcat
-                  [ case ttspanB of
-                    DS_SpanExc subTspan -> let
-                      newCont = cont valB
-                      newDer  = Derivation dtrace (DS_SpanExc subTspan) prevDeps newCont
+                  [ case fact of
+                    -- NoOcc
+                    Left factTspan -> let
+                      newCont = cont NoOcc
+                      newDer  = Derivation dtrace factTspan prevDeps newCont seenOcc
                                   `withDerTrace`
-                                  ("Split on GetE dep (" ++ show vixb ++ ") Fact_SpanExc")
+                                  ("Split on GetE dep (" ++ show eixb ++ ") Fact_SpanExc")
                       in (T.empty, [newDer])
-                    DS_Point t -> let
-                        newCont = cont valB
-                        newDer  = Derivation dtrace (DS_Point t) prevDeps newCont
-                                  `withDerTrace`
-                                  ("Split on GetE dep (" ++ show vixb ++ ") Fact_Point")
-                        in (T.empty, [newDer])
-                  | (ttspanB, (_, valB)) <- T.elems factsB
+
+                    -- Occ
+                    Right (factT, b) -> let
+                      newCont = cont (Occ b)
+                      newDer  = Derivation dtrace (DS_Point factT) prevDeps newCont True
+                                `withDerTrace`
+                                ("Split on GetE dep (" ++ show eixb ++ ") Fact_Point")
+                      in (T.empty, [newDer])
+                  | (_, fact) <- T.elems factsB
                   ]
                 <>
                 -- For unknowns, simply split the derivation into the
                 -- unknown subspans.
                 ( T.empty
-                , [ Derivation dtrace subTspan prevDeps contDerivation
+                , [ Derivation dtrace subTspan prevDeps contDerivation seenOcc
                     `withDerTrace`
-                    ("Split on GetE dep (" ++ show vixb ++ ") unknown point or span.")
+                    ("Split on GetE dep (" ++ show eixb ++ ") unknown point or span.")
                   | subTspan <- unknowns
                   ]
                 )
               )
 
-        PrevV eixB predicate mayPrevToCont -> case ttspan of
-          -- For reference:
-          --   deriveEgo t (PrevV eixB cont)
-          --   = if ∃ t'  .  t' < t
-          --        ∧  isJust (lookupV t' exiB)
-          --        ∧  (∀ t' < t'' < t  .  lookupV t'' exiB == Nothing)
-          --     then deriveEgo t (cont (lookupV t' exiB))
-          --     else Nothing
+        PrevV eixB mayPrevToCont -> case ttspan of
           DS_Point t -> do
-            mayPrevVB <- lookupPrevV t eixB predicate
+            mayPrevVB <- lookupPrevV t eixB
             pure $ case mayPrevVB of
               Unknown -> Nothing
               Known prevBMay -> Just $ let
                 newCont = mayPrevToCont prevBMay
-                newDer  = Derivation dtrace ttspan (SomeEIx eixB : prevDeps) newCont
+                newDer  = Derivation dtrace ttspan (SomeEIx eixB : prevDeps) newCont seenOcc
                       `withDerTrace`
                       ("Use known PrevV value of dep (" ++ show eixB ++ ")")
                 in (T.empty, [newDer])
@@ -468,7 +449,7 @@ solution1 inputs = execState iterateUntilChange initialKb
           -- !! The Plan
           -- !! Try and split on facts about eixB.
           DS_SpanExc tspan -> do
-            prevVSpans <- spanLookupPrevV ttspan eixB predicate
+            prevVSpans <- spanLookupPrevV ttspan eixB
             let -- | Nothing means tried chronological order, but found no fact.
                 factsAndUnknownsMay = if null prevDeps
                   then Just prevVSpans
@@ -492,7 +473,7 @@ solution1 inputs = execState iterateUntilChange initialKb
                   let tspanLo = spanExcJustBefore tspan
                   prevValMayIfKnown <- case tspanLo of
                         Nothing -> pure (Known Nothing) -- Known: there is no previous value.
-                        Just tLo -> lookupCurrV tLo eixB predicate
+                        Just tLo -> lookupCurrV tLo eixB
                   return $ case prevValMayIfKnown of
                     Unknown -> Nothing
                     Known prevValMay -> Just
@@ -502,6 +483,7 @@ solution1 inputs = execState iterateUntilChange initialKb
                             ttspan
                             (SomeEIx eixB : prevDeps)
                             (mayPrevToCont prevValMay)
+                            seenOcc
                           `withDerTrace`
                             ("Deadlock detected via " ++ show eixB ++ " (at t=" ++ show tspanLo ++ "). Store "
                             ++ show eixB ++ " as a PrevV dep and solve chronologically")
@@ -538,7 +520,7 @@ solution1 inputs = execState iterateUntilChange initialKb
                 mconcat
                   [ let
                     newCont = mayPrevToCont prevVMay
-                    newDer  = Derivation dtrace ttspan' prevDeps newCont
+                    newDer  = Derivation dtrace ttspan' prevDeps newCont seenOcc
                         `withDerTrace`
                           ("Split on known facts")
                     in (T.empty, [newDer])
@@ -548,14 +530,13 @@ solution1 inputs = execState iterateUntilChange initialKb
                 -- For unknowns, simply split the derivation into the
                 -- unknown subspans.
                 ( T.empty
-                , [ Derivation dtrace subTspan prevDeps contDerivation
+                , [ Derivation dtrace subTspan prevDeps contDerivation seenOcc
                         `withDerTrace`
                           ("Split on unknown span or point")
                   | subTspan <- unknownSpans
                   ]
                 )
                 )
--}
         where
         -- This is called when a derivation is complete (Pure NoOcc) and
         -- there are some PrevV dependencies.
@@ -1008,10 +989,10 @@ lookupJustBefore' t vix = do
   tellDep (Dep_JustBefore t vix)
   T.lookupJustBefore' t . valueFacts vix <$> untrackedAskFacts
 
-lookupAtStartOf' :: TimeSpan -> EIx a -> DerivationM (Maybe (DerivationTrace a, Either SpanExc (MaybeOcc a)))
+lookupAtStartOf' :: TimeSpan -> EIx a -> DerivationM (Maybe (DerivationTrace a, Either SpanExc (Time, MaybeOcc a)))
 lookupAtStartOf' tts = case tts of
-  DS_Point t -> lookupM' t
-  DS_SpanExc ts -> fmap (fmap (fmap Left)) <$> case spanExcJustBefore ts of
+  DS_Point t -> (fmap . fmap . fmap . fmap) (t,) <$> lookupM' t
+  DS_SpanExc ts -> (fmap . fmap . fmap) Left <$> case spanExcJustBefore ts of
     Nothing -> lookupNegInf'
     Just t -> lookupJustAfter' t
 
