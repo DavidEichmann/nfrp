@@ -81,23 +81,6 @@ import Theory
 -- import Control.Monad (when)
 import Data.List (foldl')
 
-
-
-
-{-
-
-
-Changing the dirty flag in KnowledgeBase from Bool to something similar
-to a TimeLine, where we mark the parts of the timeline that are dirty (i.e.
-we've learned new facts about). Then we need to store Derivations in a Timeline
-like structure too so that we can directly identify the derivations that need to
-be continued (based on what is dirty) instead of trying to continue all
-derivations in each iteration.
-
-
--}
-
-
 -- | Facts about a single value.
 type ValueTimeline a = Timeline (DerivationTrace a) a
 
@@ -287,7 +270,6 @@ dbdAffectedDers
   -- ^ New facts.
   -> [SomeDerivationID]
 dbdAffectedDers = error "TODO dbdAffectedDers"
-{-
 
 -- Now a natural fist attempt at a solution is obvious: start with an initial
 -- knowledge base and continue evaluating derivations until all terminate or
@@ -397,20 +379,21 @@ solution1 inputs = execState iterateUntilChange initialKb
     -> DerivationM (Maybe (ValueTimeline a, [Derivation a]))
     -- ^ Nothing if no progress. Else Just the new facts and new derivations.
   pokeDerivation eix derivation = case derivation of
-      Derivation dtrace ttspan prevDeps contDerivation -> case contDerivation of
+      Derivation dtrace ttspan prevDeps contDerivation seenOcc -> case contDerivation of
         Pure NoOcc -> if null prevDeps
           then let
                 dtrace' = appendDerTrace dtrace $
                   "Pure NoOcc (t=" ++ show ttspan ++ ")."
-                in Just ([T.singletonNoOcc dtrace' ttspan], [])
+                in return $ Just (T.singletonNoOcc dtrace' ttspan, [])
           else stepCompleteNoOccWithPrevDeps
-        Pure (Occ a) -> case ttspan of
-          DS_SpanExc _ -> error "seenOcc=True when jurisdiction is not a point"
+        Pure (Occ a) -> return $ case ttspan of
+          DS_SpanExc _ -> error "Pure (Occ _) when jurisdiction is not a point"
           DS_Point t -> let
                   dtrace' = appendDerTrace dtrace $
                     "Jurisdiction is a point (t=" ++ show t ++ "), ValueM is `Pure a`."
-                  in Just ([T.singletonOcc dtrace' t a], [])
+                  in Just (T.singletonOcc dtrace' t a, [])
 
+{-
         GetE vixb cont -> do
           factsBAndUnknownsMay <- if null prevDeps
                 then Just <$> spanLookupVFacts ttspan vixb
@@ -572,23 +555,21 @@ solution1 inputs = execState iterateUntilChange initialKb
                   ]
                 )
                 )
-
+-}
         where
-        -- This is called when a derivation is complete (Pure _ or NoOcc) and
+        -- This is called when a derivation is complete (Pure NoOcc) and
         -- there are some PrevV dependencies.
-        stepCompleteWithPrevDeps
-          :: a
-            -- ^ The derived value (The derivation must have ended with some `Pure a`).
-          -> DerivationM (Maybe (ValueTimeline a, [Derivation a]))
-            -- ^ Taking into account the PrevV deps, if progress can be made,
-            -- return the new Facts(s) and any new Derivation(s).
-        stepCompleteWithPrevDeps val = case ttspan of
+        stepCompleteNoOccWithPrevDeps
+          :: DerivationM (Maybe (ValueTimeline a, [Derivation a]))
+          -- ^ Taking into account the PrevV deps, if progress can be made,
+          -- return the new Fact(s) and any new Derivation(s)
+        stepCompleteNoOccWithPrevDeps = case ttspan of
 
-          -- If the ttspan is a point time, then this is easy! Pure x means x.
-          DS_Point t -> let
+          -- If the ttspan is a point time, then this is easy! Pure NoOcc means NoOcc.
+          DS_Point _ -> let
               dtrace' = appendDerTrace dtrace $
-                "ValueM is (Pure _). As jurisdiction is a point, we can ignore PrevV deps."
-              in return $ Just (T.singleton (DS_Point t) (dtrace', val), [])
+                "ValueM is (Pure NoOcc). As jurisdiction is a point, we can ignore PrevV deps."
+              in return $ Just (T.singletonNoOcc dtrace' ttspan, [])
 
           -- If the ttspan is a span, things get more tricky. At this point we
           -- need to find a "clearance time". This is some time span at the
@@ -612,13 +593,13 @@ solution1 inputs = execState iterateUntilChange initialKb
                 dtraceF = appendDerTrace dtrace $
                   msgCt ++ " This means no value changes are occuring up to at least that time."
                 in Just
-                  ( T.singleton (DS_SpanExc (spanExc tLoMay ct)) (dtraceF, val)
+                  ( T.singletonNoOcc dtraceF (DS_SpanExc (spanExc tLoMay ct))
                   -- If ct is not Inf (i.e. Nothing) and is within the current
                   -- jurisdiction (i.e. tspan), then we need to cover the
                   -- clearance time at and after ct.
                   , case ct of
                       Just ctPoint | tspan `contains` ctPoint
-                        -> [ Derivation dtrace (DS_Point ctPoint) prevDeps contDerivation
+                        -> [ Derivation dtrace (DS_Point ctPoint) prevDeps contDerivation seenOcc
                               `withDerTrace`
                                 (msgCt ++ " Solve at the clearance time.")
                             ]
@@ -699,12 +680,11 @@ solution1 inputs = execState iterateUntilChange initialKb
             where
             findClearanceAfter :: Maybe Time -> DerivationM (Maybe (Maybe Time))
             findClearanceAfter tMay = do
-              mayFactSpan <- fmap fst <$> case tMay of
+              mayFactSpan <- fmap snd <$> case tMay of
                 Nothing -> lookupNegInf' ix
                 Just t  -> lookupJustAfter' t ix
               return $ case mayFactSpan of
-                Just (DS_SpanExc clearanceSpan) -> Just (spanExcJustAfter clearanceSpan)
-                Just (DS_Point _) -> error "Implossible!"
+                Just clearanceSpan -> Just (spanExcJustAfter clearanceSpan)
                 Nothing -> Nothing
 
           -- | Get the neighbors (PrevV deps) and local clearance time of a
@@ -722,6 +702,7 @@ solution1 inputs = execState iterateUntilChange initialKb
                         (DS_SpanExc tspan) -- Must be of this form due to `dbdLookupSpanDerJustAfter`
                         neighbors
                         (Pure _)
+                        _
                    )
                    -> Just (neighbors, spanExcJustAfter tspan)
               _ -> Nothing
@@ -741,6 +722,7 @@ solution1 inputs = execState iterateUntilChange initialKb
             -- no PrevV events by denotation of DeriveAfterFirstChange
             []
             cont
+            False -- We're in a span jurisdiction and haven't witnessed an event.
               `withDerTrace`
               ("Found first occ at t=" ++ show firstChangeTime)
           in Just (T.empty, [newDer])
@@ -755,14 +737,14 @@ solution1 inputs = execState iterateUntilChange initialKb
                   ("First occ is at or before " ++ show clearanceTime
                   ++ ". Continue looking for first event before that time.")
 
-            , Derivation dtrace (DS_Point clearanceTime) [] cont
+            , Derivation dtrace (DS_Point clearanceTime) [] cont False
                   `withDerTrace`
                   ("First occ is at or before " ++ show clearanceTime
                   ++ ". Solve at that time.")
             -- See NOTE [DeriveAfterFirstChange and PrevV deps]
 
             , let Just tspanAfter = tspan `intersect` RightSpaceExc clearanceTime
-                in Derivation dtrace (DS_SpanExc tspanAfter) [] cont
+                in Derivation dtrace (DS_SpanExc tspanAfter) [] cont False
                   `withDerTrace`
                   ("First occ is at or before " ++ show clearanceTime
                   ++ ". Solve after that time.")
@@ -777,7 +759,6 @@ solution1 inputs = execState iterateUntilChange initialKb
         -- We don't know any more info about the first occurrence so we
         -- cant make any more progress.
         Other -> Nothing
--}
 
 -- | Result of searching for the first change of a specific value and time
 -- span.
@@ -913,7 +894,7 @@ prevVFacts timeSpan vix = do
             _ -> undefined
 
       -- Point knowledge is handled by the above case
-      Left (DS_Point t) -> pure []
+      Left (DS_Point _) -> pure []
       Right _ -> pure []
 
     | (_, fact) <- T.elems factsTl

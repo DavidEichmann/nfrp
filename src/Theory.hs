@@ -313,7 +313,7 @@ module Theory
                 in Just ([Fact_NoOcc dtrace' ttspan], [])
           else stepCompleteNoOccWithPrevDeps
         Pure (Occ a) -> case ttspan of
-          DS_SpanExc _ -> error "seenOcc=True when jurisdiction is not a point"
+          DS_SpanExc _ -> error "Pure (Occ _) when jurisdiction is not a point"
           DS_Point t -> let
                   dtrace' = appendDerTrace dtrace $
                     "Jurisdiction is a point (t=" ++ show t ++ "), ValueM is `Pure a`."
@@ -495,7 +495,7 @@ module Theory
             -- return the new Fact(s) and any new Derivation(s)
         stepCompleteNoOccWithPrevDeps = case ttspan of
 
-          -- If the ttspan is a point time, then this is easy! Pure x means x.
+          -- If the ttspan is a point time, then this is easy! Pure NoOcc means NoOcc.
           DS_Point _ -> let
               dtrace' = appendDerTrace dtrace $
                 "ValueM is (Pure NoOcc). As jurisdiction is a point, we can ignore PrevV deps."
@@ -639,7 +639,7 @@ module Theory
             -- events by denotation of DeriveAfterFirstChange
             []
             cont
-            False
+            False -- We're in a span jurisdiction and haven't witnessed an event.
               `withDerTrace`
               ("Found first occ at t=" ++ show firstChangeTime)
           in Just ([], [newDer])
@@ -708,7 +708,7 @@ module Theory
     -> FirstValueChange
   searchForFirstChange tspan eix allFacts = let
     (facts, unknownDSpans) = spanLookupVFacts (DS_SpanExc tspan) eix allFacts
-    firstKnownTChangeMay     = minimumMay [ t | Fact_Occ _ t _  <- facts]
+    firstKnownTChangeMay = minimumMay [ t | Fact_Occ _ t _  <- facts]
 
     in case firstKnownTChangeMay of
       Nothing -> if null unknownDSpans
