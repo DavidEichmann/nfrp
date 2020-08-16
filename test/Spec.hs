@@ -89,6 +89,144 @@ tests = testGroup "NFRP"
         lookupVKB 6 eix3 kb @?= Known NoOcc
         lookupVKB 7 eix3 kb @?= Known (Occ 24)
         lookupVKB 8 eix3 kb @?= Known NoOcc
+
+      , testCase "Switching" $ do
+          let
+            a, b, c :: EIx Int
+            a      = EIx 1
+            b      = EIx 2
+            c      = EIx 3
+
+            switch :: EIx Int
+            switch = EIx 4
+
+            out :: EIx Int
+            out    = EIx 5
+
+            kb :: KnowledgeBase
+            kb = solution1
+                  -- time: --0--2--4--6--8--10-12-14-16---
+                  -----------11-12-13-14-15-16-17-18-19---
+                  [ InputEl a
+                      (Left [ Fact_NoOcc [] (DS_SpanExc $ spanExc Nothing (Just 0))
+                            , Fact_Occ [] 0 11
+                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 0) (Just 2))
+                            , Fact_Occ [] 2 12
+                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 0) (Just 4))
+                            , Fact_Occ [] 4 13
+                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 4) (Just 6))
+                            , Fact_Occ [] 6 14
+                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 6) (Just 8))
+                            , Fact_Occ [] 8 15
+                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 8) (Just 10))
+                            , Fact_Occ [] 10 16
+                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 10) (Just 12))
+                            , Fact_Occ [] 12 17
+                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 12) (Just 14))
+                            , Fact_Occ [] 14 18
+                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 14) (Just 16))
+                            , Fact_Occ [] 16 19
+                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 16) Nothing)
+                            ]
+                      )
+                  -- time: --0--2--4--6--8--10-12-14-16---
+                  -----------21-22-23-24-25-26-27-28-29---
+                  ,  InputEl b
+                      (Left [ Fact_NoOcc [] (DS_SpanExc $ spanExc Nothing (Just 0))
+                            , Fact_Occ [] 0 21
+                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 0) (Just 2))
+                            , Fact_Occ [] 2 22
+                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 0) (Just 4))
+                            , Fact_Occ [] 4 23
+                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 4) (Just 6))
+                            , Fact_Occ [] 6 24
+                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 6) (Just 8))
+                            , Fact_Occ [] 8 25
+                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 8) (Just 10))
+                            , Fact_Occ [] 10 26
+                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 10) (Just 12))
+                            , Fact_Occ [] 12 27
+                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 12) (Just 14))
+                            , Fact_Occ [] 14 28
+                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 14) (Just 16))
+                            , Fact_Occ [] 16 29
+                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 16) Nothing)
+                            ]
+                      )
+                  -- time: --0--2--4--6--8--10-12-14-16---
+                  -----------31-32-33-34-35-36-37-38-39---
+                  ,  InputEl c
+                      (Left [ Fact_NoOcc [] (DS_SpanExc $ spanExc Nothing (Just 0))
+                            , Fact_Occ [] 0 31
+                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 0) (Just 2))
+                            , Fact_Occ [] 2 32
+                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 0) (Just 4))
+                            , Fact_Occ [] 4 33
+                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 4) (Just 6))
+                            , Fact_Occ [] 6 34
+                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 6) (Just 8))
+                            , Fact_Occ [] 8 35
+                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 8) (Just 10))
+                            , Fact_Occ [] 10 36
+                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 10) (Just 12))
+                            , Fact_Occ [] 12 37
+                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 12) (Just 14))
+                            , Fact_Occ [] 14 38
+                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 14) (Just 16))
+                            , Fact_Occ [] 16 39
+                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 16) Nothing)
+                            ]
+                      )
+                  -- time: --0--2--4--6--8--10-12-14-16---
+                  -- (1) -------2-----3------1--_--2------
+                  ,  InputEl switch
+                      (Left [ Fact_NoOcc [] (DS_SpanExc $ spanExc Nothing (Just 0))
+                            , Fact_NoOcc [] (DS_Point 0)
+                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 0) (Just 2))
+                            , Fact_Occ [] 2 2
+                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 2) (Just 6))
+                            , Fact_Occ [] 6 3
+                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 6) (Just 10))
+                            , Fact_Occ [] 10 1
+                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 10) (Just 12))
+                            -- Unknown at t=12
+                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 12) (Just 14))
+                            , Fact_Occ [] 14 2
+                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 14) Nothing)
+                            ]
+                      )
+                  -- time: --0--2--4--6--8--10-12---14-16---
+                  -----------11-12-23-24-35-36-17_____------
+                  , InputEl out
+                      (Right $ do
+                          switchVal <- fromMaybe 1 <$> prevV switch
+                          requireE $ case switchVal of
+                                  1 -> a
+                                  2 -> b
+                                  3 -> c
+                                  x -> error $ "Unexpected switch value of: " ++ show x
+                      )
+                  ]
+
+          lookupVKB (-1) out kb @?= Known NoOcc
+          lookupVKB 0  out kb @?= Known (Occ 11)
+          lookupVKB 1  out kb @?= Known NoOcc
+          lookupVKB 2  out kb @?= Known (Occ 12)
+          lookupVKB 3  out kb @?= Known NoOcc
+          lookupVKB 4  out kb @?= Known (Occ 23)
+          lookupVKB 5  out kb @?= Known NoOcc
+          lookupVKB 6  out kb @?= Known (Occ 24)
+          lookupVKB 7  out kb @?= Known NoOcc
+          lookupVKB 8  out kb @?= Known (Occ 35)
+          lookupVKB 9  out kb @?= Known NoOcc
+          lookupVKB 10 out kb @?= Known (Occ 36)
+          lookupVKB 11 out kb @?= Known NoOcc
+          lookupVKB 12 out kb @?= Known (Occ 17)
+          lookupVKB 13 out kb @?= Unknown
+          lookupVKB 14 out kb @?= Unknown
+          lookupVKB 15 out kb @?= Known NoOcc
+          lookupVKB 16 out kb @?= Known (Occ 29)
+          lookupVKB 17 out kb @?= Known NoOcc
       ]
   ]
 
@@ -403,146 +541,6 @@ tests = testGroup "NFRP"
 --         lookupVKB 9  b kb @?= Unknown
 --         lookupVKB 10 a kb @?= Unknown
 --         lookupVKB 10 b kb @?= Unknown
-
-
---     , testCase "Switching" $ do
---         let
---           a, b, c :: EIx (MaybeOcc Int)
---           a      = EIx 1
---           b      = EIx 2
---           c      = EIx 3
-
---           switch :: EIx (MaybeOcc Int)
---           switch = EIx 4
-
---           out :: EIx (MaybeOcc Int)
---           out    = EIx 5
-
---           kb :: KnowledgeBase
---           kb = solution1
---                 -- time: --0--2--4--6--8--10-12-14-16---
---                 -----------11-12-13-14-15-16-17-18-19---
---                 [ InputEl a
---                     (Left [ Fact_NoOcc [] (spanExc Nothing (Just 0)) NoOcc
---                           , Fact_Occ [] 0 (Occ 11)
---                           , Fact_NoOcc [] (spanExc (Just 0) (Just 2)) NoOcc
---                           , Fact_Occ [] 2 (Occ 12)
---                           , Fact_NoOcc [] (spanExc (Just 0) (Just 4)) NoOcc
---                           , Fact_Occ [] 4 (Occ 13)
---                           , Fact_NoOcc [] (spanExc (Just 4) (Just 6)) NoOcc
---                           , Fact_Occ [] 6 (Occ 14)
---                           , Fact_NoOcc [] (spanExc (Just 6) (Just 8)) NoOcc
---                           , Fact_Occ [] 8 (Occ 15)
---                           , Fact_NoOcc [] (spanExc (Just 8) (Just 10)) NoOcc
---                           , Fact_Occ [] 10 (Occ 16)
---                           , Fact_NoOcc [] (spanExc (Just 10) (Just 12)) NoOcc
---                           , Fact_Occ [] 12 (Occ 17)
---                           , Fact_NoOcc [] (spanExc (Just 12) (Just 14)) NoOcc
---                           , Fact_Occ [] 14 (Occ 18)
---                           , Fact_NoOcc [] (spanExc (Just 14) (Just 16)) NoOcc
---                           , Fact_Occ [] 16 (Occ 19)
---                           , Fact_NoOcc [] (spanExc (Just 16) Nothing) NoOcc
---                           ]
---                     )
---                 -- time: --0--2--4--6--8--10-12-14-16---
---                 -----------21-22-23-24-25-26-27-28-29---
---                 ,  InputEl b
---                     (Left [ Fact_NoOcc [] (spanExc Nothing (Just 0)) NoOcc
---                           , Fact_Occ [] 0 (Occ 21)
---                           , Fact_NoOcc [] (spanExc (Just 0) (Just 2)) NoOcc
---                           , Fact_Occ [] 2 (Occ 22)
---                           , Fact_NoOcc [] (spanExc (Just 0) (Just 4)) NoOcc
---                           , Fact_Occ [] 4 (Occ 23)
---                           , Fact_NoOcc [] (spanExc (Just 4) (Just 6)) NoOcc
---                           , Fact_Occ [] 6 (Occ 24)
---                           , Fact_NoOcc [] (spanExc (Just 6) (Just 8)) NoOcc
---                           , Fact_Occ [] 8 (Occ 25)
---                           , Fact_NoOcc [] (spanExc (Just 8) (Just 10)) NoOcc
---                           , Fact_Occ [] 10 (Occ 26)
---                           , Fact_NoOcc [] (spanExc (Just 10) (Just 12)) NoOcc
---                           , Fact_Occ [] 12 (Occ 27)
---                           , Fact_NoOcc [] (spanExc (Just 12) (Just 14)) NoOcc
---                           , Fact_Occ [] 14 (Occ 28)
---                           , Fact_NoOcc [] (spanExc (Just 14) (Just 16)) NoOcc
---                           , Fact_Occ [] 16 (Occ 29)
---                           , Fact_NoOcc [] (spanExc (Just 16) Nothing) NoOcc
---                           ]
---                     )
---                 -- time: --0--2--4--6--8--10-12-14-16---
---                 -----------31-32-33-34-35-36-37-38-39---
---                 ,  InputEl c
---                     (Left [ Fact_NoOcc [] (spanExc Nothing (Just 0)) NoOcc
---                           , Fact_Occ [] 0 (Occ 31)
---                           , Fact_NoOcc [] (spanExc (Just 0) (Just 2)) NoOcc
---                           , Fact_Occ [] 2 (Occ 32)
---                           , Fact_NoOcc [] (spanExc (Just 0) (Just 4)) NoOcc
---                           , Fact_Occ [] 4 (Occ 33)
---                           , Fact_NoOcc [] (spanExc (Just 4) (Just 6)) NoOcc
---                           , Fact_Occ [] 6 (Occ 34)
---                           , Fact_NoOcc [] (spanExc (Just 6) (Just 8)) NoOcc
---                           , Fact_Occ [] 8 (Occ 35)
---                           , Fact_NoOcc [] (spanExc (Just 8) (Just 10)) NoOcc
---                           , Fact_Occ [] 10 (Occ 36)
---                           , Fact_NoOcc [] (spanExc (Just 10) (Just 12)) NoOcc
---                           , Fact_Occ [] 12 (Occ 37)
---                           , Fact_NoOcc [] (spanExc (Just 12) (Just 14)) NoOcc
---                           , Fact_Occ [] 14 (Occ 38)
---                           , Fact_NoOcc [] (spanExc (Just 14) (Just 16)) NoOcc
---                           , Fact_Occ [] 16 (Occ 39)
---                           , Fact_NoOcc [] (spanExc (Just 16) Nothing) NoOcc
---                           ]
---                     )
---                 -- time: --0--2--4--6--8--10-12-14-16---
---                 -- (1) -------2-----3------1--_--2------
---                 ,  InputEl switch
---                     (Left [ Fact_NoOcc [] (spanExc Nothing (Just 0)) NoOcc
---                           , Fact_Occ [] 0 NoOcc
---                           , Fact_NoOcc [] (spanExc (Just 0) (Just 2)) NoOcc
---                           , Fact_Occ [] 2 (Occ 2)
---                           , Fact_NoOcc [] (spanExc (Just 2) (Just 6)) NoOcc
---                           , Fact_Occ [] 6 (Occ 3)
---                           , Fact_NoOcc [] (spanExc (Just 6) (Just 10)) NoOcc
---                           , Fact_Occ [] 10 (Occ 1)
---                           , Fact_NoOcc [] (spanExc (Just 10) (Just 12)) NoOcc
---                           -- Unknown at t=12
---                           , Fact_NoOcc [] (spanExc (Just 12) (Just 14)) NoOcc
---                           , Fact_Occ [] 14 (Occ 2)
---                           , Fact_NoOcc [] (spanExc (Just 14) Nothing) NoOcc
---                           ]
---                     )
---                 -- time: --0--2--4--6--8--10-12---14-16---
---                 -----------11-12-23-24-35-36-17_____------
---                 , InputEl out
---                     (Right $ do
---                         switchVal <- prevV 1 switch
---                         getE $ case switchVal of
---                                 1 -> a
---                                 2 -> b
---                                 3 -> c
---                                 x -> error $ "Unexpected switch value of: " ++ show x
---                     )
---                 ]
-
---         lookupVKB (-1) out kb @?= Known NoOcc
---         lookupVKB 0  out kb @?= Known (Occ 11)
---         lookupVKB 1  out kb @?= Known NoOcc
---         lookupVKB 2  out kb @?= Known (Occ 12)
---         lookupVKB 3  out kb @?= Known NoOcc
---         lookupVKB 4  out kb @?= Known (Occ 23)
---         lookupVKB 5  out kb @?= Known NoOcc
---         lookupVKB 6  out kb @?= Known (Occ 24)
---         lookupVKB 7  out kb @?= Known NoOcc
---         lookupVKB 8  out kb @?= Known (Occ 35)
---         lookupVKB 9  out kb @?= Known NoOcc
---         lookupVKB 10 out kb @?= Known (Occ 36)
---         lookupVKB 11 out kb @?= Known NoOcc
---         lookupVKB 12 out kb @?= Known (Occ 17)
---         lookupVKB 13 out kb @?= Unknown
---         lookupVKB 14 out kb @?= Unknown
---         lookupVKB 15 out kb @?= Known NoOcc
---         lookupVKB 16 out kb @?= Known (Occ 29)
---         lookupVKB 17 out kb @?= Known NoOcc
---     ]
 
 --   , testGroup "Model - Behavior"
 --     [ testCase "Switching" $ do
