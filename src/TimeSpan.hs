@@ -143,6 +143,7 @@ data SpanBound
     = Open
     | ClosedInc Time
     | ClosedExc Time
+    deriving (Eq, Ord)
 
 mkSpan :: SpanBound -> SpanBound -> Maybe Span
 mkSpan l h = case (l, h) of

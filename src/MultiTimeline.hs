@@ -25,14 +25,10 @@
 -- | Timeline of facts for a value.
 module MultiTimeline where
 
+import qualified Data.List as L
 import Prelude hiding (lookup, null)
--- import Data.Map.Strict (Map)
--- import qualified Data.Map.Strict as M
--- import Data.Maybe (maybeToList)
 
 -- import Time
-import Timeline (Timeline)
-import qualified Timeline as T
 import Time
 import TimeSpan
 
@@ -41,6 +37,49 @@ import TimeSpan
 -- cannot avoid overlap. This will give poor performance, linear in the maximum
 -- amount of overlap, but we hope to deal with relativelly small amounts of
 -- overlap. Invariant: all Timelines are non-empty.
+data MultiTimeline a = MultiTimeline [(Span, a)] -- TODO make this efficient
+
+empty :: MultiTimeline a
+empty = MultiTimeline []
+
+null :: MultiTimeline a -> Bool
+null (MultiTimeline []) = True
+null (MultiTimeline _) = False
+
+singleton :: Span -> a -> MultiTimeline a
+singleton s a = MultiTimeline [(s, a)]
+
+singletonT :: Time -> a -> MultiTimeline a
+singletonT t a = singleton (timeToSpan t) a
+
+singletonTSpan :: TimeSpan -> a -> MultiTimeline a
+singletonTSpan ts a = singleton (timeSpanToSpan ts) a
+
+deleteVal :: Eq a => a -> MultiTimeline a -> MultiTimeline a
+deleteVal a (MultiTimeline els) = MultiTimeline (L.deleteBy (\x y -> snd x == snd y) (undefined,a) els)
+
+-- | Things that intersect the span in arbitrary order. TODO This could work
+-- efficiently by traversing elements from both ends of the span travering from
+-- both ends of
+select :: Span -> MultiTimeline a -> MultiTimeline a
+select s (MultiTimeline els) = MultiTimeline (filter (intersects s . fst) els)
+
+elems :: forall a . MultiTimeline a -> [a]
+elems (MultiTimeline els) = snd <$> els
+
+-- fromList :: [(TimeSpan, a)] -> MultiTimeline a
+-- fromList = foldl' (\tl (timeSpan, value) -> insert timeSpan value tl) empty
+
+-- insert :: TimeSpan -> a -> MultiTimeline a -> MultiTimeline a
+-- insert tts a (MultiTimeline tls) = MultiTimeline (go tls)
+--     where
+--     go [] = [T.singleton tts a]
+--     go (t:ts) = case T.tryInsert tts a t of
+--         Nothing -> t : go ts
+--         Just t' -> t' : ts
+
+
+{-
 newtype MultiTimeline a = MultiTimeline [Timeline () a]
 
 empty :: MultiTimeline a
@@ -82,6 +121,7 @@ elems (MultiTimeline mt) = reduce es
 --         Nothing -> t : go ts
 --         Just t' -> t' : ts
 
+-}
 
 todo :: a
 todo = error "TODO MultiTimeline"

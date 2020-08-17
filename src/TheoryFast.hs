@@ -32,7 +32,7 @@ import qualified Data.Map as M
 import           Data.Map (Map)
 import qualified Data.IntMap as IM
 import           Data.IntMap (IntMap)
-import Data.Maybe (fromJust)
+import Data.Maybe (fromMaybe, fromJust)
 import Data.Set (Set)
 import qualified Data.Set as S
 import Data.Coerce (coerce)
@@ -154,6 +154,7 @@ type KnowledgeBaseM a = State KnowledgeBase a
 data DerivationsByDeps = DerivationsByDeps
   { dbdNextID :: Int
   , dbdDerivation :: IntMap (DbdDerivation_Value Any) -- Map (DerivationID a) (EIx a, Derivation a)
+  , dbdDerivationDeps :: Map SomeDerivationID [DerivationDep]
 
   -- Derivations keyed on dependencies
 
@@ -163,15 +164,28 @@ data DerivationsByDeps = DerivationsByDeps
   --  * dbdSetDeps
   --  * ???
 
+  -- TODO I can probably replace Derivation based clearance with a new type of Clearance fact.
   , dbdIxSpanLoJurisdiction :: Map (SomeEIx, Maybe Time) Int -- Map (EIx a, Maybe Time) DerivationID
   -- ^ Used for `dbdLookupSpanDerJustAfter`. Key is lo time of derivation
   -- jurisdiction. Only applies to (non-DeriveAfterFirstChange) derivations with
   -- a span jurisdiction. Nothing means (-Inf).
+  -- Used for: Dep_DerivationClearance (Maybe Time) (EIx a) ??????????
 
-  , dbdIxDependantByEIxSpan :: Map SomeEIx (MultiTimeline SomeDerivationID)
-  -- ^ (dbdIxDependantByEIxSpan ! eix) `MT.select` span = derivations that depend on eix at span.
+  , dbdIxDepOnFactSpan :: Map SomeEIx (MultiTimeline SomeDerivationID)
+  -- ^ (dbdIxDepOnFactSpan ! eix) `MT.select` span = derivations that depend on eix at span.
   -- Used for: Dep_FactSpan TimeSpan (EIx a)
 
+  , dbdIxDepOnNegInf :: Map SomeEIx (Set SomeDerivationID)
+  -- ^ (dbdIxDepOnNegInf ! eix) = derivations that depend on eix at -Inf.
+  -- Used for: Dep_NegInf (EIx a)
+
+  , dbdIxDepOnJustBefore :: Map SomeEIx (Map Time (Set SomeDerivationID))
+  -- ^ (dbdIxDepOnJustBefore ! eix) ! t = derivations that depend on eix just before t.
+  -- Used for: Dep_JustBefore Time (EIx a)
+
+  , dbdIxDepOnJustAfter :: Map SomeEIx (Map Time (Set SomeDerivationID))
+  -- ^ (dbdIxDepOnJustAfter ! eix) ! t = derivations that depend on eix just after t.
+  -- Used for: Dep_JustAfter Time (EIx a)
   }
 
 type DbdDerivation_Value a = (EIx a, Derivation a)
@@ -181,7 +195,6 @@ dbdIxKeySpanLoJurisdiction :: EIx a -> Derivation a -> Maybe (SomeEIx, Maybe Tim
 dbdIxKeySpanLoJurisdiction vix der = case der of
   Derivation _ (DS_SpanExc tspan) _ _ _ -> Just (SomeEIx vix, spanExcJustBefore tspan)
   _ -> Nothing
-
 
 newtype DerivationID a = DerivationID Int
   deriving (Eq, Ord)
@@ -216,7 +229,12 @@ dbdInitialEmpty :: DerivationsByDeps
 dbdInitialEmpty = DerivationsByDeps
   { dbdNextID = 0
   , dbdDerivation = IM.empty
+  , dbdDerivationDeps = M.empty
   , dbdIxSpanLoJurisdiction = M.empty
+  , dbdIxDepOnFactSpan = M.empty
+  , dbdIxDepOnNegInf = M.empty
+  , dbdIxDepOnJustBefore = M.empty
+  , dbdIxDepOnJustAfter = M.empty
   }
 
 dbdInitialFromListNoDeps :: [SomeDerivation] -> ([SomeDerivationID], DerivationsByDeps)
@@ -242,9 +260,16 @@ dbdInsertNoDeps vix der dbd =
         myIdInt
         ((unsafeCoerce :: DbdDerivation_Value a -> DbdDerivation_Value Any) (vix, der))
         (dbdDerivation dbd)
+    , dbdDerivationDeps = dbdDerivationDeps dbd
     , dbdIxSpanLoJurisdiction = case dbdIxKeySpanLoJurisdiction vix der of
         Just key -> M.insert key myIdInt (dbdIxSpanLoJurisdiction dbd)
         Nothing -> dbdIxSpanLoJurisdiction dbd
+
+    -- No new deps so dep indexes stay the same.
+    , dbdIxDepOnFactSpan   = dbdIxDepOnFactSpan   dbd
+    , dbdIxDepOnNegInf     = dbdIxDepOnNegInf     dbd
+    , dbdIxDepOnJustBefore = dbdIxDepOnJustBefore dbd
+    , dbdIxDepOnJustAfter  = dbdIxDepOnJustAfter  dbd
     }
   )
   where
@@ -252,18 +277,49 @@ dbdInsertNoDeps vix der dbd =
   myId = DerivationID myIdInt
 
 dbdDelete :: DerivationID a -> DerivationsByDeps -> DerivationsByDeps
-dbdDelete (DerivationID derIdInt) dbd = case IM.lookup derIdInt (dbdDerivation dbd) of
+dbdDelete derId@(DerivationID derIdInt) dbd = case IM.lookup derIdInt (dbdDerivation dbd) of
   Nothing -> dbd
   Just (vix, der) -> DerivationsByDeps
     { dbdNextID = dbdNextID dbd
     , dbdDerivation = IM.delete derIdInt (dbdDerivation dbd)
+    , dbdDerivationDeps = M.delete someDerId (dbdDerivationDeps dbd)
     , dbdIxSpanLoJurisdiction = case dbdIxKeySpanLoJurisdiction vix der of
         Nothing -> dbdIxSpanLoJurisdiction dbd
         Just key -> M.delete key (dbdIxSpanLoJurisdiction dbd)
+    , dbdIxDepOnFactSpan = M.alter
+        (fmap $ MT.deleteVal someDerId)
+        (SomeEIx vix)
+        (dbdIxDepOnFactSpan dbd)
+    , dbdIxDepOnNegInf = foldl'
+        (\ix someEix -> alterSet (S.delete someDerId) someEix ix)
+        (dbdIxDepOnNegInf dbd)
+        [SomeEIx dix | Dep_NegInf dix <- deps]
+    , dbdIxDepOnJustBefore = foldl'
+        (\ix (t, someEix) -> alterMap (alterSet (S.delete someDerId) t) someEix ix)
+        (dbdIxDepOnJustBefore dbd)
+        [(t, SomeEIx dix) | Dep_JustBefore t dix <- deps]
+    , dbdIxDepOnJustAfter = foldl'
+        (\ix (t, someEix) -> alterMap (alterSet (S.delete someDerId) t) someEix ix)
+        (dbdIxDepOnJustAfter dbd)
+        [(t, SomeEIx dix) | Dep_JustAfter t dix <- deps]
     }
+    where
+    someDerId = SomeDerivationID vix (unsafeCoerce derId)
+    deps = fromMaybe [] (M.lookup someDerId (dbdDerivationDeps dbd))
+    alterMap f k m = M.alter (>>= (\m' -> let x = f m' in if M.null x then Nothing else Just x)) k m
+    alterSet f k m = M.alter (>>= (\s  -> let x = f s  in if S.null x then Nothing else Just x)) k m
 
 dbdSetDeps :: DerivationID a -> [DerivationDep] -> DerivationsByDeps -> DerivationsByDeps
-dbdSetDeps _derID _deps dbd = dbd
+dbdSetDeps _derID _deps dbd = DerivationsByDeps
+    { dbdNextID = _
+    , dbdDerivation = _
+    , dbdDerivationDeps = _
+    , dbdIxSpanLoJurisdiction = _
+    , dbdIxDepOnFactSpan = _
+    , dbdIxDepOnNegInf = _
+    , dbdIxDepOnJustBefore = _
+    , dbdIxDepOnJustAfter = _
+    }
 
 -- | Which derivations are affected (dependencies may have changed) given new
 -- facts and derivations.
@@ -281,7 +337,8 @@ dbdAffectedDers newDers newFacts derByDeps = S.fromList . concat
   -- Dep_FactSpan
   $ [ MT.elems
       $ MT.select newFactSpan
-      $ dbdIxDependantByEIxSpan derByDeps M.! SomeEIx newFactEIx
+      $ fromMaybe MT.empty
+      $ M.lookup (SomeEIx newFactEIx) (dbdIxDepOnFactSpan derByDeps)
 
     | DM.SomeIx newFactEIx <- DM.keys newFacts
     , (_, eitherNoOccSpanOrOcc) <- T.elems (valueFacts newFactEIx newFacts)
@@ -290,6 +347,7 @@ dbdAffectedDers newDers newFacts derByDeps = S.fromList . concat
             Right (t, _) -> timeToSpan t
     ]
   -- TODO Dep_NegInf
+  ++ error "TODO dbdAffectedDers"
   -- TODO Dep_JustBefore
   -- TODO Dep_JustAfter
   -- TODO Dep_DerivationClearance
@@ -356,7 +414,7 @@ solution1 inputs = execState iterateUntilChange initialKb
                       -- New derivations are all hot (we haven't calculated their deps yet)
                       <> S.fromList newDerIds
                       -- As dependencies have changed, more Derivations may be hot.
-                      <> dbdAffectedDers newSomeDers newFacts
+                      <> dbdAffectedDers newSomeDers newFacts newKbDers
                 modify (\kb -> KnowledgeBase
                   { kbFacts = kbFacts kb <> newFacts
                   , kbDerivations = newKbDers
