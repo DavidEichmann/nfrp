@@ -81,6 +81,7 @@ import Theory
 -- import Control.Monad (when)
 import Data.List (foldl')
 
+
 -- | Facts about a single value.
 type ValueTimeline a = Timeline (DerivationTrace a) a
 
