@@ -57,100 +57,90 @@ import Theory (MaybeOcc, pattern NoOcc, pattern Occ)
 
 -- | A timeline is a map from time to value where values may be set on spans of
 -- time.
-data Timeline trace a = Timeline
-    (Map (Maybe Time) (trace, Maybe Time))
+data Timeline s p = Timeline
+    (Map (Maybe Time) (s, Maybe Time))
     -- ^ Map from low time to high time of NoOcc value (corresponds to NoOcc DS_SpanExc).
-    (Map Time (trace, MaybeOcc a))
+    (Map Time p)
     -- ^ Map from time to value (corresponds to a possible Occ at DS_Point).
 
-empty :: Timeline trace a
+empty :: Timeline s p
 empty = Timeline M.empty M.empty
 
-null :: Timeline trace a -> Bool
+null :: Timeline s p -> Bool
 null (Timeline m n) = M.null m && M.null n
 
-singletonNoOcc :: trace -> TimeSpan -> Timeline trace a
+singletonNoOcc :: s -> TimeSpan -> Timeline s (s, MaybeOcc a)
 singletonNoOcc tr tts = insertNoOcc tr tts empty
 
-singletonOcc :: trace -> Time -> a -> Timeline trace a
+singletonOcc :: s -> Time -> a -> Timeline s (s, MaybeOcc a)
 singletonOcc tr t a = insertOcc tr t a empty
 
-fromList :: [(trace, TimeSpan)] -> [(trace, Time, a)] -> Timeline trace a
+fromList :: [(s, TimeSpan)] -> [(s, Time, a)] -> Timeline s (s, MaybeOcc a)
 fromList noOccs occs = foldl' (\tl (tr, timeSpan) -> insertNoOcc tr timeSpan tl) occsTl noOccs
     where
     occsTl = foldl' (\tl (tr, timeSpan, value) -> insertOcc tr timeSpan value tl) empty occs
 
-insertNoOcc :: trace -> TimeSpan -> Timeline trace a -> Timeline trace a
+insertNoOcc :: s -> TimeSpan -> Timeline s (s, MaybeOcc a) -> Timeline s (s, MaybeOcc a)
 insertNoOcc tr tts (Timeline m n) = case tts of
     DS_Point t -> Timeline m (M.insert t (tr, NoOcc) n)
     DS_SpanExc ts -> Timeline (M.insert (spanExcJustBefore ts) (tr, spanExcJustAfter ts) m) n
 
-insertOcc :: trace -> Time -> a -> Timeline trace a -> Timeline trace a
+insertOcc :: s -> Time -> a -> Timeline s (s, MaybeOcc a)-> Timeline s (s, MaybeOcc a)
 insertOcc tr t a (Timeline m n) = Timeline m (M.insert t (tr, Occ a) n)
 
 -- | All elements in chronological order
-elems :: forall trace a . Timeline trace a -> [(trace, Either TimeSpan (Time, a))]
+elems :: forall s p . Timeline s p -> [Either (TimeSpan, s) (Time, p)]
 elems (Timeline m n) = merge psTop ssTop
     where
     psTop = M.toAscList n
     ssTop = M.toAscList m
 
-    merge :: [(Time, (trace, MaybeOcc a))] -> [(Maybe Time, (trace, Maybe Time))] -> [(trace, Either TimeSpan (Time, a))]
-    merge [] ss = (\(lo, (tr,hi)) -> (tr, Left (DS_SpanExc (spanExc lo hi)))) <$> ss
-    merge ps [] = (\(t, (tr, aMay)) -> (tr, case aMay of
-        NoOcc -> Left (DS_Point t)
-        Occ a -> Right (t, a))) <$> ps
-    merge psAll@((p,(ptr,ap)):ps) ssAll@((lo,(str,hi)):ss) = case lo of
+    merge :: [(Time, p)] -> [(Maybe Time, (s, Maybe Time))] -> [Either (TimeSpan, s) (Time, p)]
+    merge [] ss = (\(lo, (tr,hi)) -> Left (DS_SpanExc (spanExc lo hi), tr)) <$> ss
+    merge ps [] = Right <$> ps
+    merge psAll@((p,ap):ps) ssAll@((lo,(str,hi)):ss) = case lo of
         Nothing -> pickS
         Just tLo
             | tLo < p   -> pickS
-            | otherwise -> (ptr, case ap of
-                    NoOcc -> Left (DS_Point p)
-                    Occ a -> Right (p, a)
-                ) : merge ps ssAll
+            | otherwise -> Right (p, ap) : merge ps ssAll
         where
-        pickS = (str, Left (DS_SpanExc (spanExc lo hi))) : merge psAll ss
+        pickS = Left ((DS_SpanExc (spanExc lo hi)), str) : merge psAll ss
 
 -- | All elements in reverse chronological order
-elemsRev :: forall trace a . Timeline trace a -> [(trace, Either TimeSpan (Time, a))]
+elemsRev :: forall s p . Timeline s p -> [Either (TimeSpan, s) (Time, p)]
 elemsRev (Timeline m n) = merge psTop ssTop
     where
     psTop = M.toDescList n
     ssTop = M.toDescList m
 
-    merge :: [(Time, (trace, MaybeOcc a))] -> [(Maybe Time, (trace, Maybe Time))] -> [(trace, Either TimeSpan (Time, a))]
-    merge [] ss = (\(lo, (tr,hi)) -> (tr, Left (DS_SpanExc (spanExc lo hi)))) <$> ss
-    merge ps [] = (\(t, (tr, aMay)) -> (tr, case aMay of
-        NoOcc -> Left (DS_Point t)
-        Occ a -> Right (t, a))) <$> ps
-    merge psAll@((p,(ptr,ap)):ps) ssAll@((lo,(str,hi)):ss) = case hi of
+    merge :: [(Time, p)] -> [(Maybe Time, (s, Maybe Time))] -> [Either (TimeSpan, s) (Time, p)]
+    merge [] ss = (\(lo, (tr,hi)) -> Left (DS_SpanExc (spanExc lo hi), tr)) <$> ss
+    merge ps [] = Right <$> ps
+    merge psAll@((p,ap):ps) ssAll@((lo,(str,hi)):ss) = case hi of
         Nothing -> pickS
         Just tHi
             | tHi > p   -> pickS
-            | otherwise -> (ptr, case ap of
-                    NoOcc -> Left (DS_Point p)
-                    Occ a -> Right (p, a)
-                ) : merge ps ssAll
+            | otherwise -> Right (p, ap) : merge ps ssAll
         where
-        pickS = (str, Left (DS_SpanExc (spanExc lo hi))) : merge psAll ss
+        pickS = Left (DS_SpanExc (spanExc lo hi), str) : merge psAll ss
 
 -- | Timeline contain keys that contain a time less than the give Time (spans are not cropped).
-selectLT :: Time -> Timeline trace a -> Timeline trace a
+selectLT :: Time -> Timeline s p -> Timeline s p
 selectLT t = select (Span Open (ClosedExc t))
 
 -- | Elements in reverse chronological order that contain a time less than the give Time (spans are not cropped).
-elemsLT :: Time -> Timeline trace a -> [(trace, Either TimeSpan (Time, a))]
+elemsLT :: Time -> Timeline s p -> [Either (TimeSpan, s) (Time, p)]
 elemsLT t = elemsRev . selectLT t
 
 -- | Timeline contain keys that contain a time greater than the give Time (spans are not cropped).
-selectGT :: Time -> Timeline trace a -> Timeline trace a
+selectGT :: Time -> Timeline s p -> Timeline s p
 selectGT t = select (Span (ClosedExc t) Open)
 
 -- | Elements in chronological order that contain the time just after the give Time.
-elemsGT :: Time -> Timeline trace a -> [(trace, Either TimeSpan (Time, a))]
+elemsGT :: Time -> Timeline s p -> [Either (TimeSpan, s) (Time, p)]
 elemsGT t = elems . selectGT t
 
-select :: Span -> Timeline trace a -> Timeline trace a
+select :: Span -> Timeline s p -> Timeline s p
 select (Span loBound hiBound) (Timeline m n) = Timeline m' n'
     where
     -- Apply lower bound
@@ -195,7 +185,7 @@ select (Span loBound hiBound) (Timeline m n) = Timeline m' n'
                     Just lo -> lo < tHi
                 ) m_loBound
 
-crop :: Span -> Timeline trace a -> Timeline trace a
+crop :: Span -> Timeline s p -> Timeline s p
 crop sp@(Span loBound hiBound) tl = Timeline m' n'
     where
     -- Select
@@ -225,7 +215,7 @@ crop sp@(Span loBound hiBound) tl = Timeline m' n'
             ClosedInc hi
                 | maybe True (hi <) hi'
                 -> ( insertErr lo' (tr, hi') mWithoutMin
-                   , insertErr hi (tr, NoOcc) n_loBound -- insert point since we include hi
+                   , insertErr hi tr n_loBound -- insert point since we include hi
                    )
             ClosedExc hi
                 | maybe True (hi <) hi'
@@ -238,13 +228,13 @@ crop sp@(Span loBound hiBound) tl = Timeline m' n'
     insertErr = M.insertWith (\_ _ -> error "crop: Duplicate keys")
 
 
-cropTimeSpan :: forall a trace . TimeSpan -> Timeline trace a -> Timeline trace a
+cropTimeSpan :: forall s p . TimeSpan -> Timeline s p -> Timeline s p
 cropTimeSpan ts = crop (timeSpanToSpan ts)
 
-lookup :: Time -> Timeline trace a -> Maybe (MaybeOcc a)
+lookup :: Time -> Timeline s p -> Maybe (MaybeOcc a)
 lookup t = fmap (either (const NoOcc) id . snd) . lookup' t
 
-lookup' :: Time -> Timeline trace a -> Maybe (trace, Either SpanExc (MaybeOcc a))
+lookup' :: Time -> Timeline s p -> Maybe (s, Either SpanExc (MaybeOcc a))
 lookup' t (Timeline m n) = case M.lookup t n of
     Nothing -> case M.lookupLT (Just t) m of
         Nothing -> Nothing
@@ -257,7 +247,7 @@ lookup' t (Timeline m n) = case M.lookup t n of
 
 
 -- | Look for a NoOcc span just after the given time.
-lookupJustBefore' :: Time -> Timeline trace a -> Maybe (trace, SpanExc)
+lookupJustBefore' :: Time -> Timeline s p -> Maybe (s, SpanExc)
 lookupJustBefore' t tl = case elemsLT t tl of
     (tr, Left ts):_
         | DS_SpanExc tss <- ts -- lookupJustBefore' can only return a DS_SpanExc fact.
@@ -266,7 +256,7 @@ lookupJustBefore' t tl = case elemsLT t tl of
     _ -> Nothing
 
 -- | Lookup for a NoOcc span just after the given time.
-lookupJustAfter' :: Time -> Timeline trace a -> Maybe (trace, SpanExc)
+lookupJustAfter' :: Time -> Timeline s p -> Maybe (s, SpanExc)
 lookupJustAfter' t tl = case elemsGT t tl of
     (tr, Left ts):_
         | DS_SpanExc tss <- ts -- lookupJustAfter' can only return a DS_SpanExc fact.
@@ -275,7 +265,7 @@ lookupJustAfter' t tl = case elemsGT t tl of
     _ -> Nothing
 
 -- Lookup the NoOcc fact spanning negative infinity.
-lookupNegInf' :: Timeline trace a -> Maybe (trace, SpanExc)
+lookupNegInf' :: Timeline s p -> Maybe (s, SpanExc)
 lookupNegInf' tl = case elems tl of
     (tr, Left ts):_
         | DS_SpanExc tss <- ts
@@ -285,26 +275,26 @@ lookupNegInf' tl = case elems tl of
 
 -- | Lookup the fact equal to the point time or NoOcc fact spanning the start of
 -- the SpanExc timespan.
-lookupAtStartOf' :: TimeSpan -> Timeline trace a -> Maybe (trace, Either SpanExc (Time, MaybeOcc a))
+lookupAtStartOf' :: TimeSpan -> Timeline s p -> Maybe (s, Either SpanExc (Time, MaybeOcc a))
 lookupAtStartOf' tts tl = case tts of
     DS_Point t -> (fmap . fmap) (t,) <$> lookup' t tl
     DS_SpanExc ts -> fmap Left <$> case spanExcJustBefore ts of
         Nothing -> lookupNegInf' tl
         Just tLo -> lookupJustAfter' tLo tl
 
-union :: forall trace a . Timeline trace a -> Timeline trace a -> Timeline trace a
+union :: forall s p . Timeline s p -> Timeline s p -> Timeline s p
 union (Timeline ma na) (Timeline mb nb) = Timeline (ma <> mb) (na <> nb)
 
 {-}
 
-union :: forall trace a . Timeline trace a -> Timeline trace a -> Timeline trace a
+union :: forall s p . Timeline s p -> Timeline s p -> Timeline s p
 union = error "TODO implement union"
     where
     -- See paper for hedge union. Note the paper includes specialized versions
     -- for open SpanBounds.
 
     -- | unbalanced filter only for elements in the given span.
-    trim :: Span -> Timeline trace a -> Timeline trace a
+    trim :: Span -> Timeline s p -> Timeline s p
     trim _ Empty = Empty
     trim sp (Timeline _ ta a l r) = if _
         then if _
@@ -316,7 +306,7 @@ union = error "TODO implement union"
         lSpace = beforeSpan sp
         rSpace = afterSpan sp
 
-    uni :: Span -> Timeline trace a -> Timeline trace a -> Timeline trace a
+    uni :: Span -> Timeline s p -> Timeline s p -> Timeline s p
     uni _ s Empty = s
     uni _ Empty (Timeline _ ta a l r) = concat3
     uni sp
@@ -335,20 +325,20 @@ union = error "TODO implement union"
         lSpaceMay = intersect sp =<< beforeSpan (timeSpanToSpan ta1)
         rSpaceMay = intersect sp =<< afterSpan (timeSpanToSpan ta1)
 
-    concat3 :: TimeSpan -> a -> Timeline trace a -> Timeline trace a -> Timeline trace a
+    concat3 :: TimeSpan -> a -> Timeline s p -> Timeline s p -> Timeline s p
     concat3 = _
 
 -- | Get only facts that intersect the time span. This also crops the facts that
 -- span the edge of the time span.
-cropTimeSpan :: forall a . TimeSpan -> Timeline trace a -> Timeline trace a
+cropTimeSpan :: forall a . TimeSpan -> Timeline s p -> Timeline s p
 cropTimeSpan ts = cropList (timeSpanToSpan ts)
     where
     -- TODO I need a more general SpanExc that might include the lo/high points
     -- right now I'm using the union of the Maybe Time and SpanExc.
     cropList
         :: Span -- The space of possible keys in tl
-        -> Timeline trace a
-        -> Timeline trace a
+        -> Timeline s p
+        -> Timeline s p
     cropList space tl = case tl of
         Empty -> empty
         (Timeline _ ts' a l r) ->
@@ -383,15 +373,10 @@ spanToTimeSpans (Span l h) = case (l,h) of
     (ClosedInc a, ClosedInc b) -> [DS_Point  a, DS_SpanExc (spanExc (Just a) (Just b)), DS_Point b]
 -}
 
-timeSpanToSpan :: TimeSpan -> Span
-timeSpanToSpan tts = case tts of
-    DS_Point t -> Span (ClosedInc t) (ClosedInc t)
-    DS_SpanExc ts -> spanExcToSpan ts
-
-instance Semigroup (Timeline trace a) where
+instance Semigroup (Timeline s p) where
     (<>) = union
 
-instance Monoid (Timeline trace a) where
+instance Monoid (Timeline s p) where
     mempty = empty
 
 {-}
@@ -452,13 +437,13 @@ timeSpanCompare a' b' = case (a', b') of
 -- Internal
 --
 
-timeline :: TimeSpan -> a -> Timeline trace a -> Timeline trace a -> Timeline trace a
+timeline :: TimeSpan -> a -> Timeline s p -> Timeline s p -> Timeline s p
 timeline ts a l r = Timeline (size l + size r + 1) ts a l r
 
 -- | In the paper, this is the rebalancing smart constructor T'
 -- Must be from a balanced tree such that the one of the left or right tree may
 -- have changed by at most 1 in size.
-rebalanceTimeline :: TimeSpan -> a -> Timeline trace a -> Timeline trace a -> Timeline trace a
+rebalanceTimeline :: TimeSpan -> a -> Timeline s p -> Timeline s p -> Timeline s p
 rebalanceTimeline ts a l r
     = if ln + rn < 2
         then timeline ts a l r
@@ -491,20 +476,20 @@ rebalanceTimeline ts a l r
 
 -- Rotations
 
-singleL :: TimeSpan -> a -> Timeline trace a -> Timeline trace a -> Timeline trace a
+singleL :: TimeSpan -> a -> Timeline s p -> Timeline s p -> Timeline s p
 singleL ta a x (Timeline _ tb b y z) = timeline tb b (timeline ta a x y) z
 singleL _ _ _ _ = undefined
 
-doubleL :: TimeSpan -> a -> Timeline trace a -> Timeline trace a -> Timeline trace a
+doubleL :: TimeSpan -> a -> Timeline s p -> Timeline s p -> Timeline s p
 doubleL ta a x (Timeline _ tc c (Timeline _ tb b y1 y2) z)
     = timeline tb b (timeline ta a x y1) (timeline tc c y2 z)
 doubleL _ _ _ _ = undefined
 
-singleR :: TimeSpan -> a -> Timeline trace a -> Timeline trace a -> Timeline trace a
+singleR :: TimeSpan -> a -> Timeline s p -> Timeline s p -> Timeline s p
 singleR tb b (Timeline _ ta a x y) z = timeline ta a x (timeline tb b y z)
 singleR _ _ _ _ = undefined
 
-doubleR :: TimeSpan -> a -> Timeline trace a -> Timeline trace a -> Timeline trace a
+doubleR :: TimeSpan -> a -> Timeline s p -> Timeline s p -> Timeline s p
 doubleR tc c (Timeline _ ta a x (Timeline _ tb b y1 y2)) z
     = timeline tb b (timeline ta a x y1) (timeline tc c y2 z)
 doubleR _ _ _ _ = undefined

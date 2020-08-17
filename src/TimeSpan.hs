@@ -182,6 +182,13 @@ class AllT a where allT :: a
 instance AllT SpanExc where allT = SpanExc All All
 instance AllT Span where allT = Span Open Open
 
+timeToSpan :: Time -> Span
+timeToSpan t = Span (ClosedInc t) (ClosedInc t)
+
+timeSpanToSpan :: TimeSpan -> Span
+timeSpanToSpan (DS_Point t) = timeToSpan t
+timeSpanToSpan (DS_SpanExc tspan) = spanExcToSpan tspan
+
 spanExcToSpan :: SpanExc -> Span
 spanExcToSpan (SpanExc l r)
     = Span

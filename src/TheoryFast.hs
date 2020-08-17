@@ -40,6 +40,10 @@ import Unsafe.Coerce
 import GHC.Exts (Any)
 import Safe (minimumMay)
 
+import DMap (DMap)
+import qualified DMap as DM
+import MultiTimeline (MultiTimeline)
+import qualified MultiTimeline as MT
 import Time
 import TimeSpan
 import Timeline (Timeline)
@@ -84,33 +88,28 @@ import Data.List (foldl')
 
 -- | Facts about a single value.
 type ValueTimeline a = Timeline (DerivationTrace a) a
+newtype ValueTimelineW a = ValueTimeline { unVTW :: ValueTimeline a }
+  deriving newtype (Semigroup)
 
 -- | A bunch of facts about possibly many values.
-newtype Facts = Facts (IntMap (ValueTimeline Any))
-
-instance Semigroup Facts where
-  (Facts a) <> (Facts b) = Facts $ IM.unionWith (<>) a b
+type Facts = DMap EIx ValueTimelineW
 
 listToFacts :: [Th.SomeValueFact] -> Facts
-listToFacts someValueFacts = Facts $ IM.fromListWith (<>)
-    [ ( vix
-      , case fact of
+listToFacts someValueFacts = DM.fromListWith (<>)
+    [ DM.El
+        eix
+        (ValueTimeline $ case fact of
           Th.Fact_NoOcc derT tts -> T.singletonNoOcc derT tts
-          Th.Fact_Occ   derT t a -> T.singletonOcc derT t (unsafeCoerce a)
-      )
-    | Th.SomeValueFact (EIx vix :: EIx a) fact <- someValueFacts
+          Th.Fact_Occ   derT t a -> T.singletonOcc derT t a
+        )
+    | Th.SomeValueFact eix fact <- someValueFacts
     ]
 
 singletonFacts :: EIx a -> ValueTimeline a -> Facts
-singletonFacts eix tl = Facts $ IM.singleton
-  (unEIx eix)
-  ((unsafeCoerce :: ValueTimeline a -> ValueTimeline Any) tl)
+singletonFacts eix vt = DM.singleton eix  (ValueTimeline vt)
 
 valueFacts :: EIx a -> Facts -> ValueTimeline a
-valueFacts (EIx vix) (Facts vb) = case IM.lookup vix vb of
-  Nothing -> T.empty
-  Just fs -> (unsafeCoerce :: ValueTimeline Any -> ValueTimeline a) fs
-type Derivations = [SomeDerivation]
+valueFacts eix facts = maybe T.empty unVTW (DM.lookup eix facts)
 
 data KnowledgeBase = KnowledgeBase
   { kbFacts :: Facts
@@ -165,9 +164,14 @@ data DerivationsByDeps = DerivationsByDeps
   --  * ???
 
   , dbdIxSpanLoJurisdiction :: Map (SomeEIx, Maybe Time) Int -- Map (EIx a, Maybe Time) DerivationID
-  -- ^ Used for `dbdLookupSpanDerJustAfter`. Key is lot time of derivation
+  -- ^ Used for `dbdLookupSpanDerJustAfter`. Key is lo time of derivation
   -- jurisdiction. Only applies to (non-DeriveAfterFirstChange) derivations with
-  -- a span jurisdiction. Nothing means (-Inf)
+  -- a span jurisdiction. Nothing means (-Inf).
+
+  , dbdIxDependantByEIxSpan :: Map SomeEIx (MultiTimeline SomeDerivationID)
+  -- ^ (dbdIxDependantByEIxSpan ! eix) `MT.select` span = derivations that depend on eix at span.
+  -- Used for: Dep_FactSpan TimeSpan (EIx a)
+
   }
 
 type DbdDerivation_Value a = (EIx a, Derivation a)
@@ -261,16 +265,35 @@ dbdDelete (DerivationID derIdInt) dbd = case IM.lookup derIdInt (dbdDerivation d
 dbdSetDeps :: DerivationID a -> [DerivationDep] -> DerivationsByDeps -> DerivationsByDeps
 dbdSetDeps _derID _deps dbd = dbd
 
--- | Calcuate which derivations are affected (dependencies may have changed)
--- given new facts and derivations.
+-- | Which derivations are affected (dependencies may have changed) given new
+-- facts and derivations.
 dbdAffectedDers
   :: [SomeDerivation]
   -- ^ New derivations. This is needed as it may affect Derivation based
   -- clearances.
   -> Facts
   -- ^ New facts.
-  -> [SomeDerivationID]
-dbdAffectedDers = error "TODO dbdAffectedDers"
+  -> DerivationsByDeps
+  -- ^ Existing derivations.
+  -> Set SomeDerivationID
+  -- ^ Affected existing derivations.
+dbdAffectedDers newDers newFacts derByDeps = S.fromList . concat
+  -- Dep_FactSpan
+  $ [ MT.elems
+      $ MT.select newFactSpan
+      $ dbdIxDependantByEIxSpan derByDeps M.! SomeEIx newFactEIx
+
+    | DM.SomeIx newFactEIx <- DM.keys newFacts
+    , (_, eitherNoOccSpanOrOcc) <- T.elems (valueFacts newFactEIx newFacts)
+    , let newFactSpan = case eitherNoOccSpanOrOcc of
+            Left tspan -> timeSpanToSpan tspan
+            Right (t, _) -> timeToSpan t
+    ]
+  -- TODO Dep_NegInf
+  -- TODO Dep_JustBefore
+  -- TODO Dep_JustAfter
+  -- TODO Dep_DerivationClearance
+
 
 -- Now a natural fist attempt at a solution is obvious: start with an initial
 -- knowledge base and continue evaluating derivations until all terminate or
@@ -333,7 +356,7 @@ solution1 inputs = execState iterateUntilChange initialKb
                       -- New derivations are all hot (we haven't calculated their deps yet)
                       <> S.fromList newDerIds
                       -- As dependencies have changed, more Derivations may be hot.
-                      <> S.fromList (dbdAffectedDers newSomeDers newFacts)
+                      <> dbdAffectedDers newSomeDers newFacts
                 modify (\kb -> KnowledgeBase
                   { kbFacts = kbFacts kb <> newFacts
                   , kbDerivations = newKbDers

@@ -19,18 +19,18 @@ library
         -- , FRP
         -- , NFRP
         -- , KnowledgeBase
-        -- , KnowledgeBase.DMap
         -- , KnowledgeBase.Timeline
         -- , KnowledgeBase.Ix
         -- , Lazy
         -- , Reactor
-          Synthetic
+          DMap
+        , Synthetic
+        , MultiTimeline
         , Theory
         , TheoryFast
         , Time
         , TimeSpan
         , Timeline
-        -- , MultiTimeline
     hs-source-dirs: src
     default-language: Haskell2010
     ghc-options: -fprof-auto -Wall
