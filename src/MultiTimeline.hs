@@ -70,13 +70,11 @@ elems (MultiTimeline els) = snd <$> els
 -- fromList :: [(TimeSpan, a)] -> MultiTimeline a
 -- fromList = foldl' (\tl (timeSpan, value) -> insert timeSpan value tl) empty
 
--- insert :: TimeSpan -> a -> MultiTimeline a -> MultiTimeline a
--- insert tts a (MultiTimeline tls) = MultiTimeline (go tls)
---     where
---     go [] = [T.singleton tts a]
---     go (t:ts) = case T.tryInsert tts a t of
---         Nothing -> t : go ts
---         Just t' -> t' : ts
+insert :: Span -> a -> MultiTimeline a -> MultiTimeline a
+insert s a (MultiTimeline el) = MultiTimeline ((s,a):el)
+
+insertTimeSpan :: TimeSpan -> a -> MultiTimeline a -> MultiTimeline a
+insertTimeSpan tts = insert (timeSpanToSpan tts)
 
 
 {-

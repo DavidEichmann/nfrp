@@ -8,6 +8,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
@@ -27,18 +28,20 @@ import Control.Monad.Trans.State.Strict (State, execState, gets, modify)
 import Control.Monad.Trans.RWS.CPS (asks, RWS, runRWS, tell)
 -- import Data.Hashable
 -- import Data.Kind
-import Data.List (find)
-import qualified Data.Map as M
-import           Data.Map (Map)
+import           Data.Coerce (coerce)
 import qualified Data.IntMap as IM
 import           Data.IntMap (IntMap)
-import Data.Maybe (fromMaybe, fromJust)
-import Data.Set (Set)
+import           Data.List (find)
+import qualified Data.Map as M
+import           Data.Map (Map)
+import           Data.Maybe (fromMaybe, fromJust)
+import           Data.Set (Set)
 import qualified Data.Set as S
-import Data.Coerce (coerce)
-import Unsafe.Coerce
-import GHC.Exts (Any)
-import Safe (minimumMay)
+import           Data.String
+import           Data.Text.Prettyprint.Doc
+import           Unsafe.Coerce
+import           GHC.Exts (Any)
+import           Safe (minimumMay)
 
 import DMap (DMap)
 import qualified DMap as DM
@@ -81,9 +84,11 @@ import Theory
 
   , getE
   , prevV
+  , requireE
   )
 -- import Control.Monad (when)
 import Data.List (foldl')
+import Data.Kind (Type)
 
 
 -- | Facts about a single value.
@@ -114,16 +119,9 @@ valueFacts eix facts = maybe T.empty unVTW (DM.lookup eix facts)
 data KnowledgeBase = KnowledgeBase
   { kbFacts :: Facts
 
-
-  -- , kbDerivations :: Derivations
-  -- -- | Is the KnowledgeBase dirty such that some derivations may be able to
-  -- -- progress. This is set to False before attempting to progress all
-  -- -- derivations.
-  -- , kbDirty :: Bool
-
-
-  -- WIP derivation tracking by deps
+  -- Derivation/Dependency tracking
   , kbDerivations :: DerivationsByDeps
+  -- TODO I don't think we actually need to store this in the record.
   , kbHotDerivations :: Set SomeDerivationID
   }
 
@@ -186,6 +184,11 @@ data DerivationsByDeps = DerivationsByDeps
   , dbdIxDepOnJustAfter :: Map SomeEIx (Map Time (Set SomeDerivationID))
   -- ^ (dbdIxDepOnJustAfter ! eix) ! t = derivations that depend on eix just after t.
   -- Used for: Dep_JustAfter Time (EIx a)
+
+  , dbdIxDepOnDerivationClearance :: Map SomeEIx (Map (Maybe Time) (Set SomeDerivationID))
+  -- ^ (dbdIxDepOnJustAfter ! eix) ! t = derivations that depend on clearance of
+  -- eix at t (Nothing means -Inf).
+  -- Used for: Dep_DerivationClearance (Maybe Time) (EIx a)
   }
 
 type DbdDerivation_Value a = (EIx a, Derivation a)
@@ -196,8 +199,8 @@ dbdIxKeySpanLoJurisdiction vix der = case der of
   Derivation _ (DS_SpanExc tspan) _ _ _ -> Just (SomeEIx vix, spanExcJustBefore tspan)
   _ -> Nothing
 
-newtype DerivationID a = DerivationID Int
-  deriving (Eq, Ord)
+newtype DerivationID (a :: Type) = DerivationID Int
+  deriving (Eq, Ord, Show)
 data SomeDerivationID = forall a . SomeDerivationID (EIx a) (DerivationID a)
 instance Eq SomeDerivationID where
   (SomeDerivationID vixA derIdA) == (SomeDerivationID vixB derIdB)
@@ -235,6 +238,7 @@ dbdInitialEmpty = DerivationsByDeps
   , dbdIxDepOnNegInf = M.empty
   , dbdIxDepOnJustBefore = M.empty
   , dbdIxDepOnJustAfter = M.empty
+  , dbdIxDepOnDerivationClearance = M.empty
   }
 
 dbdInitialFromListNoDeps :: [SomeDerivation] -> ([SomeDerivationID], DerivationsByDeps)
@@ -270,6 +274,7 @@ dbdInsertNoDeps vix der dbd =
     , dbdIxDepOnNegInf     = dbdIxDepOnNegInf     dbd
     , dbdIxDepOnJustBefore = dbdIxDepOnJustBefore dbd
     , dbdIxDepOnJustAfter  = dbdIxDepOnJustAfter  dbd
+    , dbdIxDepOnDerivationClearance  = dbdIxDepOnDerivationClearance dbd
     }
   )
   where
@@ -286,10 +291,10 @@ dbdDelete derId@(DerivationID derIdInt) dbd = case IM.lookup derIdInt (dbdDeriva
     , dbdIxSpanLoJurisdiction = case dbdIxKeySpanLoJurisdiction vix der of
         Nothing -> dbdIxSpanLoJurisdiction dbd
         Just key -> M.delete key (dbdIxSpanLoJurisdiction dbd)
-    , dbdIxDepOnFactSpan = M.alter
-        (fmap $ MT.deleteVal someDerId)
-        (SomeEIx vix)
+    , dbdIxDepOnFactSpan = foldl'
+        (\ix someEix -> alterMT (MT.deleteVal someDerId) someEix ix)
         (dbdIxDepOnFactSpan dbd)
+        [SomeEIx dix | Dep_FactSpan _ dix <- deps]
     , dbdIxDepOnNegInf = foldl'
         (\ix someEix -> alterSet (S.delete someDerId) someEix ix)
         (dbdIxDepOnNegInf dbd)
@@ -302,24 +307,60 @@ dbdDelete derId@(DerivationID derIdInt) dbd = case IM.lookup derIdInt (dbdDeriva
         (\ix (t, someEix) -> alterMap (alterSet (S.delete someDerId) t) someEix ix)
         (dbdIxDepOnJustAfter dbd)
         [(t, SomeEIx dix) | Dep_JustAfter t dix <- deps]
+    , dbdIxDepOnDerivationClearance = foldl'
+        (\ix (tmay, someEix) -> alterMap (alterSet (S.delete someDerId) tmay) someEix ix)
+        (dbdIxDepOnDerivationClearance dbd)
+        [(tmay, SomeEIx dix) | Dep_DerivationClearance tmay dix <- deps]
     }
     where
     someDerId = SomeDerivationID vix (unsafeCoerce derId)
     deps = fromMaybe [] (M.lookup someDerId (dbdDerivationDeps dbd))
-    alterMap f k m = M.alter (>>= (\m' -> let x = f m' in if M.null x then Nothing else Just x)) k m
-    alterSet f k m = M.alter (>>= (\s  -> let x = f s  in if S.null x then Nothing else Just x)) k m
 
-dbdSetDeps :: DerivationID a -> [DerivationDep] -> DerivationsByDeps -> DerivationsByDeps
-dbdSetDeps _derID _deps dbd = DerivationsByDeps
-    { dbdNextID = _
-    , dbdDerivation = _
-    , dbdDerivationDeps = _
-    , dbdIxSpanLoJurisdiction = _
-    , dbdIxDepOnFactSpan = _
-    , dbdIxDepOnNegInf = _
-    , dbdIxDepOnJustBefore = _
-    , dbdIxDepOnJustAfter = _
+dbdSetDeps :: forall a . DerivationID a -> [DerivationDep] -> DerivationsByDeps -> DerivationsByDeps
+dbdSetDeps derId deps dbd = DerivationsByDeps
+    { dbdNextID = dbdNextID dbd
+    , dbdDerivation = dbdDerivation dbd
+    , dbdDerivationDeps = M.insert someDerId deps (dbdDerivationDeps dbd)
+    , dbdIxSpanLoJurisdiction = dbdIxSpanLoJurisdiction dbd
+    , dbdIxDepOnFactSpan = foldl'
+        (\ix (ts, someEix) -> alterMT (MT.insertTimeSpan ts someDerId) someEix ix)
+        (dbdIxDepOnFactSpan dbdMid)
+        [(ts, SomeEIx dix) | Dep_FactSpan ts dix <- deps]
+    , dbdIxDepOnNegInf = foldl'
+        (\ix someEix -> alterSet (S.insert someDerId) someEix ix)
+        (dbdIxDepOnNegInf dbdMid)
+        [SomeEIx dix | Dep_NegInf dix <- deps]
+    , dbdIxDepOnJustBefore = foldl'
+        (\ix (t, someEix) -> alterMap (alterSet (S.insert someDerId) t) someEix ix)
+        (dbdIxDepOnJustBefore dbdMid)
+        [(t, SomeEIx dix) | Dep_JustBefore t dix <- deps]
+    , dbdIxDepOnJustAfter = foldl'
+        (\ix (t, someEix) -> alterMap (alterSet (S.insert someDerId) t) someEix ix)
+        (dbdIxDepOnJustAfter dbdMid)
+        [(t, SomeEIx dix) | Dep_JustAfter t dix <- deps]
+    , dbdIxDepOnDerivationClearance = foldl'
+        (\ix (tmay, someEix) -> alterMap (alterSet (S.insert someDerId) tmay) someEix ix)
+        (dbdIxDepOnDerivationClearance dbdMid)
+        [(tmay, SomeEIx dix) | Dep_DerivationClearance tmay dix <- deps]
     }
+    where
+    DerivationID derIdInt = derId
+    someDerId = SomeDerivationID
+                  ((unsafeCoerce :: EIx Any -> EIx a)
+                      $ fst
+                      $ dbdDerivation dbd IM.! derIdInt
+                  )
+                  derId
+    dbdMid = dbdDelete derId dbd
+
+alterMT :: Ord k => (MultiTimeline a -> MultiTimeline a) -> k -> Map k (MultiTimeline a) -> Map k (MultiTimeline a)
+alterMT f k m = M.alter (>>= (\m' -> let x = f m' in if MT.null x then Nothing else Just x)) k m
+
+alterMap :: Ord k1 => (Map k2 a -> Map k2 a) -> k1 -> Map k1 (Map k2 a) -> Map k1 (Map k2 a)
+alterMap f k m = M.alter (>>= (\m' -> let x = f m' in if M.null x then Nothing else Just x)) k m
+
+alterSet :: Ord k => (Set a -> Set a) -> k -> Map k (Set a) -> Map k (Set a)
+alterSet f k m = M.alter (>>= (\s  -> let x = f s  in if S.null x then Nothing else Just x)) k m
 
 -- | Which derivations are affected (dependencies may have changed) given new
 -- facts and derivations.
@@ -333,24 +374,89 @@ dbdAffectedDers
   -- ^ Existing derivations.
   -> Set SomeDerivationID
   -- ^ Affected existing derivations.
-dbdAffectedDers newDers newFacts derByDeps = S.fromList . concat
-  -- Dep_FactSpan
-  $ [ MT.elems
+dbdAffectedDers newDers newFacts dbd = S.unions $
+  -- Dep_DerivationClearance
+  -- Derivation based clearance only changes when the derivation is complete
+  -- and a span. dbdIxDepOnDerivationClearance is keyed on the low time.
+  [ fromMaybe S.empty
+    $ M.lookup tLo
+    $ fromMaybe M.empty
+    $ M.lookup newDerSomeEIx
+    $ dbdIxDepOnDerivationClearance dbd
+
+    | SomeDerivation newDerEIx Derivation
+        { derContDerivation = Pure _
+        , derTtspan = DS_SpanExc sp
+        } <- newDers
+    , let newDerSomeEIx = SomeEIx newDerEIx
+    , let tLo = spanExcJustBefore sp
+  ] ++
+  (concat [ concat [
+    -- Dep_FactSpan
+    [ S.fromList
+      $ MT.elems
       $ MT.select newFactSpan
       $ fromMaybe MT.empty
-      $ M.lookup (SomeEIx newFactEIx) (dbdIxDepOnFactSpan derByDeps)
+      $ M.lookup newFactSomeEIx (dbdIxDepOnFactSpan dbd)
+    ]
+
+    -- Dep_NegInf
+    , [ fromMaybe S.empty $ M.lookup newFactSomeEIx (dbdIxDepOnNegInf dbd)
+      | spanLo newFactSpan == Open
+      ]
+
+    -- Dep_JustBefore
+    , lookupJustBefore newFactSpan
+      $ fromMaybe M.empty
+      $ M.lookup newFactSomeEIx (dbdIxDepOnJustBefore dbd)
+
+    -- Dep_JustAfter
+    , lookupJustAfter newFactSpan
+      $ fromMaybe M.empty
+      $ M.lookup newFactSomeEIx (dbdIxDepOnJustAfter dbd)
+    ]
 
     | DM.SomeIx newFactEIx <- DM.keys newFacts
     , (_, eitherNoOccSpanOrOcc) <- T.elems (valueFacts newFactEIx newFacts)
+    , let newFactSomeEIx = SomeEIx newFactEIx
     , let newFactSpan = case eitherNoOccSpanOrOcc of
             Left tspan -> timeSpanToSpan tspan
             Right (t, _) -> timeToSpan t
-    ]
-  -- TODO Dep_NegInf
-  ++ error "TODO dbdAffectedDers"
-  -- TODO Dep_JustBefore
-  -- TODO Dep_JustAfter
-  -- TODO Dep_DerivationClearance
+  ])
+  where
+  lookupJustBefore :: Span -> Map Time (Set SomeDerivationID) -> [Set SomeDerivationID]
+  lookupJustBefore
+    (Span loBound hiBound)  -- Span of the new fact
+    jbDeps                  -- Deps keyed on the JustBefore time they depend on.
+    = M.elems jbDeps'
+    where
+    -- Apply lower bound
+    n_loBound = case loBound of
+        Open -> jbDeps
+        ClosedInc t -> M.dropWhileAntitone (<= t) jbDeps
+        ClosedExc t -> M.dropWhileAntitone (<= t) jbDeps
+    -- Apply upper bound
+    jbDeps' =  case hiBound of
+        Open -> n_loBound
+        ClosedInc t -> M.takeWhileAntitone (< t) n_loBound
+        ClosedExc t -> M.takeWhileAntitone (< t) n_loBound
+
+  lookupJustAfter :: Span -> Map Time (Set SomeDerivationID) -> [Set SomeDerivationID]
+  lookupJustAfter
+    (Span loBound hiBound)  -- Span of the new fact
+    jbDeps                  -- Deps keyed on the JustAfter time they depend on.
+    = M.elems jbDeps'
+    where
+    -- Apply lower bound
+    n_loBound = case loBound of
+        Open -> jbDeps
+        ClosedInc t -> M.dropWhileAntitone (< t) jbDeps
+        ClosedExc t -> M.dropWhileAntitone (< t) jbDeps
+    -- Apply upper bound
+    jbDeps' =  case hiBound of
+        Open -> n_loBound
+        ClosedInc t -> M.takeWhileAntitone (<= t) n_loBound
+        ClosedExc t -> M.takeWhileAntitone (<= t) n_loBound
 
 
 -- Now a natural fist attempt at a solution is obvious: start with an initial
@@ -1132,3 +1238,40 @@ withDerTrace d msg = case d of
   showPeakValueM (Pure _) = "Pure{}"
   showPeakValueM (GetE ix _) = "(GetE " ++ show ix ++ " _)"
   showPeakValueM (PrevV ix _) = "(PrevV " ++ show ix ++ " _)"
+
+
+
+instance Pretty KnowledgeBase where
+  pretty kb = vsep
+    [ "KnowledgeBase:"
+    , indent 2 $ vsep $
+      [ "kbFacts"          <+> "_" -- pretty (kbFacts kb)
+      , "kbDerivations"    <+> pretty (kbDerivations kb)
+      , "kbHotDerivations" <+> pretty (kbHotDerivations kb)
+      ]
+    ]
+
+instance Pretty (Set SomeDerivationID) where
+  pretty s = encloseSep "{" "}" "," (pretty <$> S.toList s)
+
+instance Pretty SomeDerivationID where
+  pretty (SomeDerivationID eix did) = "SomeDerivationID" <+> pretty eix <+> pretty did
+
+instance Pretty (DerivationID a) where
+  pretty = fromString . show
+
+instance Pretty DerivationsByDeps where
+  pretty dbd = vsep
+    [ "DerivationsByDeps:"
+    , indent 2 $ vsep $
+      [ "NextID" <+> pretty (dbdNextID dbd)
+      , "Derivation" <+> pretty [ (DerivationID derId, eix, der) | (derId, (eix, der)) <- IM.assocs $ dbdDerivation dbd]
+      , "DerivationDeps" <+> "_" -- pretty (dbdDerivationDeps dbd)
+      , "IxSpanLoJurisdiction" <+> "_" -- pretty (dbdIxSpanLoJurisdiction dbd)
+      , "IxDepOnFactSpan" <+> "_" -- pretty (dbdIxDepOnFactSpan dbd)
+      , "IxDepOnNegInf" <+> "_" -- pretty (dbdIxDepOnNegInf dbd)
+      , "IxDepOnJustBefore" <+> "_" -- pretty (dbdIxDepOnJustBefore dbd)
+      , "IxDepOnJustAfter" <+> "_" -- pretty (dbdIxDepOnJustAfter dbd)
+      , "IxDepOnDerivationClearance" <+> "_" -- pretty (dbdIxDepOnDerivationClearance dbd)
+      ]
+    ]

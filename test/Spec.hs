@@ -4,6 +4,8 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
@@ -24,7 +26,21 @@ import Generics.SOP
 import Synthetic
 import Time (Time)
 import TimeSpan
-import Theory as T
+import Theory
+    ( EIx(..)
+    , pattern Known
+    , pattern Unknown
+    , Fact(..)
+    , MaybeKnown(..)
+    , MaybeOcc(..)
+    , Inputs(..)
+    , requireE
+    , getE
+    , prevV
+    , ValueM(..)
+    )
+import qualified Theory as T
+import TheoryFast (InputEl(..), pattern Occ, pattern NoOcc, maybeOccToMaybe)
 import qualified TheoryFast as TF
 -- import KnowledgeBase
 -- import KnowledgeBase.Timeline
@@ -32,81 +48,135 @@ import qualified TheoryFast as TF
 main :: IO ()
 main = defaultMain tests
 
-tests :: TestTree
-tests = testGroup "NFRP"
-  [ testGroup "Model - Event based"
-      [ testCase "Synthetic-ish 3" $ do
-        let
-            eix1, eix2, eix3 :: EIx Int
+gTest :: forall gKnowledgeBase
+    .  Pretty gKnowledgeBase
+    => String
+    -> (Inputs -> gKnowledgeBase)
+    -> (forall a . Time -> EIx a -> gKnowledgeBase -> MaybeKnown (MaybeOcc a))
+    -> TestTree
+gTest
+    testGroupName
+    solution1
+    lookupVKB
+    = testGroup testGroupName
+
+
+      [ testCase "Simple 1" $ do
+        let eix1, eix2 :: EIx String
+            eix1 = EIx 1
+            eix2 = EIx 2
+
+            kb :: gKnowledgeBase
+            kb = solution1
+                    [ InputEl eix1 (Left [Fact_Occ   [] 1 "Hello"])
+                    , InputEl eix2
+                        (Right $ do
+                            xs <- requireE eix1
+                            return (xs ++ " World!")
+                        )
+                    ]
+
+        lookupVKB 1 eix2 kb @?= Known (Occ "Hello World!")
+
+
+      , testCase "Simple 2" $ do
+        let eix1, eix2, eix3 :: EIx String
             eix1 = EIx 1
             eix2 = EIx 2
             eix3 = EIx 3
 
-            kb :: KnowledgeBase
+            kb :: gKnowledgeBase
             kb = solution1
-                    -- time: --0--------5-----7--------------
-                    --         2        4     6
-                    [ InputEl eix1
-                        (Left [ Fact_NoOcc [] (DS_SpanExc $ spanExc Nothing (Just 0))
-                            , Fact_Occ   [] 0 2
-                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 0) (Just 5))
-                            , Fact_Occ   [] 5 4
-                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 5) (Just 7))
-                            , Fact_Occ   [] 7 6
-                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 7) Nothing)
-                            ]
-                        )
-                    -- time: --0--------5-----7--------------
-                    --         2        8    18
+                    [ InputEl eix1 (Left
+                        [ Fact_Occ   [] 1 "Hello"
+                        , Fact_Occ   [] 5 "Goodbye"
+                        ])
                     , InputEl eix2
                         (Right $ do
-                            xs <- catMaybes . fmap maybeOccToMaybe <$> mapM getE [eix1]
-                            if null xs
-                                then Pure NoOcc
-                                else do
-                                    y <- sum . catMaybes <$> mapM prevV
-                                                                [eix3]
-                                    return (sum xs + y)
+                            xs <- requireE eix3
+                            return (xs ++ "!")
                         )
-                    -- time: --0--------5-----7--------------
-                    --         4       12    24
                     , InputEl eix3
                         (Right $ do
-                            xs <- catMaybes . fmap maybeOccToMaybe <$> mapM getE [eix1, eix2]
-                            if null xs
-                                then Pure NoOcc
-                                else do
-                                    y <- sum . catMaybes <$> mapM prevV
-                                                                []
-                                    return (sum xs + y)
+                            xs <- requireE eix1
+                            return (xs ++ " World")
                         )
                     ]
 
-        lookupVKB (-1) eix2 kb @?= Known NoOcc
-        lookupVKB 0 eix2 kb @?= Known (Occ 2)
-        lookupVKB 2 eix2 kb @?= Known NoOcc
-        lookupVKB 5 eix2 kb @?= Known (Occ 8)
-        lookupVKB 6 eix2 kb @?= Known NoOcc
-        lookupVKB 7 eix2 kb @?= Known (Occ 18)
-        lookupVKB 8 eix2 kb @?= Known NoOcc
+        -- assertFailure $ show $ pretty kb
 
-        lookupVKB (-1) eix3 kb @?= Known NoOcc
-        lookupVKB 0 eix3 kb @?= Known (Occ 4)
-        lookupVKB 2 eix3 kb @?= Known NoOcc
-        lookupVKB 5 eix3 kb @?= Known (Occ 12)
-        lookupVKB 6 eix3 kb @?= Known NoOcc
-        lookupVKB 7 eix3 kb @?= Known (Occ 24)
-        lookupVKB 8 eix3 kb @?= Known NoOcc
+        lookupVKB 1 eix2 kb @?= Known (Occ "Hello World!")
+        lookupVKB 3 eix2 kb @?= Unknown
+        lookupVKB 5 eix2 kb @?= Known (Occ "Goodbye World!")
 
-      , let n = 5 in testCase ("TheoryFast vs Theory on Synthetic " ++ show n) $ do
-        let (vixs, ts, ins) = syntheticN n
-            lookupT  = let kb =  T.solution1 ins in \t vix -> T.lookupVKB t vix kb
-            lookupTF = let kb = TF.solution1 ins in \t vix ->TF.lookupVKB t vix kb
-        sequence_
-            [ lookupTF t vix @?= lookupT t vix
-            | vix <- vixs
-            , t <- ts
-            ]
+
+      , testCase "Simple 3" $ do
+        let eix1, eix2, eix3 :: EIx String
+            eix1 = EIx 1
+            eix2 = EIx 2
+            eix3 = EIx 3
+
+            kb :: gKnowledgeBase
+            kb = solution1
+                    [ InputEl eix1 (Left
+                        [ Fact_Occ   [] 1 "Hello"
+                        , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 1) (Just 5))
+                        , Fact_Occ   [] 5 "Goodbye"
+                        ])
+                    , InputEl eix2
+                        (Right $ do
+                            xs <- requireE eix3
+                            return (xs ++ "!")
+                        )
+                    , InputEl eix3
+                        (Right $ do
+                            xs <- requireE eix1
+                            return (xs ++ " World")
+                        )
+                    ]
+
+        -- assertFailure $ show $ pretty kb
+
+        lookupVKB 1 eix2 kb @?= Known (Occ "Hello World!")
+        lookupVKB 3 eix2 kb @?= Known NoOcc
+        lookupVKB 5 eix2 kb @?= Known (Occ "Goodbye World!")
+
+
+      , testCase "Simple 4" $ do
+        let eix1, eix2, eix3 :: EIx String
+            eix1 = EIx 1
+            eix2 = EIx 2
+            eix3 = EIx 3
+
+            kb :: gKnowledgeBase
+            kb = solution1
+                    [ InputEl eix1 (Left
+                        [ Fact_NoOcc [] (DS_SpanExc $ spanExc Nothing (Just 1))
+                        , Fact_Occ   [] 1 "Hello"
+                        , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 1) (Just 5))
+                        , Fact_Occ   [] 5 "Goodbye"
+                        ])
+                    , InputEl eix2
+                        (Right $ do
+                            xs <- requireE eix3
+                            old <- maybe "" (++ " >> ") <$> prevV eix2
+                            return (old ++ xs ++ "!")
+                        )
+                    , InputEl eix3
+                        (Right $ do
+                            xs <- requireE eix1
+                            return (xs ++ " World")
+                        )
+                    ]
+
+        lookupVKB 1 eix3 kb @?= Known (Occ "Hello World")
+        lookupVKB 3 eix3 kb @?= Known NoOcc
+        lookupVKB 5 eix3 kb @?= Known (Occ "Goodbye World")
+
+        lookupVKB 1 eix2 kb @?= Known (Occ "Hello World!")
+        lookupVKB 3 eix2 kb @?= Known NoOcc
+        lookupVKB 5 eix2 kb @?= Known (Occ "Hello World! >> Goodbye World!")
+
 
       , testCase "Switching" $ do
           let
@@ -121,7 +191,7 @@ tests = testGroup "NFRP"
             out :: EIx Int
             out    = EIx 5
 
-            kb :: KnowledgeBase
+            kb :: gKnowledgeBase
             kb = solution1
                   -- time: --0--2--4--6--8--10-12-14-16---
                   -----------11-12-13-14-15-16-17-18-19---
@@ -245,6 +315,89 @@ tests = testGroup "NFRP"
           lookupVKB 15 out kb @?= Known NoOcc
           lookupVKB 16 out kb @?= Known (Occ 29)
           lookupVKB 17 out kb @?= Known NoOcc
+
+
+      , testCase "Synthetic-ish 3" $ do
+        let
+            eix1, eix2, eix3 :: EIx Int
+            eix1 = EIx 1
+            eix2 = EIx 2
+            eix3 = EIx 3
+
+            kb :: gKnowledgeBase
+            kb = solution1
+                    -- time: --0--------5-----7--------------
+                    --         2        4     6
+                    [ InputEl eix1
+                        (Left [ Fact_NoOcc [] (DS_SpanExc $ spanExc Nothing (Just 0))
+                            , Fact_Occ   [] 0 2
+                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 0) (Just 5))
+                            , Fact_Occ   [] 5 4
+                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 5) (Just 7))
+                            , Fact_Occ   [] 7 6
+                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 7) Nothing)
+                            ]
+                        )
+                    -- time: --0--------5-----7--------------
+                    --         2        8    18
+                    , InputEl eix2
+                        (Right $ do
+                            xs <- catMaybes . fmap maybeOccToMaybe <$> mapM getE [eix1]
+                            if null xs
+                                then Pure NoOcc
+                                else do
+                                    y <- sum . catMaybes <$> mapM prevV
+                                                                [eix3]
+                                    return (sum xs + y)
+                        )
+                    -- time: --0--------5-----7--------------
+                    --         4       12    24
+                    , InputEl eix3
+                        (Right $ do
+                            xs <- catMaybes . fmap maybeOccToMaybe <$> mapM getE [eix1, eix2]
+                            if null xs
+                                then Pure NoOcc
+                                else do
+                                    y <- sum . catMaybes <$> mapM prevV
+                                                                []
+                                    return (sum xs + y)
+                        )
+                    ]
+
+        lookupVKB (-1) eix2 kb @?= Known NoOcc
+        lookupVKB 0 eix2 kb @?= Known (Occ 2)
+        lookupVKB 2 eix2 kb @?= Known NoOcc
+        lookupVKB 5 eix2 kb @?= Known (Occ 8)
+        lookupVKB 6 eix2 kb @?= Known NoOcc
+        lookupVKB 7 eix2 kb @?= Known (Occ 18)
+        lookupVKB 8 eix2 kb @?= Known NoOcc
+
+        lookupVKB (-1) eix3 kb @?= Known NoOcc
+        lookupVKB 0 eix3 kb @?= Known (Occ 4)
+        lookupVKB 2 eix3 kb @?= Known NoOcc
+        lookupVKB 5 eix3 kb @?= Known (Occ 12)
+        lookupVKB 6 eix3 kb @?= Known NoOcc
+        lookupVKB 7 eix3 kb @?= Known (Occ 24)
+        lookupVKB 8 eix3 kb @?= Known NoOcc
+      ]
+
+
+tests :: TestTree
+tests = testGroup "NFRP"
+  [ gTest "Theory"
+         T.solution1  T.lookupVKB
+  , gTest "TheoryFast"
+        TF.solution1 TF.lookupVKB
+  , testGroup "Model - Event based"
+      [ let n = 5 in testCase ("TheoryFast vs Theory on Synthetic " ++ show n) $ do
+        let (vixs, ts, ins) = syntheticN n
+            lookupT  = let kb =  T.solution1 ins in \t vix -> T.lookupVKB t vix kb
+            lookupTF = let kb = TF.solution1 ins in \t vix ->TF.lookupVKB t vix kb
+        sequence_
+            [ lookupTF t vix @?= lookupT t vix
+            | vix <- vixs
+            , t <- ts
+            ]
       ]
   ]
 
@@ -256,8 +409,8 @@ tests = testGroup "NFRP"
 --           eix2 = EIx 2
 --           eix3 = EIx 3
 
---           kb :: KnowledgeBase
---           kb = solution1
+--           kb :: T.KnowledgeBase
+--           kb = T.solution1
 --                 -- time: --0--------5-----7--------------
 --                 --------------------------9______________
 --                 [ InputEl eix1
@@ -287,12 +440,12 @@ tests = testGroup "NFRP"
 --                     )
 --                 ]
 
---         -- lookupVKB :: Time -> EIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
---         lookupVKB 0 eix3 kb @?= Known NoOcc
---         lookupVKB 5 eix3 kb @?= Known (Occ 190)
---         lookupVKB 6 eix3 kb @?= Unknown
---         lookupVKB 7 eix3 kb @?= Known (Occ 189)
---         lookupVKB 8 eix3 kb @?= Unknown
+--         -- T.lookupVKB :: Time -> EIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
+--         T.lookupVKB 0 eix3 kb @?= Known NoOcc
+--         T.lookupVKB 5 eix3 kb @?= Known (Occ 190)
+--         T.lookupVKB 6 eix3 kb @?= Unknown
+--         T.lookupVKB 7 eix3 kb @?= Known (Occ 189)
+--         T.lookupVKB 8 eix3 kb @?= Unknown
 
 --       , testCase "PrevV Only" $ do
 --         let
@@ -300,8 +453,8 @@ tests = testGroup "NFRP"
 --           eix1 = EIx 1
 --           eix2 = EIx 2
 
---           kb :: KnowledgeBase
---           kb = solution1
+--           kb :: T.KnowledgeBase
+--           kb = T.solution1
 --                 -- time: --0--------5-----7--------------
 --                 -----------7--------8_____9______________
 --                 [ InputEl eix1
@@ -322,14 +475,14 @@ tests = testGroup "NFRP"
 --                     )
 --                 ]
 
---         -- lookupVKB :: Time -> EIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
---         lookupVKB (-1) eix2 kb @?= Known NoOcc
---         lookupVKB 0 eix2 kb @?= Known (Occ 100)
---         lookupVKB 2 eix2 kb @?= Known NoOcc
---         lookupVKB 5 eix2 kb @?= Known (Occ 107)
---         lookupVKB 6 eix2 kb @?= Unknown
---         lookupVKB 7 eix2 kb @?= Unknown
---         lookupVKB 8 eix2 kb @?= Unknown
+--         -- T.lookupVKB :: Time -> EIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
+--         T.lookupVKB (-1) eix2 kb @?= Known NoOcc
+--         T.lookupVKB 0 eix2 kb @?= Known (Occ 100)
+--         T.lookupVKB 2 eix2 kb @?= Known NoOcc
+--         T.lookupVKB 5 eix2 kb @?= Known (Occ 107)
+--         T.lookupVKB 6 eix2 kb @?= Unknown
+--         T.lookupVKB 7 eix2 kb @?= Unknown
+--         T.lookupVKB 8 eix2 kb @?= Unknown
 
 
 --       , testCase "GetE and PrevV (no self reference)" $ do
@@ -339,8 +492,8 @@ tests = testGroup "NFRP"
 --           eix2 = EIx 2
 --           eix3 = EIx 3
 
---           kb :: KnowledgeBase
---           kb = solution1
+--           kb :: T.KnowledgeBase
+--           kb = T.solution1
 --                 -- time: --0--------5-----7-----9--------
 --                 --------------------3-----1----__________
 --                 [ InputEl eix1
@@ -372,13 +525,13 @@ tests = testGroup "NFRP"
 --                     )
 --                 ]
 
---         -- lookupVKB :: Time -> EIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
---         lookupVKB 0 eix3 kb @?= Known NoOcc
---         lookupVKB 5 eix3 kb @?= Known (Occ 190)
---         lookupVKB 6 eix3 kb @?= Unknown
---         lookupVKB 7 eix3 kb @?= Known (Occ 183)
---         lookupVKB 8 eix3 kb @?= Unknown
---         lookupVKB 9 eix3 kb @?= Known (Occ 171)
+--         -- T.lookupVKB :: Time -> EIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
+--         T.lookupVKB 0 eix3 kb @?= Known NoOcc
+--         T.lookupVKB 5 eix3 kb @?= Known (Occ 190)
+--         T.lookupVKB 6 eix3 kb @?= Unknown
+--         T.lookupVKB 7 eix3 kb @?= Known (Occ 183)
+--         T.lookupVKB 8 eix3 kb @?= Unknown
+--         T.lookupVKB 9 eix3 kb @?= Known (Occ 171)
 
 
 --       , testCase "GetE and PrevV (with self reference after onEvent)" $ do
@@ -387,8 +540,8 @@ tests = testGroup "NFRP"
 --           eix1 = EIx 1
 --           eix2 = EIx 2
 
---           kb :: KnowledgeBase
---           kb = solution1
+--           kb :: T.KnowledgeBase
+--           kb = T.solution1
 --                 -- time: --0--------5-----7-----9--------
 --                 --------------------3-----1_____5____
 --                 [ InputEl eix1
@@ -409,14 +562,14 @@ tests = testGroup "NFRP"
 --                     )
 --                 ]
 
---         -- lookupVKB :: Time -> EIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
---         lookupVKB 0 eix2 kb @?= Known NoOcc
---         lookupVKB 5 eix2 kb @?= Known (Occ 3)
---         lookupVKB 6 eix2 kb @?= Known NoOcc
---         lookupVKB 7 eix2 kb @?= Known (Occ 4)
---         lookupVKB 8 eix2 kb @?= Unknown
---         lookupVKB 9 eix2 kb @?= Unknown
---         lookupVKB 10 eix2 kb @?= Unknown
+--         -- T.lookupVKB :: Time -> EIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
+--         T.lookupVKB 0 eix2 kb @?= Known NoOcc
+--         T.lookupVKB 5 eix2 kb @?= Known (Occ 3)
+--         T.lookupVKB 6 eix2 kb @?= Known NoOcc
+--         T.lookupVKB 7 eix2 kb @?= Known (Occ 4)
+--         T.lookupVKB 8 eix2 kb @?= Unknown
+--         T.lookupVKB 9 eix2 kb @?= Unknown
+--         T.lookupVKB 10 eix2 kb @?= Unknown
 
 
 --       -- | This is the same as the last test, but the order of the GetE and
@@ -427,8 +580,8 @@ tests = testGroup "NFRP"
 --           eix1 = EIx 1
 --           eix2 = EIx 2
 
---           kb :: KnowledgeBase
---           kb = solution1
+--           kb :: T.KnowledgeBase
+--           kb = T.solution1
 --                 -- time: -----------5-----7-----111--------
 --                 --------------------3-----1_____5____
 --                 [ InputEl eix1
@@ -451,14 +604,14 @@ tests = testGroup "NFRP"
 --                     )
 --                 ]
 
---         -- lookupVKB :: Time -> EIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
---         lookupVKB 0 eix2 kb @?= Known NoOcc
---         lookupVKB 5 eix2 kb @?= Known (Occ 3)
---         lookupVKB 6 eix2 kb @?= Known NoOcc
---         lookupVKB 7 eix2 kb @?= Known (Occ 4)
---         lookupVKB 8 eix2 kb @?= Unknown
---         lookupVKB 111 eix2 kb @?= Unknown
---         lookupVKB 112 eix2 kb @?= Unknown
+--         -- T.lookupVKB :: Time -> EIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
+--         T.lookupVKB 0 eix2 kb @?= Known NoOcc
+--         T.lookupVKB 5 eix2 kb @?= Known (Occ 3)
+--         T.lookupVKB 6 eix2 kb @?= Known NoOcc
+--         T.lookupVKB 7 eix2 kb @?= Known (Occ 4)
+--         T.lookupVKB 8 eix2 kb @?= Unknown
+--         T.lookupVKB 111 eix2 kb @?= Unknown
+--         T.lookupVKB 112 eix2 kb @?= Unknown
 
 
 --       , testCase "GetE and PrevV (with self reference after onEvent and missing info)" $ do
@@ -467,8 +620,8 @@ tests = testGroup "NFRP"
 --           eix1 = EIx 1
 --           eix2 = EIx 2
 
---           kb :: KnowledgeBase
---           kb = solution1
+--           kb :: T.KnowledgeBase
+--           kb = T.solution1
 --                 -- time: --0--------5-----7-----9--------
 --                 -----------_--------3-----1_____5____
 --                 [ InputEl eix1
@@ -493,16 +646,16 @@ tests = testGroup "NFRP"
 --                     )
 --                 ]
 
---         -- lookupVKB :: Time -> EIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
---         lookupVKB (-1) eix2 kb @?= Known NoOcc
---         lookupVKB 0 eix2 kb @?= Unknown
---         lookupVKB 1 eix2 kb @?= Known NoOcc
---         lookupVKB 5 eix2 kb @?= Unknown
---         lookupVKB 6 eix2 kb @?= Known NoOcc
---         lookupVKB 7 eix2 kb @?= Unknown
---         lookupVKB 8 eix2 kb @?= Unknown
---         lookupVKB 9 eix2 kb @?= Unknown
---         lookupVKB 10 eix2 kb @?= Unknown
+--         -- T.lookupVKB :: Time -> EIx a -> KnowledgeBase -> MaybeKnown (MaybeOcc a)
+--         T.lookupVKB (-1) eix2 kb @?= Known NoOcc
+--         T.lookupVKB 0 eix2 kb @?= Unknown
+--         T.lookupVKB 1 eix2 kb @?= Known NoOcc
+--         T.lookupVKB 5 eix2 kb @?= Unknown
+--         T.lookupVKB 6 eix2 kb @?= Known NoOcc
+--         T.lookupVKB 7 eix2 kb @?= Unknown
+--         T.lookupVKB 8 eix2 kb @?= Unknown
+--         T.lookupVKB 9 eix2 kb @?= Unknown
+--         T.lookupVKB 10 eix2 kb @?= Unknown
 
 --     , testCase "Swap values (transitive self reference)" $ do
 --         let
@@ -513,8 +666,8 @@ tests = testGroup "NFRP"
 --           a = EIx 2
 --           b = EIx 3
 
---           kb :: KnowledgeBase
---           kb = solution1
+--           kb :: T.KnowledgeBase
+--           kb = T.solution1
 --                 -- time: --0--------5-----7-----9--------
 --                 --------------------()----()____()_______
 --                 [ InputEl swapE
@@ -543,22 +696,22 @@ tests = testGroup "NFRP"
 --                     )
 --                 ]
 
---         lookupVKB 0  a kb @?= Known NoOcc
---         lookupVKB 0  b kb @?= Known NoOcc
---         lookupVKB 1  a kb @?= Known NoOcc
---         lookupVKB 1  b kb @?= Known NoOcc
---         lookupVKB 5  a kb @?= Known (Occ "y")
---         lookupVKB 5  b kb @?= Known (Occ "x")
---         lookupVKB 6  a kb @?= Known NoOcc
---         lookupVKB 6  b kb @?= Known NoOcc
---         lookupVKB 7  a kb @?= Known (Occ "x")
---         lookupVKB 7  b kb @?= Known (Occ "y")
---         lookupVKB 8  a kb @?= Unknown
---         lookupVKB 8  b kb @?= Unknown
---         lookupVKB 9  a kb @?= Unknown
---         lookupVKB 9  b kb @?= Unknown
---         lookupVKB 10 a kb @?= Unknown
---         lookupVKB 10 b kb @?= Unknown
+--         T.lookupVKB 0  a kb @?= Known NoOcc
+--         T.lookupVKB 0  b kb @?= Known NoOcc
+--         T.lookupVKB 1  a kb @?= Known NoOcc
+--         T.lookupVKB 1  b kb @?= Known NoOcc
+--         T.lookupVKB 5  a kb @?= Known (Occ "y")
+--         T.lookupVKB 5  b kb @?= Known (Occ "x")
+--         T.lookupVKB 6  a kb @?= Known NoOcc
+--         T.lookupVKB 6  b kb @?= Known NoOcc
+--         T.lookupVKB 7  a kb @?= Known (Occ "x")
+--         T.lookupVKB 7  b kb @?= Known (Occ "y")
+--         T.lookupVKB 8  a kb @?= Unknown
+--         T.lookupVKB 8  b kb @?= Unknown
+--         T.lookupVKB 9  a kb @?= Unknown
+--         T.lookupVKB 9  b kb @?= Unknown
+--         T.lookupVKB 10 a kb @?= Unknown
+--         T.lookupVKB 10 b kb @?= Unknown
 
 --   , testGroup "Model - Behavior"
 --     [ testCase "Switching" $ do
@@ -574,8 +727,8 @@ tests = testGroup "NFRP"
 --           out :: EIx Int
 --           out    = EIx 5
 
---           kb :: KnowledgeBase
---           kb = solution1
+--           kb :: T.KnowledgeBase
+--           kb = T.solution1
 --                 -- time:      0      10      20
 --                 --     <--0-> 1 <-2-> 3 <-4-> 5 <-6-->
 --                 [ InputEl a
@@ -648,28 +801,28 @@ tests = testGroup "NFRP"
 --                     )
 --                 ]
 
---         lookupVKB (-1) out kb @?= Known 0
---         lookupVKB 0  out kb @?= Known 1
---         lookupVKB 1  out kb @?= Known 2
---         lookupVKB 2  out kb @?= Known 2
---         lookupVKB 3  out kb @?= Known 10
---         lookupVKB 5  out kb @?= Known 11
---         lookupVKB 6  out kb @?= Known 12
---         lookupVKB 7  out kb @?= Known 21
---         lookupVKB 8  out kb @?= Known 22
---         lookupVKB 10 out kb @?= Known 23
---         lookupVKB 15 out kb @?= Known 4
---         lookupVKB 20 out kb @?= Known 5
---         lookupVKB 23 out kb @?= Unknown
---         lookupVKB 25 out kb @?= Unknown
---         lookupVKB 27 out kb @?= Known 16
---         lookupVKB 30 out kb @?= Known 16
---         lookupVKB 35 out kb @?= Known 6
+--         T.lookupVKB (-1) out kb @?= Known 0
+--         T.lookupVKB 0  out kb @?= Known 1
+--         T.lookupVKB 1  out kb @?= Known 2
+--         T.lookupVKB 2  out kb @?= Known 2
+--         T.lookupVKB 3  out kb @?= Known 10
+--         T.lookupVKB 5  out kb @?= Known 11
+--         T.lookupVKB 6  out kb @?= Known 12
+--         T.lookupVKB 7  out kb @?= Known 21
+--         T.lookupVKB 8  out kb @?= Known 22
+--         T.lookupVKB 10 out kb @?= Known 23
+--         T.lookupVKB 15 out kb @?= Known 4
+--         T.lookupVKB 20 out kb @?= Known 5
+--         T.lookupVKB 23 out kb @?= Unknown
+--         T.lookupVKB 25 out kb @?= Unknown
+--         T.lookupVKB 27 out kb @?= Known 16
+--         T.lookupVKB 30 out kb @?= Known 16
+--         T.lookupVKB 35 out kb @?= Known 6
 --     ]
   -- ]
 
-showDerivationStack :: Time -> EIx a -> KnowledgeBase -> String
-showDerivationStack t eix kn = case lookupVKBTrace t eix kn of
+showDerivationStack :: Time -> EIx a -> T.KnowledgeBase -> String
+showDerivationStack t eix kn = case T.lookupVKBTrace t eix kn of
     Unknown -> "Unknown"
     Known dtrace -> "\n" ++ (unlines $ reverse $ dtrace)
 

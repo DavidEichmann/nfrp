@@ -138,7 +138,10 @@ spanExcJustAfter (SpanExc _ (Or (LeftSpaceExc t))) = Just t
 spanExcSameLowerBound :: SpanExc -> SpanExc -> Bool
 spanExcSameLowerBound a b = spanExcJustBefore a == spanExcJustBefore b
 
-data Span = Span SpanBound SpanBound
+data Span = Span
+    { spanLo :: SpanBound
+    , spanHi :: SpanBound
+    }
 data SpanBound
     = Open
     | ClosedInc Time

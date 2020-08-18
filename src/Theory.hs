@@ -8,6 +8,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
@@ -28,9 +29,12 @@ module Theory
   import Data.Kind
   import Data.List (find, foldl')
   import Data.Maybe (fromMaybe, listToMaybe, mapMaybe, fromJust)
+  import Data.String
+  import Data.Text.Prettyprint.Doc
   import qualified Data.Set as S
   import Safe
   import Unsafe.Coerce
+
 
   import Time
   import TimeSpan
@@ -68,7 +72,10 @@ module Theory
   {-# COMPLETE Occ, NoOcc #-}
 
   newtype EIx (a :: Type) = EIx { unEIx :: Int}     -- Index of an event
-    deriving newtype (Eq, Ord, Show, Hashable)
+    deriving newtype (Eq, Ord, Hashable)
+
+  instance Show (EIx a) where
+    show (EIx a) = "EIx " ++ show a
 
   data SomeEIx = forall a . SomeEIx (EIx a)
 
@@ -901,3 +908,14 @@ module Theory
     showPeakValueM (Pure _) = "Pure{}"
     showPeakValueM (GetE ix _) = "(GetE " ++ show ix ++ " _)"
     showPeakValueM (PrevV ix _) = "(PrevV " ++ show ix ++ " _)"
+
+
+
+  instance Pretty (EIx a) where
+    pretty = fromString . show
+
+  instance Pretty (Derivation a) where
+    pretty _der = "_"
+
+  instance Pretty KnowledgeBase where
+    pretty _der = "KnowledgeBase _"
