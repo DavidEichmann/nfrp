@@ -32,6 +32,8 @@ module TimeSpan where
 import Data.List (foldl', group, sort)
 import Data.Maybe (catMaybes, isJust, maybeToList)
 import Data.Binary (Binary)
+import Data.String (IsString(..))
+import Data.Text.Prettyprint.Doc (Pretty(..))
 import GHC.Generics (Generic)
 import Test.QuickCheck hiding (once)
 
@@ -97,14 +99,20 @@ data SpanInc
     deriving anyclass (Binary)
 
 instance Show SpanExc where
-    show (SpanExc allOrR allOrL) = "SpanExc [" ++ rt  ++ " " ++ lt ++ "]"
-        where
-        rt = case allOrR of
-            All -> "←"
-            Or r -> show r
-        lt = case allOrL of
-            All -> "→"
-            Or l -> show l
+    show s = "SpanExc " ++ spanExcShowCompact s
+
+instance Pretty SpanExc where
+    pretty = fromString . spanExcShowCompact
+
+spanExcShowCompact :: SpanExc -> String
+spanExcShowCompact (SpanExc allOrR allOrL) = "[" ++ rt  ++ " " ++ lt ++ "]"
+    where
+    rt = case allOrR of
+        All -> "←"
+        Or r -> show r
+    lt = case allOrL of
+        All -> "→"
+        Or l -> show l
 
 -- Inclusive start Exclusive end span.
 spanExc :: Maybe Time -> Maybe Time -> SpanExc
@@ -749,3 +757,6 @@ instance Difference TimeSpan Time [TimeSpan] where
         | a == b = []
         | otherwise = [DS_Point a]
     difference (DS_SpanExc a) b = DS_SpanExc <$> a `difference` b
+
+instance Pretty TimeSpan where
+    pretty = fromString . show

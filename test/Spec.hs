@@ -59,8 +59,6 @@ gTest
     solution1
     lookupVKB
     = testGroup testGroupName
-
-
       [ testCase "Simple 1" $ do
         let eix1, eix2 :: EIx String
             eix1 = EIx 1
@@ -76,7 +74,9 @@ gTest
                         )
                     ]
 
-        lookupVKB 1 eix2 kb @?= Known (Occ "Hello World!")
+            a @?== b = assertEqual (show $ pretty kb) b a
+
+        lookupVKB 1 eix2 kb @?== Known (Occ "Hello World!")
 
 
       , testCase "Simple 2" $ do
@@ -102,12 +102,13 @@ gTest
                             return (xs ++ " World")
                         )
                     ]
+            a @?== b = assertEqual (show $ pretty kb) b a
 
         -- assertFailure $ show $ pretty kb
 
-        lookupVKB 1 eix2 kb @?= Known (Occ "Hello World!")
-        lookupVKB 3 eix2 kb @?= Unknown
-        lookupVKB 5 eix2 kb @?= Known (Occ "Goodbye World!")
+        lookupVKB 1 eix2 kb @?== Known (Occ "Hello World!")
+        lookupVKB 3 eix2 kb @?== Unknown
+        lookupVKB 5 eix2 kb @?== Known (Occ "Goodbye World!")
 
 
       , testCase "Simple 3" $ do
@@ -134,12 +135,13 @@ gTest
                             return (xs ++ " World")
                         )
                     ]
+            a @?== b = assertEqual (show $ pretty kb) b a
 
         -- assertFailure $ show $ pretty kb
 
-        lookupVKB 1 eix2 kb @?= Known (Occ "Hello World!")
-        lookupVKB 3 eix2 kb @?= Known NoOcc
-        lookupVKB 5 eix2 kb @?= Known (Occ "Goodbye World!")
+        lookupVKB 1 eix2 kb @?== Known (Occ "Hello World!")
+        lookupVKB 3 eix2 kb @?== Known NoOcc
+        lookupVKB 5 eix2 kb @?== Known (Occ "Goodbye World!")
 
 
       , testCase "Simple 4" $ do
@@ -168,14 +170,15 @@ gTest
                             return (xs ++ " World")
                         )
                     ]
+            a @?== b = assertEqual (show $ pretty kb) b a
 
-        lookupVKB 1 eix3 kb @?= Known (Occ "Hello World")
-        lookupVKB 3 eix3 kb @?= Known NoOcc
-        lookupVKB 5 eix3 kb @?= Known (Occ "Goodbye World")
+        lookupVKB 1 eix3 kb @?== Known (Occ "Hello World")
+        lookupVKB 3 eix3 kb @?== Known NoOcc
+        lookupVKB 5 eix3 kb @?== Known (Occ "Goodbye World")
 
-        lookupVKB 1 eix2 kb @?= Known (Occ "Hello World!")
-        lookupVKB 3 eix2 kb @?= Known NoOcc
-        lookupVKB 5 eix2 kb @?= Known (Occ "Hello World! >> Goodbye World!")
+        lookupVKB 1 eix2 kb @?== Known (Occ "Hello World!")
+        lookupVKB 3 eix2 kb @?== Known NoOcc
+        lookupVKB 5 eix2 kb @?== Known (Occ "Hello World! >> Goodbye World!")
 
 
       , testCase "Switching" $ do
@@ -295,26 +298,27 @@ gTest
                                   x -> error $ "Unexpected switch value of: " ++ show x
                       )
                   ]
+            a @?== b = assertEqual (show $ pretty kb) b a
 
-          lookupVKB (-1) out kb @?= Known NoOcc
-          lookupVKB 0  out kb @?= Known (Occ 11)
-          lookupVKB 1  out kb @?= Known NoOcc
-          lookupVKB 2  out kb @?= Known (Occ 12)
-          lookupVKB 3  out kb @?= Known NoOcc
-          lookupVKB 4  out kb @?= Known (Occ 23)
-          lookupVKB 5  out kb @?= Known NoOcc
-          lookupVKB 6  out kb @?= Known (Occ 24)
-          lookupVKB 7  out kb @?= Known NoOcc
-          lookupVKB 8  out kb @?= Known (Occ 35)
-          lookupVKB 9  out kb @?= Known NoOcc
-          lookupVKB 10 out kb @?= Known (Occ 36)
-          lookupVKB 11 out kb @?= Known NoOcc
-          lookupVKB 12 out kb @?= Known (Occ 17)
-          lookupVKB 13 out kb @?= Unknown
-          lookupVKB 14 out kb @?= Unknown
-          lookupVKB 15 out kb @?= Known NoOcc
-          lookupVKB 16 out kb @?= Known (Occ 29)
-          lookupVKB 17 out kb @?= Known NoOcc
+          lookupVKB (-1) out kb @?== Known NoOcc
+          lookupVKB 0  out kb @?== Known (Occ 11)
+          lookupVKB 1  out kb @?== Known NoOcc
+          lookupVKB 2  out kb @?== Known (Occ 12)
+          lookupVKB 3  out kb @?== Known NoOcc
+          lookupVKB 4  out kb @?== Known (Occ 23)
+          lookupVKB 5  out kb @?== Known NoOcc
+          lookupVKB 6  out kb @?== Known (Occ 24)
+          lookupVKB 7  out kb @?== Known NoOcc
+          lookupVKB 8  out kb @?== Known (Occ 35)
+          lookupVKB 9  out kb @?== Known NoOcc
+          lookupVKB 10 out kb @?== Known (Occ 36)
+          lookupVKB 11 out kb @?== Known NoOcc
+          lookupVKB 12 out kb @?== Known (Occ 17)
+          lookupVKB 13 out kb @?== Unknown
+          lookupVKB 14 out kb @?== Unknown
+          lookupVKB 15 out kb @?== Known NoOcc
+          lookupVKB 16 out kb @?== Known (Occ 29)
+          lookupVKB 17 out kb @?== Known NoOcc
 
 
       , testCase "Synthetic-ish 3" $ do
@@ -363,22 +367,23 @@ gTest
                                     return (sum xs + y)
                         )
                     ]
+            a @?== b = assertEqual (show $ pretty kb) b a
 
-        lookupVKB (-1) eix2 kb @?= Known NoOcc
-        lookupVKB 0 eix2 kb @?= Known (Occ 2)
-        lookupVKB 2 eix2 kb @?= Known NoOcc
-        lookupVKB 5 eix2 kb @?= Known (Occ 8)
-        lookupVKB 6 eix2 kb @?= Known NoOcc
-        lookupVKB 7 eix2 kb @?= Known (Occ 18)
-        lookupVKB 8 eix2 kb @?= Known NoOcc
+        lookupVKB (-1) eix2 kb @?== Known NoOcc
+        lookupVKB 0 eix2 kb @?== Known (Occ 2)
+        lookupVKB 2 eix2 kb @?== Known NoOcc
+        lookupVKB 5 eix2 kb @?== Known (Occ 8)
+        lookupVKB 6 eix2 kb @?== Known NoOcc
+        lookupVKB 7 eix2 kb @?== Known (Occ 18)
+        lookupVKB 8 eix2 kb @?== Known NoOcc
 
-        lookupVKB (-1) eix3 kb @?= Known NoOcc
-        lookupVKB 0 eix3 kb @?= Known (Occ 4)
-        lookupVKB 2 eix3 kb @?= Known NoOcc
-        lookupVKB 5 eix3 kb @?= Known (Occ 12)
-        lookupVKB 6 eix3 kb @?= Known NoOcc
-        lookupVKB 7 eix3 kb @?= Known (Occ 24)
-        lookupVKB 8 eix3 kb @?= Known NoOcc
+        lookupVKB (-1) eix3 kb @?== Known NoOcc
+        lookupVKB 0 eix3 kb @?== Known (Occ 4)
+        lookupVKB 2 eix3 kb @?== Known NoOcc
+        lookupVKB 5 eix3 kb @?== Known (Occ 12)
+        lookupVKB 6 eix3 kb @?== Known NoOcc
+        lookupVKB 7 eix3 kb @?== Known (Occ 24)
+        lookupVKB 8 eix3 kb @?== Known NoOcc
       ]
 
 

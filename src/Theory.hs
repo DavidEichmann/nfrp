@@ -1,3 +1,4 @@
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DeriveFunctor #-}
@@ -914,8 +915,26 @@ module Theory
   instance Pretty (EIx a) where
     pretty = fromString . show
 
+  instance Pretty SomeEIx where
+    pretty (SomeEIx eix) = pretty eix
+
   instance Pretty (Derivation a) where
-    pretty _der = "_"
+    pretty der = case der of
+      Derivation{..} -> nest 2 $ vsep
+        [ "Derivation"
+        , "derTrace = " <> "_" -- pretty derTrace
+        , "derTtspan = " <> pretty derTtspan
+        , "derPrevDeps = " <> pretty derPrevDeps
+        , "derContDerivation = " <> "_" -- pretty derContDerivation
+        , "derSeenOcc = " <> pretty derSeenOcc
+        ]
+      DeriveAfterFirstChange{..} -> nest 2 $ vsep
+        [ "DeriveAfterFirstChange"
+        , "derTrace = " <> "_" -- pretty derTrace
+        , "derAfterTspan = " <> "_" -- pretty derAfterTspan
+        , "derAfterDep = " <> pretty derAfterDep
+        , "derAfterContDerivation = " <> "_" -- pretty derAfterContDerivation
+        ]
 
   instance Pretty KnowledgeBase where
-    pretty _der = "KnowledgeBase _"
+    pretty _kb = "KnowledgeBase _"

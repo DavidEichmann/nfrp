@@ -1245,10 +1245,26 @@ instance Pretty KnowledgeBase where
   pretty kb = vsep
     [ "KnowledgeBase:"
     , indent 2 $ vsep $
-      [ "kbFacts"          <+> "_" -- pretty (kbFacts kb)
+      [ "kbFacts"          <+> pretty (kbFacts kb)
       , "kbDerivations"    <+> pretty (kbDerivations kb)
       , "kbHotDerivations" <+> pretty (kbHotDerivations kb)
       ]
+    ]
+
+instance Pretty Facts where
+  pretty fs = nest 2 $ vsep $ "Facts" :
+    [ nest 2 $ vsep
+      [ pretty eix
+      , hsep
+        [ case eitherNoOccTsOrOcc of
+            Left (DS_SpanExc s) -> pretty s
+            Left (DS_Point t) -> "{NoOcc @" <> pretty t <> "}"
+            Right (t, _) -> "{Occ @" <> pretty t <> "}"
+        | (_, eitherNoOccTsOrOcc) <- T.elems tl
+        ]
+      ]
+    | DM.SomeIx eix <- DM.keys fs
+    , Just (ValueTimeline tl) <- [DM.lookup eix fs]
     ]
 
 instance Pretty (Set SomeDerivationID) where
@@ -1265,7 +1281,7 @@ instance Pretty DerivationsByDeps where
     [ "DerivationsByDeps:"
     , indent 2 $ vsep $
       [ "NextID" <+> pretty (dbdNextID dbd)
-      , "Derivation" <+> pretty [ (DerivationID derId, eix, der) | (derId, (eix, der)) <- IM.assocs $ dbdDerivation dbd]
+      , "Derivations" <+> pretty [ (DerivationID derId, eix, der) | (derId, (eix, der)) <- IM.assocs $ dbdDerivation dbd]
       , "DerivationDeps" <+> "_" -- pretty (dbdDerivationDeps dbd)
       , "IxSpanLoJurisdiction" <+> "_" -- pretty (dbdIxSpanLoJurisdiction dbd)
       , "IxDepOnFactSpan" <+> "_" -- pretty (dbdIxDepOnFactSpan dbd)
