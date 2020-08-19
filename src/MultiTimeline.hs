@@ -26,6 +26,7 @@
 module MultiTimeline where
 
 import qualified Data.List as L
+import           Data.Text.Prettyprint.Doc
 import Prelude hiding (lookup, null)
 
 -- import Time
@@ -38,6 +39,9 @@ import TimeSpan
 -- amount of overlap, but we hope to deal with relativelly small amounts of
 -- overlap. Invariant: all Timelines are non-empty.
 data MultiTimeline a = MultiTimeline [(Span, a)] -- TODO make this efficient
+
+instance Pretty a => Pretty (MultiTimeline a) where
+    pretty (MultiTimeline xs) = pretty xs
 
 empty :: MultiTimeline a
 empty = MultiTimeline []

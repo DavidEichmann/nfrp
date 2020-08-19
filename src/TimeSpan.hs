@@ -760,3 +760,22 @@ instance Difference TimeSpan Time [TimeSpan] where
 
 instance Pretty TimeSpan where
     pretty = fromString . show
+
+
+instance Show Span where
+    show s = "Span " ++ spanShowCompact s
+
+instance Pretty Span where
+    pretty = fromString . spanShowCompact
+
+spanShowCompact :: Span -> String
+spanShowCompact (Span lo hi) = loStr ++ "," ++ hiStr
+    where
+    loStr = case lo of
+        Open -> "[←"
+        ClosedInc t -> "[" ++ show t
+        ClosedExc t -> "(" ++ show t
+    hiStr = case hi of
+        Open -> "→]"
+        ClosedInc t -> show t ++ "]"
+        ClosedExc t -> show t ++ ")"

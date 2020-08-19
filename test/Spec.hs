@@ -36,6 +36,7 @@ import Theory
     , Inputs(..)
     , requireE
     , getE
+    , currV
     , prevV
     , ValueM(..)
     )
@@ -287,10 +288,10 @@ gTest
                             ]
                       )
                   -- time: --0--2--4--6--8--10-12---14-16---
-                  -----------11-12-23-24-35-36-17_____------
+                  -----------11-22-23-34-35-16-_____28-29---
                   , InputEl out
                       (Right $ do
-                          switchVal <- fromMaybe 1 <$> prevV switch
+                          switchVal <- fromMaybe 1 <$> currV switch
                           requireE $ case switchVal of
                                   1 -> a
                                   2 -> b
@@ -303,19 +304,19 @@ gTest
           lookupVKB (-1) out kb @?== Known NoOcc
           lookupVKB 0  out kb @?== Known (Occ 11)
           lookupVKB 1  out kb @?== Known NoOcc
-          lookupVKB 2  out kb @?== Known (Occ 12)
+          lookupVKB 2  out kb @?== Known (Occ 22)
           lookupVKB 3  out kb @?== Known NoOcc
           lookupVKB 4  out kb @?== Known (Occ 23)
           lookupVKB 5  out kb @?== Known NoOcc
-          lookupVKB 6  out kb @?== Known (Occ 24)
+          lookupVKB 6  out kb @?== Known (Occ 34)
           lookupVKB 7  out kb @?== Known NoOcc
           lookupVKB 8  out kb @?== Known (Occ 35)
           lookupVKB 9  out kb @?== Known NoOcc
-          lookupVKB 10 out kb @?== Known (Occ 36)
+          lookupVKB 10 out kb @?== Known (Occ 16)
           lookupVKB 11 out kb @?== Known NoOcc
-          lookupVKB 12 out kb @?== Known (Occ 17)
+          lookupVKB 12 out kb @?== Unknown
           lookupVKB 13 out kb @?== Unknown
-          lookupVKB 14 out kb @?== Unknown
+          lookupVKB 14 out kb @?== Known (Occ 28)
           lookupVKB 15 out kb @?== Known NoOcc
           lookupVKB 16 out kb @?== Known (Occ 29)
           lookupVKB 17 out kb @?== Known NoOcc

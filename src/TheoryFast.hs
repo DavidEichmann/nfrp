@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -42,6 +43,7 @@ import           Data.Text.Prettyprint.Doc
 import           Unsafe.Coerce
 import           GHC.Exts (Any)
 import           Safe (minimumMay)
+import           Debug.Trace
 
 import DMap (DMap)
 import qualified DMap as DM
@@ -354,13 +356,13 @@ dbdSetDeps derId deps dbd = DerivationsByDeps
     dbdMid = dbdDelete derId dbd
 
 alterMT :: Ord k => (MultiTimeline a -> MultiTimeline a) -> k -> Map k (MultiTimeline a) -> Map k (MultiTimeline a)
-alterMT f k m = M.alter (>>= (\m' -> let x = f m' in if MT.null x then Nothing else Just x)) k m
+alterMT f k m  = M.alter (\m' -> let x = f (fromMaybe MT.empty m') in if MT.null x then Nothing else Just x) k m
 
 alterMap :: Ord k1 => (Map k2 a -> Map k2 a) -> k1 -> Map k1 (Map k2 a) -> Map k1 (Map k2 a)
-alterMap f k m = M.alter (>>= (\m' -> let x = f m' in if M.null x then Nothing else Just x)) k m
+alterMap f k m = M.alter (\m' -> let x = f (fromMaybe M.empty  m') in if  M.null x then Nothing else Just x) k m
 
 alterSet :: Ord k => (Set a -> Set a) -> k -> Map k (Set a) -> Map k (Set a)
-alterSet f k m = M.alter (>>= (\s  -> let x = f s  in if S.null x then Nothing else Just x)) k m
+alterSet f k m = M.alter (\s  -> let x = f (fromMaybe S.empty  s ) in if  S.null x then Nothing else Just x) k m
 
 -- | Which derivations are affected (dependencies may have changed) given new
 -- facts and derivations.
@@ -433,13 +435,13 @@ dbdAffectedDers newDers newFacts dbd = S.unions $
     -- Apply lower bound
     n_loBound = case loBound of
         Open -> jbDeps
-        ClosedInc t -> M.dropWhileAntitone (<= t) jbDeps
-        ClosedExc t -> M.dropWhileAntitone (<= t) jbDeps
+        ClosedInc t -> M.dropWhileAntitone (<=t) jbDeps
+        ClosedExc t -> M.dropWhileAntitone (<=t) jbDeps
     -- Apply upper bound
     jbDeps' =  case hiBound of
         Open -> n_loBound
-        ClosedInc t -> M.takeWhileAntitone (< t) n_loBound
-        ClosedExc t -> M.takeWhileAntitone (< t) n_loBound
+        ClosedInc t -> M.takeWhileAntitone (<=t) n_loBound
+        ClosedExc t -> M.takeWhileAntitone (<=t) n_loBound
 
   lookupJustAfter :: Span -> Map Time (Set SomeDerivationID) -> [Set SomeDerivationID]
   lookupJustAfter
@@ -450,13 +452,13 @@ dbdAffectedDers newDers newFacts dbd = S.unions $
     -- Apply lower bound
     n_loBound = case loBound of
         Open -> jbDeps
-        ClosedInc t -> M.dropWhileAntitone (< t) jbDeps
-        ClosedExc t -> M.dropWhileAntitone (< t) jbDeps
+        ClosedInc t -> M.dropWhileAntitone (<t) jbDeps
+        ClosedExc t -> M.dropWhileAntitone (<t) jbDeps
     -- Apply upper bound
     jbDeps' =  case hiBound of
         Open -> n_loBound
-        ClosedInc t -> M.takeWhileAntitone (<= t) n_loBound
-        ClosedExc t -> M.takeWhileAntitone (<= t) n_loBound
+        ClosedInc t -> M.takeWhileAntitone (<t) n_loBound
+        ClosedExc t -> M.takeWhileAntitone (<t) n_loBound
 
 
 -- Now a natural fist attempt at a solution is obvious: start with an initial
@@ -1119,6 +1121,22 @@ data DerivationDep
   -- after the given time. (Nothing means -Inf)
   | forall a . Dep_DerivationClearance (Maybe Time) (EIx a)
 
+instance Show DerivationDep where
+  show dep = case dep of
+    Dep_FactSpan ts eix -> "Dep_FactSpan " <> show ts <> " " <> show eix
+    Dep_NegInf eix -> "Dep_NegInf " <> show eix
+    Dep_JustBefore t eix -> "Dep_JustBefore " <> show t <> " " <> show eix
+    Dep_JustAfter t eix -> "Dep_JustAfter " <> show t <> " " <> show eix
+    Dep_DerivationClearance tmay eix -> "Dep_DerivationClearance " <> show tmay <> " " <> show eix
+
+instance Pretty DerivationDep where
+  pretty dep = case dep of
+    Dep_FactSpan ts eix -> "Dep_FactSpan " <> pretty ts <> " " <> pretty eix
+    Dep_NegInf eix -> "Dep_NegInf " <> pretty eix
+    Dep_JustBefore t eix -> "Dep_JustBefore " <> pretty t <> " " <> pretty eix
+    Dep_JustAfter t eix -> "Dep_JustAfter " <> pretty t <> " " <> pretty eix
+    Dep_DerivationClearance tmay eix -> "Dep_DerivationClearance " <> pretty tmay <> " " <> pretty eix
+
 --
 -- DerivationM Primitives
 --
@@ -1282,9 +1300,9 @@ instance Pretty DerivationsByDeps where
     , indent 2 $ vsep $
       [ "NextID" <+> pretty (dbdNextID dbd)
       , "Derivations" <+> pretty [ (DerivationID derId, eix, der) | (derId, (eix, der)) <- IM.assocs $ dbdDerivation dbd]
-      , "DerivationDeps" <+> "_" -- pretty (dbdDerivationDeps dbd)
+      , "DerivationDeps" <+> pretty (M.assocs $ dbdDerivationDeps dbd)
       , "IxSpanLoJurisdiction" <+> "_" -- pretty (dbdIxSpanLoJurisdiction dbd)
-      , "IxDepOnFactSpan" <+> "_" -- pretty (dbdIxDepOnFactSpan dbd)
+      , "IxDepOnFactSpan" <+> pretty (M.assocs $ dbdIxDepOnFactSpan dbd)
       , "IxDepOnNegInf" <+> "_" -- pretty (dbdIxDepOnNegInf dbd)
       , "IxDepOnJustBefore" <+> "_" -- pretty (dbdIxDepOnJustBefore dbd)
       , "IxDepOnJustAfter" <+> "_" -- pretty (dbdIxDepOnJustAfter dbd)
