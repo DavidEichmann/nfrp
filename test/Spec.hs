@@ -204,7 +204,7 @@ gTest
                             , Fact_Occ [] 0 11
                             , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 0) (Just 2))
                             , Fact_Occ [] 2 12
-                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 0) (Just 4))
+                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 2) (Just 4))
                             , Fact_Occ [] 4 13
                             , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 4) (Just 6))
                             , Fact_Occ [] 6 14
@@ -228,7 +228,7 @@ gTest
                             , Fact_Occ [] 0 21
                             , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 0) (Just 2))
                             , Fact_Occ [] 2 22
-                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 0) (Just 4))
+                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 2) (Just 4))
                             , Fact_Occ [] 4 23
                             , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 4) (Just 6))
                             , Fact_Occ [] 6 24
@@ -252,7 +252,7 @@ gTest
                             , Fact_Occ [] 0 31
                             , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 0) (Just 2))
                             , Fact_Occ [] 2 32
-                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 0) (Just 4))
+                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 2) (Just 4))
                             , Fact_Occ [] 4 33
                             , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 4) (Just 6))
                             , Fact_Occ [] 6 34

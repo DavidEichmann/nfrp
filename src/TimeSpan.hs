@@ -703,7 +703,7 @@ data TimeSpan
     = DS_Point Time
     -- | DS_SpanExc tspan ⟹ t ∈ tspan
     | DS_SpanExc SpanExc
-    deriving (Show)
+    deriving (Eq, Show)
 
 instance Intersect TimeSpan SpanExc (Maybe TimeSpan) where intersect = flip intersect
 instance Intersect SpanExc TimeSpan (Maybe TimeSpan) where

@@ -47,13 +47,17 @@ module Timeline
      where
 
 import Prelude hiding (lookup, null)
-import Data.List (foldl')
+import Data.List (inits, tails, nub, foldl')
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as M
 
 import Time
 import TimeSpan
 import Theory (MaybeOcc, pattern NoOcc, pattern Occ)
+import GHC.Stack (HasCallStack)
+import Control.Exception (assert)
+import Data.Either (partitionEithers)
+import Data.Maybe (isJust)
 
 -- | A timeline is a map from time to value where values may be set on spans of
 -- time.
@@ -80,13 +84,20 @@ fromList noOccs occs = foldl' (\tl (tr, timeSpan) -> insertNoOcc tr timeSpan tl)
     where
     occsTl = foldl' (\tl (tr, timeSpan, value) -> insertOcc tr timeSpan value tl) empty occs
 
-insertNoOcc :: trace -> TimeSpan -> Timeline trace a -> Timeline trace a
-insertNoOcc tr tts (Timeline m n) = case tts of
-    DS_Point t -> Timeline m (M.insert t (tr, NoOcc) n)
-    DS_SpanExc ts -> Timeline (M.insert (spanExcJustBefore ts) (tr, spanExcJustAfter ts) m) n
-
+insertNoOcc :: HasCallStack => trace -> TimeSpan -> Timeline trace a -> Timeline trace a
+insertNoOcc tr tts tl@(Timeline m n) = assertTimeline $ case tts of
+    DS_Point t
+        | isJust (lookup t tl) -> error $ "insertNoOcc: key already exists at " ++ show tts
+        | otherwise -> Timeline m (M.insert t (tr, NoOcc) n)
+    DS_SpanExc ts
+        | tl' <- select (spanExcToSpan ts) tl
+        , not (null tl') -> error $ "insertNoOcc: existing keys " ++ show (keys tl') ++ " intersects new key " ++ show tts
+        | otherwise -> Timeline (M.insert (spanExcJustBefore ts) (tr, spanExcJustAfter ts) m) n
 insertOcc :: trace -> Time -> a -> Timeline trace a -> Timeline trace a
-insertOcc tr t a (Timeline m n) = Timeline m (M.insert t (tr, Occ a) n)
+insertOcc tr t a (Timeline m n) = assertTimeline $ Timeline m (M.insert t (tr, Occ a) n)
+
+keys :: Timeline trace a -> [Span]
+keys tl = either timeSpanToSpan (timeToSpan . fst) . snd <$> elems tl
 
 -- | All elements in chronological order
 elems :: forall trace a . Timeline trace a -> [(trace, Either TimeSpan (Time, a))]
@@ -195,50 +206,59 @@ select (Span loBound hiBound) (Timeline m n) = Timeline m' n'
                     Just lo -> lo < tHi
                 ) m_loBound
 
-crop :: Span -> Timeline trace a -> Timeline trace a
-crop sp@(Span loBound hiBound) tl = Timeline m' n'
+crop :: HasCallStack => Span -> Timeline trace a -> Timeline trace a
+crop sp@(Span loBound hiBound) tl@(Timeline m n) = assertTimeline $ Timeline m' n'
     where
     -- Select
     Timeline sm sn = select sp tl
 
-    -- Crop the first and last elements if needed
+    -- Crop the first elements if needed
     (m_loBound, n_loBound) = case M.minViewWithKey sm of
         -- No min (implying empty)
         Nothing -> (sm, sn)
         Just ((lo', (tr, hi')), mWithoutMin) -> case loBound of
             ClosedInc lo
-                | Just lo > lo'
-                -> ( insertErr (Just lo) (tr, hi') mWithoutMin
-                    , insertErr lo (tr, NoOcc) sn -- insert point since we include lo
+                | lo' < Just lo
+                -> ( insertErr (spanExc lo' hi') (Just lo) (tr, hi') mWithoutMin
+                    , insertErr (spanExc lo' hi') lo (tr, NoOcc) sn -- insert point since we include lo
                     )
             ClosedExc lo
-                | Just lo > lo'
-                -> ( insertErr (Just lo) (tr, hi') mWithoutMin
+                | lo' < Just lo
+                -> ( insertErr (spanExc lo' hi') (Just lo) (tr, hi') mWithoutMin
                     , sn
                     )
             _ -> (sm, sn)
 
+    -- Crop the last elements if needed
     (m', n') = case M.maxViewWithKey m_loBound of
         -- No max (implying empty)
         Nothing -> (m_loBound, n_loBound)
         Just ((lo', (tr, hi')), mWithoutMin) -> case hiBound of
             ClosedInc hi
                 | maybe True (hi <) hi'
-                -> ( insertErr lo' (tr, hi') mWithoutMin
-                   , insertErr hi (tr, NoOcc) n_loBound -- insert point since we include hi
+                -> ( insertErr (spanExc lo' hi') lo' (tr, hi') mWithoutMin
+                   , insertErr (spanExc lo' hi') hi (tr, NoOcc) n_loBound -- insert point since we include hi
                    )
             ClosedExc hi
                 | maybe True (hi <) hi'
-                -> ( insertErr lo' (tr, hi') mWithoutMin
+                -> ( insertErr (spanExc lo' hi') lo' (tr, hi') mWithoutMin
                    , n_loBound
                    )
             _ -> (m_loBound, n_loBound)
 
-    insertErr :: Ord k => k -> v -> Map k v -> Map k v
-    insertErr = M.insertWith (\_ _ -> error "crop: Duplicate keys")
+    insertErr :: (HasCallStack, Ord k, Show k) => SpanExc -> k -> v -> Map k v -> Map k v
+    insertErr derivedFrom = M.insertWithKey (\k _ _ -> error $ "crop: Duplicate keys at "
+                                    ++ show k
+                                    ++ " (derived from "
+                                    ++ show derivedFrom
+                                    ++ ") when cropping for "
+                                    ++ show sp
+                                    ++ ". n = " ++ show (M.keys n)
+                                    ++ ". sn = " ++ show (M.keys sn)
+                                )
 
 
-cropTimeSpan :: forall a trace . TimeSpan -> Timeline trace a -> Timeline trace a
+cropTimeSpan :: forall a trace . HasCallStack => TimeSpan -> Timeline trace a -> Timeline trace a
 cropTimeSpan ts = crop (timeSpanToSpan ts)
 
 lookup :: Time -> Timeline trace a -> Maybe (MaybeOcc a)
@@ -292,8 +312,8 @@ lookupAtStartOf' tts tl = case tts of
         Nothing -> lookupNegInf' tl
         Just tLo -> lookupJustAfter' tLo tl
 
-union :: forall trace a . Timeline trace a -> Timeline trace a -> Timeline trace a
-union (Timeline ma na) (Timeline mb nb) = Timeline (ma <> mb) (na <> nb)
+union :: forall trace a . HasCallStack => Timeline trace a -> Timeline trace a -> Timeline trace a
+union (Timeline ma na) (Timeline mb nb) = assertTimeline $ Timeline (ma <> mb) (na <> nb)
 
 {-}
 
@@ -504,3 +524,18 @@ doubleR tc c (Timeline _ ta a x (Timeline _ tb b y1 y2)) z
     = timeline tb b (timeline ta a x y1) (timeline tc c y2 z)
 doubleR _ _ _ _ = undefined
 -}
+
+assertTimeline :: HasCallStack => Timeline trace a -> Timeline trace a
+assertTimeline tl = tl
+-- assertTimeline tl = isValidTimeline tl
+
+-- Returns errors
+checkTimeline :: Timeline trace a -> [String]
+checkTimeline tl
+    -- No overlap of keys
+    =
+        [ "Overlapping keys (" ++ show a ++ ", " ++ show b ++ ")"
+        | a:bs <- tails (keys tl)
+        , b <- bs
+        , a `intersects` b
+        ]

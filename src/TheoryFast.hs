@@ -35,7 +35,7 @@ import           Data.IntMap (IntMap)
 import           Data.List (find)
 import qualified Data.Map as M
 import           Data.Map (Map)
-import           Data.Maybe (fromMaybe, fromJust)
+import           Data.Maybe (fromMaybe, fromJust, catMaybes)
 import           Data.Set (Set)
 import qualified Data.Set as S
 import           Data.String
@@ -102,7 +102,16 @@ newtype ValueTimelineW a = ValueTimeline { unVTW :: ValueTimeline a }
 type Facts = DMap EIx ValueTimelineW
 
 listToFacts :: [Th.SomeValueFact] -> Facts
-listToFacts someValueFacts = DM.fromListWith (<>)
+listToFacts someValueFacts
+  | not (null errs) = error $ unlines errs
+  | otherwise = fs
+  where
+  errs = concat
+    [ ((show k ++ ": ") ++) <$> T.checkTimeline tl
+    | DM.SomeIx k <- DM.keys fs
+    , let ValueTimeline tl = fs DM.! k
+    ]
+  fs = DM.fromListWith (<>)
     [ DM.El
         eix
         (ValueTimeline $ case fact of
