@@ -396,7 +396,7 @@ tests = testGroup "NFRP"
         TF.solution1 TF.lookupVKB
   , testGroup "Model - Event based"
       [ let n = 5 in testCase ("TheoryFast vs Theory on Synthetic " ++ show n) $ do
-        let (vixs, ts, ins) = syntheticN n
+        let (vixs, ts, ins) = syntheticN n 100
             lookupT  = let kb =  T.solution1 ins in \t vix -> T.lookupVKB t vix kb
             lookupTF = let kb = TF.solution1 ins in \t vix ->TF.lookupVKB t vix kb
         sequence_

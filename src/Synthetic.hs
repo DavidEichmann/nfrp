@@ -17,11 +17,11 @@ import TimeSpan
 import Theory (ValueM(Pure), MaybeOcc(..), pattern NoOcc, Inputs, InputEl(..), EIx(..), Fact(..), prevV, getE)
 
 -- | Synthetic inputs and EIx/times that should be sampled
-syntheticN :: Int -> ([EIx Int], [Time], Inputs)
-syntheticN n =
+syntheticN :: Int -> Int -> ([EIx Int], [Time], Inputs)
+syntheticN nE nT =
   ( vixs
   , sampleTimes
-  , [ InputEl vix $ if i < n
+  , [ InputEl vix $ if i < nE
       -- Source Value
       then Left
         [ case ts of
@@ -51,10 +51,10 @@ syntheticN n =
   where
   vixs = EIx <$> [0..m]
 
-  m = (2 * n) - 1
+  m = (2 * nE) - 1
 
   timesN :: Num a => a
-  timesN = 100
+  timesN = fromIntegral nT
 
   timeStep :: Num a => a
   timeStep = 10
