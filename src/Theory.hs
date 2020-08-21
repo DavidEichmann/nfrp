@@ -252,8 +252,8 @@ module Theory
 -- knowledge base and continue evaluating derivations until all terminate or
 -- deadlock:
 
-  solution1 :: Inputs -> KnowledgeBase
-  solution1 inputs = iterateUntilChange initialKb
+  mkKnowledgeBase :: Inputs -> KnowledgeBase
+  mkKnowledgeBase inputs = iterateUntilChange initialKb
     where
     initialFacts = concat
       [ SomeValueFact eix <$> eventFacts

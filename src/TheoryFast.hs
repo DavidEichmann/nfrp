@@ -35,7 +35,7 @@ import           Data.IntMap (IntMap)
 import           Data.List (find)
 import qualified Data.Map as M
 import           Data.Map (Map)
-import           Data.Maybe (fromMaybe, fromJust, catMaybes)
+import           Data.Maybe (fromMaybe, fromJust)
 import           Data.Set (Set)
 import qualified Data.Set as S
 import           Data.String
@@ -43,7 +43,6 @@ import           Data.Text.Prettyprint.Doc
 import           Unsafe.Coerce
 import           GHC.Exts (Any)
 import           Safe (minimumMay)
-import           Debug.Trace
 
 import DMap (DMap)
 import qualified DMap as DM
@@ -474,8 +473,29 @@ dbdAffectedDers newDers newFacts dbd = S.unions $
 -- knowledge base and continue evaluating derivations until all terminate or
 -- deadlock:
 
-solution1 :: Inputs -> KnowledgeBase
-solution1 inputs = execState iterateUntilChange initialKb
+insertFacts :: Facts -> KnowledgeBase -> KnowledgeBase
+insertFacts fs = execState (insertFactsAndDers fs [])
+
+insertFactsAndDers :: Facts -> [SomeDerivation] -> KnowledgeBaseM ()
+insertFactsAndDers newFacts newSomeDers = do
+  oldHotDers <- gets kbHotDerivations -- note we've already popped off derId
+  oldDers <- gets kbDerivations -- note we've already popped off derId
+  let (newDerIds, newKbDers) = dbdInsertsNoDeps newSomeDers oldDers
+      newKbHotDers
+        = oldHotDers
+        -- New derivations are all hot (we haven't calculated their deps yet)
+        <> S.fromList newDerIds
+        -- As dependencies have changed, more Derivations may be hot.
+        <> dbdAffectedDers newSomeDers newFacts newKbDers
+  modify (\kb -> KnowledgeBase
+    { kbFacts = kbFacts kb <> newFacts
+    , kbDerivations = newKbDers
+    , kbHotDerivations = newKbHotDers
+    })
+  iterateWhileHot
+
+mkKnowledgeBase :: Inputs -> KnowledgeBase
+mkKnowledgeBase inputs = execState iterateWhileHot initialKb
   where
   initialFacts = listToFacts $ concat
     [ Th.SomeValueFact eix <$> eventFacts
@@ -491,53 +511,39 @@ solution1 inputs = execState iterateUntilChange initialKb
                 , kbHotDerivations = S.fromList initialDerivationIDs
                 }
 
-  iterateUntilChange :: KnowledgeBaseM ()
-  iterateUntilChange = go
-    where
-      -- Try remove a derivation from kbHotDerivations
-      popHotDerivation = do
-        mvMay <- gets (S.minView . kbHotDerivations)
-        case mvMay of
-          Nothing -> return Nothing
-          Just (derId, newHotDers) -> do
-            modify (\kb -> kb { kbHotDerivations = newHotDers })
-            return (Just derId)
-
-      go = do
-        -- Pop a DerivatiopnID off the Hot list
-        derIdMay <- popHotDerivation
-        case derIdMay of
-          Nothing -> return ()
-          Just (SomeDerivationID vix derId) -> do
-            -- Poke the Derivation
-            derMay <- gets (dbdLookupDer derId . kbDerivations)
-            let Just (_, der) = derMay
-            allDers <- gets kbDerivations
-            allFacts <- gets kbFacts
-            let (mayNewFactsAndDers, (), deps) = runRWS (pokeDerivation vix der) (allFacts, allDers) ()
-            case mayNewFactsAndDers of
-              -- If no progress, simply update the deps (they may have changed).
-              Nothing -> modify (\kb -> kb { kbDerivations = dbdSetDeps derId deps (kbDerivations kb) })
-              -- Else we made progress and should add the new facts and (hot) derivations.
-              Just (newFactsTl, newDers) -> do
-                oldHotDers <- gets kbHotDerivations -- note we've already popped off derId
-                let newSomeDers = SomeDerivation vix <$> newDers
-                    newFacts = singletonFacts vix newFactsTl
-                    (newDerIds, newKbDers)
-                      = dbdInsertsNoDeps newSomeDers
-                      $ dbdDelete derId allDers
-                    newKbHotDers
-                      = oldHotDers
-                      -- New derivations are all hot (we haven't calculated their deps yet)
-                      <> S.fromList newDerIds
-                      -- As dependencies have changed, more Derivations may be hot.
-                      <> dbdAffectedDers newSomeDers newFacts newKbDers
-                modify (\kb -> KnowledgeBase
-                  { kbFacts = kbFacts kb <> newFacts
-                  , kbDerivations = newKbDers
-                  , kbHotDerivations = newKbHotDers
-                  })
-            go
+iterateWhileHot :: KnowledgeBaseM ()
+iterateWhileHot = do
+  -- Pop a DerivatiopnID off the Hot list
+  derIdMay <- popHotDerivation
+  case derIdMay of
+    Nothing -> return ()
+    Just (SomeDerivationID vix derId) -> do
+      -- Poke the Derivation
+      derMay <- gets (dbdLookupDer derId . kbDerivations)
+      let Just (_, der) = derMay
+      allDers <- gets kbDerivations
+      allFacts <- gets kbFacts
+      let (mayNewFactsAndDers, (), deps) = runRWS (pokeDerivation vix der) (allFacts, allDers) ()
+      case mayNewFactsAndDers of
+        -- If no progress, simply update the deps (they may have changed).
+        Nothing -> do
+          modify (\kb -> kb { kbDerivations = dbdSetDeps derId deps (kbDerivations kb) })
+          iterateWhileHot
+        -- Else we made progress and should add the new facts and (hot) derivations.
+        Just (newFactsTl, newDers) -> do
+          modify (\kb -> kb { kbDerivations = dbdDelete derId (kbDerivations kb) })
+          let newSomeDers = SomeDerivation vix <$> newDers
+              newFacts = singletonFacts vix newFactsTl
+          insertFactsAndDers newFacts newSomeDers
+  where
+  -- Try remove a derivation from kbHotDerivations
+  popHotDerivation = do
+    mvMay <- gets (S.minView . kbHotDerivations)
+    case mvMay of
+      Nothing -> return Nothing
+      Just (derId, newHotDers) -> do
+        modify (\kb -> kb { kbHotDerivations = newHotDers })
+        return (Just derId)
 
   -- This is the important part. Is corresponds to the `deriveE` denotation.
   pokeDerivation

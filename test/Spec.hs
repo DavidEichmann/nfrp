@@ -57,7 +57,7 @@ gTest :: forall gKnowledgeBase
     -> TestTree
 gTest
     testGroupName
-    solution1
+    mkKnowledgeBase
     lookupVKB
     = testGroup testGroupName
       [ testCase "Simple 1" $ do
@@ -66,7 +66,7 @@ gTest
             eix2 = EIx 2
 
             kb :: gKnowledgeBase
-            kb = solution1
+            kb = mkKnowledgeBase
                     [ InputEl eix1 (Left [Fact_Occ   [] 1 "Hello"])
                     , InputEl eix2
                         (Right $ do
@@ -87,7 +87,7 @@ gTest
             eix3 = EIx 3
 
             kb :: gKnowledgeBase
-            kb = solution1
+            kb = mkKnowledgeBase
                     [ InputEl eix1 (Left
                         [ Fact_Occ   [] 1 "Hello"
                         , Fact_Occ   [] 5 "Goodbye"
@@ -119,7 +119,7 @@ gTest
             eix3 = EIx 3
 
             kb :: gKnowledgeBase
-            kb = solution1
+            kb = mkKnowledgeBase
                     [ InputEl eix1 (Left
                         [ Fact_Occ   [] 1 "Hello"
                         , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 1) (Just 5))
@@ -152,7 +152,7 @@ gTest
             eix3 = EIx 3
 
             kb :: gKnowledgeBase
-            kb = solution1
+            kb = mkKnowledgeBase
                     [ InputEl eix1 (Left
                         [ Fact_NoOcc [] (DS_SpanExc $ spanExc Nothing (Just 1))
                         , Fact_Occ   [] 1 "Hello"
@@ -196,7 +196,7 @@ gTest
             out    = EIx 5
 
             kb :: gKnowledgeBase
-            kb = solution1
+            kb = mkKnowledgeBase
                   -- time: --0--2--4--6--8--10-12-14-16---
                   -----------11-12-13-14-15-16-17-18-19---
                   [ InputEl a
@@ -330,7 +330,7 @@ gTest
             eix3 = EIx 3
 
             kb :: gKnowledgeBase
-            kb = solution1
+            kb = mkKnowledgeBase
                     -- time: --0--------5-----7--------------
                     --         2        4     6
                     [ InputEl eix1
@@ -391,14 +391,14 @@ gTest
 tests :: TestTree
 tests = testGroup "NFRP"
   [ gTest "Theory"
-         T.solution1  T.lookupVKB
+         T.mkKnowledgeBase  T.lookupVKB
   , gTest "TheoryFast"
-        TF.solution1 TF.lookupVKB
+        TF.mkKnowledgeBase TF.lookupVKB
   , testGroup "Model - Event based"
       [ let n = 5 in testCase ("TheoryFast vs Theory on Synthetic " ++ show n) $ do
         let (vixs, ts, ins) = syntheticN n 100
-            lookupT  = let kb =  T.solution1 ins in \t vix -> T.lookupVKB t vix kb
-            lookupTF = let kb = TF.solution1 ins in \t vix ->TF.lookupVKB t vix kb
+            lookupT  = let kb =  T.mkKnowledgeBase ins in \t vix -> T.lookupVKB t vix kb
+            lookupTF = let kb = TF.mkKnowledgeBase ins in \t vix ->TF.lookupVKB t vix kb
         sequence_
             [ lookupTF t vix @?= lookupT t vix
             | vix <- vixs
@@ -416,7 +416,7 @@ tests = testGroup "NFRP"
 --           eix3 = EIx 3
 
 --           kb :: T.KnowledgeBase
---           kb = T.solution1
+--           kb = T.mkKnowledgeBase
 --                 -- time: --0--------5-----7--------------
 --                 --------------------------9______________
 --                 [ InputEl eix1
@@ -460,7 +460,7 @@ tests = testGroup "NFRP"
 --           eix2 = EIx 2
 
 --           kb :: T.KnowledgeBase
---           kb = T.solution1
+--           kb = T.mkKnowledgeBase
 --                 -- time: --0--------5-----7--------------
 --                 -----------7--------8_____9______________
 --                 [ InputEl eix1
@@ -499,7 +499,7 @@ tests = testGroup "NFRP"
 --           eix3 = EIx 3
 
 --           kb :: T.KnowledgeBase
---           kb = T.solution1
+--           kb = T.mkKnowledgeBase
 --                 -- time: --0--------5-----7-----9--------
 --                 --------------------3-----1----__________
 --                 [ InputEl eix1
@@ -547,7 +547,7 @@ tests = testGroup "NFRP"
 --           eix2 = EIx 2
 
 --           kb :: T.KnowledgeBase
---           kb = T.solution1
+--           kb = T.mkKnowledgeBase
 --                 -- time: --0--------5-----7-----9--------
 --                 --------------------3-----1_____5____
 --                 [ InputEl eix1
@@ -587,7 +587,7 @@ tests = testGroup "NFRP"
 --           eix2 = EIx 2
 
 --           kb :: T.KnowledgeBase
---           kb = T.solution1
+--           kb = T.mkKnowledgeBase
 --                 -- time: -----------5-----7-----111--------
 --                 --------------------3-----1_____5____
 --                 [ InputEl eix1
@@ -627,7 +627,7 @@ tests = testGroup "NFRP"
 --           eix2 = EIx 2
 
 --           kb :: T.KnowledgeBase
---           kb = T.solution1
+--           kb = T.mkKnowledgeBase
 --                 -- time: --0--------5-----7-----9--------
 --                 -----------_--------3-----1_____5____
 --                 [ InputEl eix1
@@ -673,7 +673,7 @@ tests = testGroup "NFRP"
 --           b = EIx 3
 
 --           kb :: T.KnowledgeBase
---           kb = T.solution1
+--           kb = T.mkKnowledgeBase
 --                 -- time: --0--------5-----7-----9--------
 --                 --------------------()----()____()_______
 --                 [ InputEl swapE
@@ -734,7 +734,7 @@ tests = testGroup "NFRP"
 --           out    = EIx 5
 
 --           kb :: T.KnowledgeBase
---           kb = T.solution1
+--           kb = T.mkKnowledgeBase
 --                 -- time:      0      10      20
 --                 --     <--0-> 1 <-2-> 3 <-4-> 5 <-6-->
 --                 [ InputEl a
