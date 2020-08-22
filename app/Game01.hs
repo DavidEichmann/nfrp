@@ -36,18 +36,23 @@ import qualified Graphics.Gloss.Interface.Pure.Game as Gloss
 import           Graphics.Gloss.Interface.Pure.Game hiding (Event)
 import           System.Console.CmdArgs
 
-import           ReactiveData
+import qualified ReactiveData as RD
+import           ReactiveData hiding (Value, Event, SourceEvent)
 
-data Game = Game
-    { playerPos :: Pos -- Derived
-    , inputClickLeft  :: () -- Source
-    , inputClickRight :: () -- Source
-    , inputClickUp    :: () -- Source
-    , inputClickDown  :: () -- Source
+data Game f = Game
+    { playerPos       :: Value f Pos
+    , inputClickLeft  :: SourceEvent f ()
+    , inputClickRight :: SourceEvent f ()
+    , inputClickUp    :: SourceEvent f ()
+    , inputClickDown  :: SourceEvent f ()
     }
 
+type Value f a = RD.Value Game f a
+type Event f a = RD.Event Game f a
+type SourceEvent f a = RD.SourceEvent Game f a
+
 game0 = mkKnowledgeBase Game
-    { playerPos = value 0 $ do
+    { playerPos = ValueDef 0 $ do
         Occ dPosE <- foldOccs plusPos <$> sequence
             [ (-1, 0) <$ getE inputClickLeft
             , ( 1, 0) <$ getE inputClickRight
@@ -66,14 +71,14 @@ game0 = mkKnowledgeBase Game
 type Pos = (Float, Float)
 plusPos (x,y) (a,b) = (x+a,y+b)
 
-drawGame :: Game -> Picture
+drawGame :: Game 'Raw -> Picture
 drawGame game
     = Pictures
         [ drawCharacter red  10 (playerPos game)
         ]
 
 -- | Get the inputs from a Gloss Event.
-getInputs :: [Gloss.Event] -> Game
+getInputs :: [Gloss.Event] -> Game _
 getInputs event = gameNoE
     { inputClickLeft  = elem (SpecialKey KeyLeft)  keyDowns
     , inputClickRight = elem (SpecialKey KeyRight) keyDowns

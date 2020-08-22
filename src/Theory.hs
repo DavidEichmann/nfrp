@@ -39,6 +39,7 @@ module Theory
 
   import Time
   import TimeSpan
+  import Control.Monad.Fail (MonadFail(..))
 
   type DerivationTraceEl a = String
   type DerivationTrace a = [DerivationTraceEl a]
@@ -135,6 +136,9 @@ module Theory
       Pure NoOcc -> Pure NoOcc
       GetE  eixb cont -> GetE  eixb ((>>= fmb) . cont)
       PrevV eixb mayPrevToCont -> PrevV eixb ((>>= fmb) . mayPrevToCont)
+
+  instance MonadFail ValueM where
+    fail _ = Pure NoOcc
 
   getE :: EIx a -> ValueM (MaybeOcc a)
   getE eix = GetE eix (Pure . Occ)

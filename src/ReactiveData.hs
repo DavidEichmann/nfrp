@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DataKinds #-}
@@ -59,7 +60,8 @@ import Generics.SOP.Universe
 
 import           Theory (Fact(..))
 import qualified TheoryFast as TF
-import           TheoryFast (ValueM, KnowledgeBase, EIx(..))
+import           TheoryFast (KnowledgeBase, EIx(..))
+import Data.Coerce (coerce)
 
 --
 -- FRP surface language (This shouled be moved to FRP module)
@@ -69,14 +71,48 @@ import           TheoryFast (ValueM, KnowledgeBase, EIx(..))
 mkKnowledgeBase :: FieldIx game => game 'Definition -> KnowledgeBase
 mkKnowledgeBase gameDef = TF.mkKnowledgeBase $ traverseFields gameDef
     (\eix (Field SourceEventDef) -> TF.InputEl eix [] Nothing)
-    (\eix (Field (EventDef def)) -> TF.InputEl eix [] (Just def))
-    (\(VIx eix) (Field (ValueDef val0 def)) -> TF.InputEl eix [Fact_Occ ["Static initial value"] 0 val0] (Just def))
+    (\eix (Field (EventDef def)) -> TF.InputEl eix [] (Just (eventMToValueM def)))
+    (\(VIx eix) (Field (ValueDef val0 def)) -> TF.InputEl eix [Fact_Occ ["Static initial value"] 0 val0] (Just (eventMToValueM def)))
 
 data SourceEventDef a   = SourceEventDef
 sourceEventDef :: Field game 'SourceEvent 'Definition a
 sourceEventDef = Field SourceEventDef
-data EventDef (game :: Tag -> Type) a = EventDef (ValueM a) -- [FactE a] (Rule game (Maybe a))
-data ValueDef (game :: Tag -> Type) a = ValueDef a (ValueM a)-- [FactB a] (Rule game a)
+data EventDef (game :: Tag -> Type) a = EventDef   (forall t . EventM game t a)
+data ValueDef (game :: Tag -> Type) a = ValueDef a (forall t . EventM game t a)
+
+
+eventMToValueM :: EventM (game :: Tag -> Type) t a -> TF.ValueM a
+eventMToValueM (EventM em) = do
+  occA <- em
+  case occA of
+    Occ a -> TF.Pure (TF.Occ a)
+    NoOcc -> TF.Pure TF.NoOcc
+
+newtype EventM (game :: Tag -> Type) t a = EventM (TF.ValueM (Occ t a))
+
+data Occ t a
+  = SomeEventIsOccurring t => Occ a
+  | NoOcc
+
+class SomeEventIsOccurring t
+data SomeEventIsOccurringProof t = SomeEventIsOccurringProof
+instance SomeEventIsOccurring SomeEventIsOccurringProof
+
+
+rrrrrrrrrrrrright how dow I implement this token based proof?
+
+-- unsafeWithSomeEventIsOccurring :: (SomeEventIsOccurring t => a) -> a
+unsafeWithSomeEventIsOccurring f = (coerce f :: SomeEventIsOccurring SomeEventIsOccurringProof => a)
+
+getE :: forall game t a . (game 'Index -> EIx a) -> EventM game t (Occ t a)
+getE eixF = EventM $ do
+  eOcc <- TF.getE (_ eixF)
+  return $ case eOcc of
+    TF.Occ a -> case SomeEventIsOccurringProof @t of
+      SomeEventIsOccurringProof -> Occ a
+
+
+    TF.NoOcc -> NoOcc
 
 
 --
@@ -109,9 +145,9 @@ type family F (game :: Tag -> Type) (fieldType :: FieldType) (gameData :: Tag) a
     F game 'Event       'Definition a = EventDef game a
     F game 'Value       'Definition a = ValueDef game a
 
-type V  game f a = Field game 'Value       f a
-type E  game f a = Field game 'Event       f a
-type SE game f a = Field game 'SourceEvent f a
+type Value       game f a = Field game 'Value       f a
+type Event       game f a = Field game 'Event       f a
+type SourceEvent game f a = Field game 'SourceEvent f a
 
 newtype VIx a = VIx (EIx a) deriving (Eq, Ord, Show)
 -- data Ix a = Ix_B (VIx a) | Ix_E (EIx a)
