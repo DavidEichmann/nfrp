@@ -61,8 +61,28 @@ module Theory
 -- event or derived event. We want to calculate all facts about the derived
 -- events from the source events.
 
-  data InputEl = forall a . InputEl (EIx a) (Either [Fact a] (ValueM a))
+  data InputEl = forall a . InputEl
+      (EIx a)
+      -- ^ The event this corresponds to
+      [Fact a]
+      -- ^ All (initial) known facts. This is used e.g. to set the initial value
+      -- of Value (i.e. Behavior) events.
+      (Maybe (ValueM a))
+      -- ^ Derivation for time spans not in the (initial) known facts.
   type Inputs = [InputEl]
+
+  inputsToInitialFactsAndDerivations :: Inputs -> ([SomeValueFact], [SomeDerivation])
+  inputsToInitialFactsAndDerivations inputs = (initialFacts, initialDerivations)
+    where
+    initialFacts = concat
+      [ SomeValueFact eix <$> eventFacts
+      | InputEl eix eventFacts _ <- inputs
+      ]
+    initialDerivations =
+      [ SomeDerivation eix (mkDerivationForTimeSpan ts eventM)
+      | InputEl eix initFacts (Just eventM) <- inputs
+      , ts <- (allT :: TimeSpan) `difference` (factTSpan <$> initFacts)
+      ]
 
   newtype MaybeOcc a = MaybeOcc { maybeOccToMaybe :: Maybe a }
     deriving newtype (Eq, Ord, Show, Read, Functor, Applicative, Monad)
@@ -213,8 +233,11 @@ module Theory
 -- A derivation is a partial evaluation of the `deriveE` function, universally
 -- quantified over a range of time.
 
-  startDerivationForAllTime :: ValueM a -> Derivation a
-  startDerivationForAllTime em = Derivation [] (DS_SpanExc allT) [] em False
+  mkDerivationForAllTime :: ValueM a -> Derivation a
+  mkDerivationForAllTime = mkDerivationForTimeSpan (DS_SpanExc allT)
+
+  mkDerivationForTimeSpan :: TimeSpan -> ValueM a -> Derivation a
+  mkDerivationForTimeSpan ts em = Derivation [] ts [] em False
 
   -- eix :: Eix a  is implicit
   data Derivation a
@@ -255,14 +278,7 @@ module Theory
   mkKnowledgeBase :: Inputs -> KnowledgeBase
   mkKnowledgeBase inputs = iterateUntilChange initialKb
     where
-    initialFacts = concat
-      [ SomeValueFact eix <$> eventFacts
-      | InputEl eix (Left eventFacts) <- inputs
-      ]
-    initialDerivations =
-      [ SomeDerivation eix (startDerivationForAllTime eventM)
-      | InputEl eix (Right eventM) <- inputs
-      ]
+    (initialFacts, initialDerivations) = inputsToInitialFactsAndDerivations inputs
     initialKb = KnowledgeBase initialFacts initialDerivations
 
     iterateUntilChange :: KnowledgeBase -> KnowledgeBase

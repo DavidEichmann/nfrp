@@ -21,16 +21,23 @@ syntheticN :: Int -> Int -> ([EIx Int], [Time], Inputs)
 syntheticN nE nT =
   ( vixs
   , sampleTimes
-  , [ InputEl vix $ if i < nE
+  , [ InputEl vix
+      (if isLowIx
+        -- Source Value
+        then
+          [ case ts of
+            Left t      -> Fact_Occ [] t (negate $ (i * timesN) + x)
+            Right tspan -> Fact_NoOcc [] (DS_SpanExc tspan)
+          | (ts, x) <- zip times [0..]
+          ]
+        -- Derived Value
+        else []
+      )
+      (if isLowIx
       -- Source Value
-      then Left
-        [ case ts of
-          Left t      -> Fact_Occ [] t (negate $ (i * timesN) + x)
-          Right tspan -> Fact_NoOcc [] (DS_SpanExc tspan)
-        | (ts, x) <- zip times [0..]
-        ]
+      then Nothing
       -- Derived Value
-      else Right $ do
+      else Just $ do
         -- Depend on lower ix values.
         xs <- catMaybes . fmap maybeOccToMaybe <$> mapM (getE . EIx) [0..(i-1)]
         if null xs
@@ -44,8 +51,10 @@ syntheticN nE nT =
                                       [(i+1)..m]
 
             return (x+y)
+      )
 
     | vix@(EIx i) <- vixs
+    , let isLowIx = i < nE
     ]
   )
   where

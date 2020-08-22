@@ -74,7 +74,7 @@ import Theory
 
   , Derivation(..)
   , SomeDerivation(..)
-  , startDerivationForAllTime
+  , mkDerivationForAllTime
 
   , TimeSpan(..)
   , factTSpan
@@ -497,16 +497,10 @@ insertFactsAndDers newFacts newSomeDers = do
 mkKnowledgeBase :: Inputs -> KnowledgeBase
 mkKnowledgeBase inputs = execState iterateWhileHot initialKb
   where
-  initialFacts = listToFacts $ concat
-    [ Th.SomeValueFact eix <$> eventFacts
-    | InputEl eix (Left eventFacts) <- inputs
-    ]
-  (initialDerivationIDs, initialDerivations) = dbdInitialFromListNoDeps
-    [ SomeDerivation eix (startDerivationForAllTime eventM)
-    | InputEl eix (Right eventM) <- inputs
-    ]
+  (initialSomeFacts, initialSomeDerivations) = Th.inputsToInitialFactsAndDerivations inputs
+  (initialDerivationIDs, initialDerivations) = dbdInitialFromListNoDeps initialSomeDerivations
   initialKb = KnowledgeBase
-                { kbFacts = initialFacts
+                { kbFacts = listToFacts initialSomeFacts
                 , kbDerivations = initialDerivations
                 , kbHotDerivations = S.fromList initialDerivationIDs
                 }

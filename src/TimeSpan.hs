@@ -705,6 +705,8 @@ data TimeSpan
     | DS_SpanExc SpanExc
     deriving (Eq, Show)
 
+instance AllT TimeSpan where allT = DS_SpanExc allT
+
 instance Intersect TimeSpan SpanExc (Maybe TimeSpan) where intersect = flip intersect
 instance Intersect SpanExc TimeSpan (Maybe TimeSpan) where
     intersect t (DS_Point t')     = DS_Point   <$> intersect t t'

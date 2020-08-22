@@ -54,7 +54,7 @@ import Theory
 
 --   , Derivation(..)
 --   , SomeDerivation(..)
---   , startDerivationForAllTime
+--   , mkDerivationForAllTime
 
   , TimeSpan(..)
 --   , factTSpan
@@ -168,7 +168,7 @@ mkKnowledgeBase inputs = iterateUntilChange initialKb
     | InputEl eix (Left eventFacts) <- inputs
     ]
   initialDerivations =
-    [ SomeDerivation eix (startDerivationForAllTime eventM)
+    [ SomeDerivation eix (mkDerivationForAllTime eventM)
     | InputEl eix (Right eventM) <- inputs
     ]
   initialKb = KnowledgeBase initialFacts initialDerivations

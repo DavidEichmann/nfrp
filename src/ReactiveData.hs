@@ -57,8 +57,9 @@ import Generics.SOP
 import Generics.SOP.NP
 import Generics.SOP.Universe
 
+import           Theory (Fact(..))
 import qualified TheoryFast as TF
-import           TheoryFast (KnowledgeBase, EIx(..))
+import           TheoryFast (ValueM, KnowledgeBase, EIx(..))
 
 --
 -- FRP surface language (This shouled be moved to FRP module)
@@ -67,23 +68,15 @@ import           TheoryFast (KnowledgeBase, EIx(..))
 -- | Initialize a new KnowledgeBase from the given game definition.
 mkKnowledgeBase :: FieldIx game => game 'Definition -> KnowledgeBase
 mkKnowledgeBase gameDef = TF.mkKnowledgeBase $ traverseFields gameDef
-    (\eix (Field SourceEventDef) -> TF.InputEl eix (Left []))
-    (\eix (Field (EventDef)) -> TF.InputEl eix (Right todo))
-    (\(VIx eix) (Field (ValueDef)) -> TF.InputEl eix (Left todo))
-    where
-      todo = error "TODO implement mkKnowledgeBase"
-
-      -- I need a way to insert the initial value of a value field. I need to
-      -- extend InputEl / Theory some how so that I can start with some facts,
-      -- then have all other time spans be derived so we have:
-      --   InputEl (EIx a) [Fact a] (Maybe (ValueM a))
-      -- Only a Maybe incase we want to leave that undefined (useful in e.g. tests)
+    (\eix (Field SourceEventDef) -> TF.InputEl eix [] Nothing)
+    (\eix (Field (EventDef def)) -> TF.InputEl eix [] (Just def))
+    (\(VIx eix) (Field (ValueDef val0 def)) -> TF.InputEl eix [Fact_Occ ["Static initial value"] 0 val0] (Just def))
 
 data SourceEventDef a   = SourceEventDef
 sourceEventDef :: Field game 'SourceEvent 'Definition a
 sourceEventDef = Field SourceEventDef
-data EventDef (game :: Tag -> Type) a = EventDef -- [FactE a] (Rule game (Maybe a))
-data ValueDef (game :: Tag -> Type) a = ValueDef -- [FactB a] (Rule game a)
+data EventDef (game :: Tag -> Type) a = EventDef (ValueM a) -- [FactE a] (Rule game (Maybe a))
+data ValueDef (game :: Tag -> Type) a = ValueDef a (ValueM a)-- [FactB a] (Rule game a)
 
 
 --
