@@ -50,7 +50,7 @@ type SourceEvent f a = RD.SE Game f a
 game0 :: KnowledgeBase
 game0 = mkKnowledgeBase Game
     { playerPos = value (0, 0) $ do
-        return $ Occ (1, 2)
+        -- return $ Occ (1, 2)
         Occ dPos <- foldOccs plusPos <$> sequence
             [ ((-1, 0) <$) <$> getE inputClickLeft
             , (( 1, 0) <$) <$> getE inputClickRight

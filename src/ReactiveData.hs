@@ -63,6 +63,7 @@ import           TimeSpan
 import           Theory (Fact(..), SomeValueFact(..))
 import qualified TheoryFast as TF
 import           TheoryFast (KnowledgeBase, EIx(..))
+import Unsafe.Coerce (unsafeCoerce)
 
 --
 -- TODO
@@ -153,11 +154,13 @@ pattern Occ :: () => SomeEventIsOccurring t => a -> Occ t a
 pattern Occ a = OccP Proof a
 {-# COMPLETE Occ, NoOcc #-}
 
-data Proof t = Proof
-class SomeEventIsOccurringProof proof t where
-instance SomeEventIsOccurringProof (Proof t) t
-class SomeEventIsOccurring t where
-instance SomeEventIsOccurringProof (Proof t) t => SomeEventIsOccurring t
+data Proof t = SomeEventIsOccurring t => Proof
+class SomeEventIsOccurring (t :: Type)
+data ProovedOccTime
+instance SomeEventIsOccurring ProovedOccTime
+
+unsafeProof :: forall t . Proof t
+unsafeProof = (unsafeCoerce :: Proof ProovedOccTime -> Proof t) Proof
 
 getE :: forall game t a eventish
   . (F game eventish 'Index a ~ EIx a, FieldIx game)
@@ -166,7 +169,7 @@ getE :: forall game t a eventish
 getE eixF = EventM $ do
   eOcc <- TF.getE (eIx (unF . eixF))
   return $ case eOcc of
-    TF.Occ a -> OccP Proof a
+    TF.Occ a -> OccP unsafeProof a
     TF.NoOcc -> NoOcc
 
 prevV :: forall game t a . (FieldIx game, SomeEventIsOccurring t) => (game 'Index -> Field game 'Value 'Index a) -> EventM game t a
