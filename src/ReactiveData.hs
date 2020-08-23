@@ -1,3 +1,5 @@
+{-# LANGUAGE IncoherentInstances #-}
+{-# LANGUAGE RoleAnnotations #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE LambdaCase #-}
@@ -52,6 +54,7 @@ module ReactiveData
 
 
 import           Control.Monad.Fail (MonadFail)
+import           Data.Coerce (coerce)
 import           Data.Foldable (Foldable(foldl'))
 import           Data.Kind
 import           Generics.SOP
@@ -63,7 +66,6 @@ import           TimeSpan
 import           Theory (Fact(..), SomeValueFact(..))
 import qualified TheoryFast as TF
 import           TheoryFast (KnowledgeBase, EIx(..))
-import Unsafe.Coerce (unsafeCoerce)
 
 --
 -- TODO
@@ -139,28 +141,28 @@ eventMToValueM :: EventM (game :: Tag -> Type) t (Occ t a) -> TF.ValueM a
 eventMToValueM (EventM em) = do
   occA <- em
   case occA of
-    OccP _ a -> TF.Pure (TF.Occ a)
+    Occ a -> TF.Pure (TF.Occ a)
     NoOcc -> TF.Pure TF.NoOcc
 
 newtype EventM (game :: Tag -> Type) t a = EventM (TF.ValueM a)
   deriving newtype (Functor, Applicative, Monad, MonadFail)
 
 data Occ t a
-  = OccP (Proof t) a
+  = SomeEventIsOccurring t => Occ a
   | NoOcc
-  deriving stock (Functor)
 
-pattern Occ :: () => SomeEventIsOccurring t => a -> Occ t a
-pattern Occ a = OccP Proof a
-{-# COMPLETE Occ, NoOcc #-}
+coerceOcc :: Occ (KnownOccTime t) a -> Occ t a
+coerceOcc = coerce
+type role SomeEventIsOccurring phantom
 
-data Proof t = SomeEventIsOccurring t => Proof
+deriving stock instance Functor (Occ t)
+
 class SomeEventIsOccurring (t :: Type)
-data ProovedOccTime
-instance SomeEventIsOccurring ProovedOccTime
+data KnownOccTime t
+instance SomeEventIsOccurring (KnownOccTime t)
 
-unsafeProof :: forall t . Proof t
-unsafeProof = (unsafeCoerce :: Proof ProovedOccTime -> Proof t) Proof
+unsafeOcc :: a -> Occ t a
+unsafeOcc = coerceOcc . Occ
 
 getE :: forall game t a eventish
   . (F game eventish 'Index a ~ EIx a, FieldIx game)
@@ -169,7 +171,7 @@ getE :: forall game t a eventish
 getE eixF = EventM $ do
   eOcc <- TF.getE (eIx (unF . eixF))
   return $ case eOcc of
-    TF.Occ a -> OccP unsafeProof a
+    TF.Occ a -> unsafeOcc a
     TF.NoOcc -> NoOcc
 
 prevV :: forall game t a . (FieldIx game, SomeEventIsOccurring t) => (game 'Index -> Field game 'Value 'Index a) -> EventM game t a
