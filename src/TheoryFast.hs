@@ -84,6 +84,7 @@ import Theory
   , appendDerTrace
 
   , getE
+  , currV
   , prevV
   , requireE
   )
