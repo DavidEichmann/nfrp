@@ -42,7 +42,7 @@ import           Data.String
 import           Data.Text.Prettyprint.Doc
 import           Unsafe.Coerce
 import           GHC.Exts (Any)
-import           Safe (minimumMay)
+import           Safe (headMay, minimumMay)
 
 import DMap (DMap)
 import qualified DMap as DM
@@ -144,6 +144,10 @@ lookupVKB t eix kb = lookupV t eix (kbFacts kb)
 lookupVKBTrace :: Time -> EIx a -> KnowledgeBase -> MaybeKnown (DerivationTrace a)
 lookupVKBTrace t eix kb = lookupVTrace t eix (kbFacts kb)
 
+-- | Lookup the latest known event at or before the given time.
+lookupLatestKnownKB :: Time -> EIx a -> KnowledgeBase -> Maybe a
+lookupLatestKnownKB t eix kb = lookupLatestKnown t eix (kbFacts kb)
+
 lookupV :: Time -> EIx a -> Facts -> MaybeKnown (MaybeOcc a)
 lookupV t eix facts = snd <$> lookupVFact t eix facts
 
@@ -155,6 +159,17 @@ lookupVFact t vix facts = MaybeKnown $ do
   let vfs = valueFacts vix facts
   (tr, eitherNoOccSpanOrOcc) <- T.lookup' t vfs
   return (tr, either (const NoOcc) id eitherNoOccSpanOrOcc)
+
+-- | Lookup the latest known event at or before the given time.
+lookupLatestKnown :: Time -> EIx a -> Facts -> Maybe a
+lookupLatestKnown t eix facts
+  = headMay
+      [ a
+      | (_, Right (_, a))
+          <- T.elemsRev
+          $ T.select (Span Open (ClosedInc t))
+          $ valueFacts eix facts
+      ]
 
 type KnowledgeBaseM a = State KnowledgeBase a
 

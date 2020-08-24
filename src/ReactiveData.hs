@@ -1,3 +1,4 @@
+{-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE IncoherentInstances #-}
 {-# LANGUAGE RoleAnnotations #-}
 {-# LANGUAGE DeriveFunctor #-}
@@ -66,11 +67,11 @@ import           TimeSpan
 import           Theory (Fact(..), SomeValueFact(..))
 import qualified TheoryFast as TF
 import           TheoryFast (KnowledgeBase, EIx(..))
+import Data.Maybe (fromJust)
 
 --
 -- TODO
 --
--- * Rename Raw to Id
 -- * It would be nice to get rid of the Field newtype.
 -- * Can we get rid of type family F? Maybe use GADTs instead?
 --
@@ -92,9 +93,11 @@ foldOccs f = foldl'
 -- | Initialize a new KnowledgeBase from the given game definition.
 mkKnowledgeBase :: FieldIx game => game 'Definition -> KnowledgeBase
 mkKnowledgeBase gameDef = TF.mkKnowledgeBase $ traverseFields gameDef
-    (\eix (Field SourceEventDef) -> TF.InputEl eix [] Nothing)
-    (\eix (Field (EventDef def)) -> TF.InputEl eix [] (Just (eventMToValueM def)))
-    (\(VIx eix) (Field (ValueDef val0 def)) -> TF.InputEl eix [Fact_Occ ["Static initial value"] 0 val0] (Just (eventMToValueM def)))
+    (\eix (Field SourceEventDef) -> TF.InputEl eix [noOcc0] Nothing)
+    (\eix (Field (EventDef def)) -> TF.InputEl eix [noOcc0] (Just (eventMToValueM def)))
+    (\(VIx eix) (Field (ValueDef val0 def)) -> TF.InputEl eix [noOcc0, Fact_Occ ["Static initial value"] 0 val0] (Just (eventMToValueM def)))
+    where
+    noOcc0 = Fact_NoOcc ["NoOcc at t<=0"] (DS_SpanExc (spanExc Nothing (Just 0)))
 
 -- Time based progression. Implies no source event occurrences between start and
 -- end time (exclusive), and inserts source events wherever they occur in the
@@ -107,8 +110,9 @@ progressKB timeA timeB es kb = TF.insertFacts
           , case xMay of
               Nothing -> noOccFactPoint
               Just x -> Fact_Occ [] timeB x])
-      (\eix       (Field ()) -> SomeValueFact eix <$> [noOccFactSpan, noOccFactPoint])
-      (\(VIx eix) (Field ()) -> SomeValueFact eix <$> [noOccFactSpan, noOccFactPoint])
+      -- Events and Values are derived automatically.
+      (\_ (Field ()) -> [])
+      (\_ (Field ()) -> [])
   )
   kb
   where
@@ -118,9 +122,15 @@ progressKB timeA timeB es kb = TF.insertFacts
   noOccFactPoint :: Fact a
   noOccFactPoint = Fact_NoOcc [] (TF.DS_Point timeB)
 
--- | Get all events at the given time, and the latest known values.
-getLatestPerField :: FieldIx game => proxy game -> Time -> KnowledgeBase -> game 'Raw
-getLatestPerField = error "TODO getLatestPerField"
+-- | Get all latest known values.
+getLatestPerField :: FieldIx game => proxy game -> Time -> KnowledgeBase -> game 'Values
+getLatestPerField _ t kb
+  = mapFields
+      -- TF.lookupLatestKnownKB t eix kb
+      (\(Field _) -> Field ())
+      (\(Field _) -> Field ())
+      (\(Field (VIx vix)) -> Field (fromJust $ TF.lookupLatestKnownKB t vix kb))
+  $ fieldIxs
 
 data ValueDef (game :: Tag -> Type) a = ValueDef a (forall t . EventM game t (Occ t a))
 
@@ -196,18 +206,31 @@ data FieldType
     | Value
 
 data Tag
-    = Raw
+    = Id
     | Index
     | Definition
     | SourceEvents
+    | Values
 
 newtype Field game fieldType tag a = Field { unF :: F game fieldType tag a }
 
+type family Field_Game field where
+  Field_Game (Field game fieldType tag a) = game
+
+type family Field_FieldType field where
+  Field_FieldType (Field game fieldType tag a) = fieldType
+
+type family Field_Tag field where
+  Field_Tag (Field game fieldType tag a) = tag
+
+type family Field_Value field where
+  Field_Value (Field game fieldType tag a) = a
+
 type family F (game :: Tag -> Type) (fieldType :: FieldType) (tag :: Tag) a :: Type where
 
-    F _ 'SourceEvent 'Raw a = Maybe a
-    F _ 'Event       'Raw a = Maybe a
-    F _ 'Value       'Raw a = a
+    F _ 'SourceEvent 'Id a = Maybe a
+    F _ 'Event       'Id a = Maybe a
+    F _ 'Value       'Id a = a
 
     F _ 'SourceEvent 'Index a = EIx a
     F _ 'Event       'Index a = EIx a
@@ -220,6 +243,10 @@ type family F (game :: Tag -> Type) (fieldType :: FieldType) (tag :: Tag) a :: T
     F _    'SourceEvent 'SourceEvents a = Maybe a
     F game 'Event       'SourceEvents a = ()
     F game 'Value       'SourceEvents a = ()
+
+    F _    'SourceEvent 'Values a = ()
+    F game 'Event       'Values a = ()
+    F game 'Value       'Values a = a
 
 type V  game f a = Field game 'Value       f a
 type E  game f a = Field game 'Event       f a
@@ -254,7 +281,10 @@ class FieldIx (game :: Tag -> *) where
         -> (forall x . EIx x -> Field game 'Event       tag x -> a)
         -> (forall x . VIx x -> Field game 'Value       tag x -> a)
         -> [a]
-    default traverseFields :: forall tag xs a . (IsProductType (game tag) xs, All (IsGameField game tag) xs)
+    default traverseFields :: forall tag xs a
+        . ( IsProductType (game tag) xs
+          , All (IsGameField game tag) xs
+          )
         => game tag
         -> (forall x . EIx x -> Field game 'SourceEvent tag x -> a)
         -> (forall x . EIx x -> Field game 'Event       tag x -> a)
@@ -269,15 +299,58 @@ class FieldIx (game :: Tag -> *) where
         (productTypeFrom game)
 
     mapFields
-        :: game tag
-        -> (forall x . Field game 'SourceEvent tag x -> Field game 'SourceEvent tag2 x)
-        -> (forall x . Field game 'Event       tag x -> Field game 'Event       tag2 x)
-        -> (forall x . Field game 'Value       tag x -> Field game 'Value       tag2 x)
-        -> game tag2
+        :: (forall x . Field game 'SourceEvent tagA x -> Field game 'SourceEvent tagB x)
+        -> (forall x . Field game 'Event       tagA x -> Field game 'Event       tagB x)
+        -> (forall x . Field game 'Value       tagA x -> Field game 'Value       tagB x)
+        -> game tagA
+        -> game tagB
+    default mapFields :: forall tagA tagB xsA xsB
+        . ( MapFields game tagA tagB xsA xsB
+          , IsProductType (game tagA) xsA
+          , IsProductType (game tagB) xsB
+          )
+        => (forall x . Field game 'SourceEvent tagA x -> Field game 'SourceEvent tagB x)
+        -> (forall x . Field game 'Event       tagA x -> Field game 'Event       tagB x)
+        -> (forall x . Field game 'Value       tagA x -> Field game 'Value       tagB x)
+        -> game tagA
+        -> game tagB
+    mapFields fse fe fv gA
+      = productTypeTo
+      $ mapFields' fse fe fv
+      $ productTypeFrom gA
 
 --
 -- Generic FieldIx
 --
+
+class MapFields (game :: Tag -> Type) (tagA :: Tag) (tagB :: Tag) (xsA :: [Type]) (xsB :: [Type]) where
+  mapFields'
+    :: (forall x . Field game 'SourceEvent tagA x -> Field game 'SourceEvent tagB x)
+    -> (forall x . Field game 'Event       tagA x -> Field game 'Event       tagB x)
+    -> (forall x . Field game 'Value       tagA x -> Field game 'Value       tagB x)
+    -> NP I xsA
+    -> NP I xsB
+
+instance MapFields game tagA tagB '[] '[] where
+  mapFields' _ _ _ _ = Nil
+
+instance MapFields game tagA tagB xsA xsB => MapFields game tagA tagB (Field game 'SourceEvent tagA a ': xsA) (Field game 'SourceEvent tagB a ': xsB) where
+  mapFields' fse fe fv (I xa :* xsA) = I (fse xa) :* mapFields' fse fe fv xsA
+
+instance MapFields game tagA tagB xsA xsB => MapFields game tagA tagB (Field game 'Event tagA a ': xsA) (Field game 'Event tagB a ': xsB) where
+  mapFields' fse fe fv (I xa :* xsA) = I (fe xa) :* mapFields' fse fe fv xsA
+
+instance MapFields game tagA tagB xsA xsB => MapFields game tagA tagB (Field game 'Value tagA a ': xsA) (Field game 'Value tagB a ': xsB) where
+  mapFields' fse fe fv (I xa :* xsA) = I (fv xa) :* mapFields' fse fe fv xsA
+
+-- instance MapFields game (Field game 'SourceEvent tag a) where
+--   mapFields' fse _ _ = fse
+
+-- instance MapFields game (Field game 'Event tag a) where
+--   mapFields' _ fe _ = fe
+
+-- instance MapFields game (Field game 'Value tag a) where
+--   mapFields' _ _ fv = fv
 
 index_NP :: SListI xs => NP (K Int) xs
 index_NP =

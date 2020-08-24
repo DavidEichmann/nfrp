@@ -47,7 +47,7 @@ module Timeline
      where
 
 import Prelude hiding (lookup, null)
-import Data.List (inits, tails, nub, foldl')
+import Data.List (tails, foldl')
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as M
 
@@ -55,8 +55,6 @@ import Time
 import TimeSpan
 import Theory (MaybeOcc, pattern NoOcc, pattern Occ)
 import GHC.Stack (HasCallStack)
-import Control.Exception (assert)
-import Data.Either (partitionEithers)
 import Data.Maybe (isJust)
 
 -- | A timeline is a map from time to value where values may be set on spans of
@@ -207,7 +205,7 @@ select (Span loBound hiBound) (Timeline m n) = Timeline m' n'
                 ) m_loBound
 
 crop :: HasCallStack => Span -> Timeline trace a -> Timeline trace a
-crop sp@(Span loBound hiBound) tl@(Timeline m n) = assertTimeline $ Timeline m' n'
+crop sp@(Span loBound hiBound) tl@(Timeline _m n) = assertTimeline $ Timeline m' n'
     where
     -- Select
     Timeline sm sn = select sp tl

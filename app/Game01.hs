@@ -24,8 +24,6 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeInType #-}
 
-module Game01 where
-
 import           Data.Proxy (Proxy(..))
 import qualified Graphics.Gloss.Interface.Pure.Game as Gloss
 import           Graphics.Gloss.Interface.Pure.Game hiding (Event)
@@ -51,10 +49,10 @@ game0 :: KnowledgeBase
 game0 = mkKnowledgeBase Game
     { playerPos = value (0, 0) $ do
         Occ dPos <- foldOccs plusPos <$> sequence
-            [ ((-1, 0) <$) <$> getE inputClickLeft
-            , (( 1, 0) <$) <$> getE inputClickRight
-            , (( 0, 1) <$) <$> getE inputClickUp
-            , (( 0,-1) <$) <$> getE inputClickDown
+            [ ((-d, 0) <$) <$> getE inputClickLeft
+            , (( d, 0) <$) <$> getE inputClickRight
+            , (( 0, d) <$) <$> getE inputClickUp
+            , (( 0,-d) <$) <$> getE inputClickDown
             ]
         pos <- prevV playerPos
         return $ Occ (plusPos pos dPos)
@@ -64,13 +62,15 @@ game0 = mkKnowledgeBase Game
     , inputClickUp    = sourceEvent
     , inputClickDown  = sourceEvent
     }
+    where
+    d = 20
 
 type Pos = (Float, Float)
 
 plusPos :: Pos -> Pos -> Pos
 plusPos (x,y) (a,b) = (x+a,y+b)
 
-drawGame :: Game 'Raw -> Picture
+drawGame :: Game 'Values -> Picture
 drawGame game
     = Pictures
         [ drawCharacter red (unF $ playerPos game)
