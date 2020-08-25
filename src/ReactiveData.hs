@@ -140,6 +140,54 @@ data ValueDef (game :: Tag -> Type) a = ValueDef a (forall t . EventM game t (Oc
 value :: a -> (forall t . EventM game t (Occ t a)) -> F game 'Value 'Definition a
 value a0 def = F $ ValueDef a0 def
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+-- IDEA: have a ValueM monad for derived values. Something like:
+
+-- data ValueDef (game :: Tag -> Type) a = EventDef (forall t . ValueM game t (Val t a))
+-- newtype EventM (game :: Tag -> Type) t a = EventM (TF.ValueM a)
+--   deriving newtype (Functor, Applicative, Monad, MonadFail)
+
+-- and we'd still have similar version of the other funcitons:
+
+-- data Val t a = SomeValueIsObserved t => Val a
+-- getE :: EIx a -> ValueM (Occ t a)
+-- getV :: VIx a -> ValueM (Val t a)
+-- prevV :: SomeEventIsOccuring => VIx a -> ValueM a
+
+-- Key points value definitions of this kind...
+
+-- * must observe at least one other (current) value..... or not? is this really
+--   necessary? return 1 means constant 1?
+-- * must always return a value (Val)
+-- * may still observe events as if they are behaviors (getting a Occ back)
+-- * may still observe prevV but only if an event was witnessed.
+
+
+
+
+
+
+
+
+
+
+
+
+
 data EventDef (game :: Tag -> Type) a = EventDef (forall t . EventM game t (Occ t a))
 
 event :: (forall t . EventM game t (Occ t a)) -> F game 'Event 'Definition a
