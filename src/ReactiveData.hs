@@ -66,7 +66,7 @@ import           Generics.SOP.Universe
 
 import           Time
 import           TimeSpan
-import           Theory (Fact(..), SomeValueFact(..))
+import           Theory (Fact(..), VFact(..), SomeFact(..))
 import qualified TheoryFast as TF
 import           TheoryFast (KnowledgeBase, EIx(..))
 import Data.Maybe (fromJust)
@@ -97,10 +97,10 @@ mkKnowledgeBase :: FieldIx game => game 'Definition -> KnowledgeBase
 mkKnowledgeBase gameDef = TF.mkKnowledgeBase $ traverseFields gameDef
     (\eix (F SourceEventDef) -> TF.InputEl eix [noOccLT0, noOcc0] Nothing)
     (\eix (F (EventDef def)) -> TF.InputEl eix [noOccLT0, noOcc0] (Just (eventMToValueM def)))
-    (\(VIx eix) (F (ValueDef val0 def)) -> TF.InputEl eix [noOccLT0, Fact_Occ ["Static initial value"] 0 val0] (Just (eventMToValueM def)))
+    (\(VIx eix) (F (ValueDef val0 def)) -> TF.InputEl eix [noOccLT0, VFact_Occ ["Static initial value"] 0 val0] (Just (eventMToValueM def)))
     where
-    noOccLT0 = Fact_NoOcc ["NoOcc at t<0"] (DS_SpanExc (spanExc Nothing (Just 0)))
-    noOcc0 = Fact_NoOcc ["NoOcc at t=0"] (DS_Point 0)
+    noOccLT0 = VFact_NoOcc ["NoOcc at t<0"] (DS_SpanExc (spanExc Nothing (Just 0)))
+    noOcc0 = VFact_NoOcc ["NoOcc at t=0"] (DS_Point 0)
 
 -- Time based progression. Implies no source event occurrences between start and
 -- end time (exclusive), and inserts source events wherever they occur in the
@@ -108,22 +108,22 @@ mkKnowledgeBase gameDef = TF.mkKnowledgeBase $ traverseFields gameDef
 progressKB :: forall game . FieldIx game => Time -> Time -> game 'SourceEvents -> KnowledgeBase -> KnowledgeBase
 progressKB timeA timeB es kb = TF.insertFacts
   ( TF.listToFacts $ concat $ traverseFields es
-      (\eix (F xMay) -> SomeValueFact eix <$>
+      (\eix (F xMay) -> SomeFact eix . Fact_VFact <$>
           [ noOccFactSpan
           , case xMay of
               Nothing -> noOccFactPoint
-              Just x -> Fact_Occ [] timeB x])
+              Just x -> VFact_Occ [] timeB x])
       -- Events and Values are derived automatically.
       (\_ (F ()) -> [])
       (\_ (F ()) -> [])
   )
   kb
   where
-  noOccFactSpan :: Fact a
-  noOccFactSpan = Fact_NoOcc [] (TF.DS_SpanExc (spanExc (Just timeA) (Just timeB)))
+  noOccFactSpan :: VFact a
+  noOccFactSpan = VFact_NoOcc [] (TF.DS_SpanExc (spanExc (Just timeA) (Just timeB)))
 
-  noOccFactPoint :: Fact a
-  noOccFactPoint = Fact_NoOcc [] (TF.DS_Point timeB)
+  noOccFactPoint :: VFact a
+  noOccFactPoint = VFact_NoOcc [] (TF.DS_Point timeB)
 
 -- | Get all latest known values.
 getLatestPerField :: FieldIx game => proxy game -> Time -> KnowledgeBase -> game 'Values

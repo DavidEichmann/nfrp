@@ -45,7 +45,7 @@ module KnowledgeBase
     , lookupE
 
     -- Facts
-    , Fact
+    , VFact
     , facts
     , factNoChangeSpanE
     ) where
@@ -242,7 +242,7 @@ instance CropView (ActiveRule game a) FactSpan [ActiveRule game a] [ActiveRule g
                     -> ActiveRuleE cropSpan finalEix cont
         in ([insideActiveRule], outsideActiveRules)
 
-data Fact game
+data VFact game
     = forall a . FactB (BIx a) (FactB a)
     | forall a . FactE (EIx a) (FactE a)
 
@@ -256,7 +256,7 @@ facts :: FieldIx game
       -> [(Time, a)]
       -- ^ Event occurences. Must be strictly increasing in time and all in the
       -- given known time span.
-      -> [Fact game]
+      -> [VFact game]
       -- The resulting facts.
 facts keySE tLoMayTop tHiMay occs = case outOfRangeOccs of
     (_:_) -> error $ "facts: input occurrences are out of the range " ++ show tspan ++ ": " ++ show occTs
@@ -287,13 +287,13 @@ factNoChangeSpanE :: forall game (a :: Type) . FieldIx game
     -- ^ Start of known time span (Exclusive). Nothing means negative infinity.
     -> Maybe Time
     -- ^ End of known time span (Exclusive). Nothing means positive infinity.
-    -> Fact game
+    -> VFact game
 factNoChangeSpanE keySE loT hiT = FactE (eIx keySE) (ChangeSpan (spanExc loT hiT) NoChange :: FactE a)
 
 -- | State is the KnowledgeBase and the facts learned (including initial facts).
-type KnowledgeBaseM game = State (KnowledgeBase game, [Fact game])
+type KnowledgeBaseM game = State (KnowledgeBase game, [VFact game])
 
-writeFact :: Fact game -> KnowledgeBaseM game ()
+writeFact :: VFact game -> KnowledgeBaseM game ()
 writeFact fs' = modify (\(kb,fs) -> (kb, fs' : fs))
 
 modifyKB :: (KnowledgeBase game -> KnowledgeBase game) -> KnowledgeBaseM game ()
@@ -302,7 +302,7 @@ modifyKB f = modify (\(kb,fs) -> (f kb, fs))
 asksKB :: (KnowledgeBase game -> a) -> KnowledgeBaseM game a
 asksKB f = gets (f . fst)
 
-runKnowledgeBaseM_ :: KnowledgeBaseM game a -> KnowledgeBase game -> (KnowledgeBase game, [Fact game])
+runKnowledgeBaseM_ :: KnowledgeBaseM game a -> KnowledgeBase game -> (KnowledgeBase game, [VFact game])
 runKnowledgeBaseM_ m k = snd $ runState m (k, [])
 
 newKnowledgeBase :: FieldIx game => game 'Definition -> KnowledgeBase game
@@ -334,7 +334,7 @@ newKnowledgeBase gameDef = let
 
 
 insertFacts :: (FieldIx game)
-    => [Fact game]
+    => [VFact game]
     -- ^ New Facts
     -> KnowledgeBase game
     -- ^ Current KnowledgeBase.
@@ -344,7 +344,7 @@ insertFacts fs knowledgeBaseTop
     = fst $ runKnowledgeBaseM_ (forM fs $ insertFact) knowledgeBaseTop
 
 insertFact :: forall game . FieldIx game
-    => Fact game
+    => VFact game
     -- ^ A single fact to insert.
     -> KnowledgeBaseM game ()
 insertFact factTop = do
@@ -587,12 +587,12 @@ insertActiveRuleB con bix activeRule
         activeRule
 
 insertActiveRule'
-    :: forall game b ix timeline id pd sd cvOutsize . (FieldIx game, CropView (timeline id pd sd) FactSpan [Fact' id pd sd] cvOutsize)
+    :: forall game b ix timeline id pd sd cvOutsize . (FieldIx game, CropView (timeline id pd sd) FactSpan [VFact' id pd sd] cvOutsize)
     => (KnowledgeBase game -> timeline id pd sd)
     -- ^ Get active rule's dependency's timeline
     -> (ActiveRule game b -> KnowledgeBase game -> KnowledgeBase game)
     -- ^ Directly insert an active rule (assuming the dependency is `ix`).
-    -> (Fact' id pd sd -> KnowledgeBase game -> Maybe b)
+    -> (VFact' id pd sd -> KnowledgeBase game -> Maybe b)
     -- ^ From a fact about the dependency, and the current knowledge base,
     -- get the value of the dependency that should be used to continue the
     -- active rule. WARNING If this returns Nothing, the active rule will be
@@ -687,7 +687,7 @@ instance Pretty (EIx a) where pretty = viaShow
 instance Pretty (ActiveRulesE game a) where pretty = viaShow . fmap ar_factSpan . unMultiTimeline . unActiveRulesE
 instance Pretty (ActiveRulesB game a) where pretty = viaShow . fmap ar_factSpan . unMultiTimeline . unActiveRulesB
 
-instance Pretty (Fact game) where
+instance Pretty (VFact game) where
     pretty (FactB ix f) = "FactB (" <> pretty ix <> ") " <> pretty (toFactSpan f)
     pretty (FactE ix f) = "FactE (" <> pretty ix <> ") " <> pretty (toFactSpan f)
 

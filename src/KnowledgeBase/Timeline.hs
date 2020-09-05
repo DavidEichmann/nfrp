@@ -32,7 +32,7 @@ module KnowledgeBase.Timeline
 
     , FactSpan (..)
 
-    , Fact' (..)
+    , VFact' (..)
     , FactB
     , FactBVal
     , FactE
@@ -87,7 +87,7 @@ import TimeSpan
 
 
 --
--- Fact Span
+-- VFact Span
 --
 
 -- Spans of time that can cover a single fact
@@ -189,18 +189,18 @@ factSpanJustBeforeMinT fs = case fs of
     FS_Span tspan -> toTime <$> spanExcJustBefore tspan
 
 --
--- Fact
+-- VFact
 --
 
-data Fact' initT pointT spanT
+data VFact' initT pointT spanT
     = Init initT
     | ChangePoint Time pointT
     | ChangeSpan SpanExc spanT
     deriving (Show)
 
-type FactB     a = Fact' a (MaybeChange a) NoChange
-type FactBVal  a = Fact' a a (NoChangeVal a)
-type FactE     a = Fact' Void (Maybe a) NoChange
+type FactB     a = VFact' a (MaybeChange a) NoChange
+type FactBVal  a = VFact' a a (NoChangeVal a)
+type FactE     a = VFact' Void (Maybe a) NoChange
 
 newtype MaybeChange a = MaybeChange { unMaybeChange :: Maybe a }
 data NoChange = NoChange
@@ -214,7 +214,7 @@ class IsChange a where
     isChange = not . isNoChange
     isNoChange :: a -> Bool
     isNoChange = not . isChange
-instance (IsChange pd, IsChange sd) => IsChange (Fact' id pd sd) where
+instance (IsChange pd, IsChange sd) => IsChange (VFact' id pd sd) where
     isChange (Init _) = True
     isChange (ChangePoint _ f) = isChange f
     isChange (ChangeSpan _ f) = isChange f
@@ -225,7 +225,7 @@ instance IsChange (NoChangeVal a) where
 instance IsChange NoChange where
     isChange _ = False
 
-toFactSpan :: Fact' a b c -> FactSpan
+toFactSpan :: VFact' a b c -> FactSpan
 toFactSpan (Init _) = FS_Init
 toFactSpan (ChangePoint t _) = FS_Point t
 toFactSpan (ChangeSpan tspan _) = FS_Span tspan
@@ -258,7 +258,7 @@ factEToOcc factE = case factE of
 -- Timeline
 --
 
-data Timeline initT pointT spanT = Timeline (Maybe initT) (Map TimeX (Fact' initT pointT spanT))
+data Timeline initT pointT spanT = Timeline (Maybe initT) (Map TimeX (VFact' initT pointT spanT))
     deriving (Show)
 newtype TimelineB     a = TimelineB    { unTimelineB    :: Timeline a    (MaybeChange a) NoChange        }
 newtype TimelineBVal  a = TimelineBVal { unTimelineBVal :: Timeline a    a               (NoChangeVal a) }
@@ -283,7 +283,7 @@ timelineFactSpansB (Timeline initMay m)
 timelineFactSpansE :: Timeline Void (Maybe pointT) NoChange -> [(FactSpan, IsOcc)]
 timelineFactSpansE (Timeline _ m) = toFactSpanIsOcc <$> Map.elems m
     where
-    toFactSpanIsOcc :: Fact' Void (Maybe pointT) NoChange -> (FactSpan, IsOcc)
+    toFactSpanIsOcc :: VFact' Void (Maybe pointT) NoChange -> (FactSpan, IsOcc)
     toFactSpanIsOcc (Init _) = (FS_Init, IsNotOcc)
     toFactSpanIsOcc (ChangePoint t (Just _)) = (FS_Point t, IsOcc)
     toFactSpanIsOcc (ChangePoint t Nothing) = (FS_Point t, IsNotOcc)
@@ -301,7 +301,7 @@ mtEmpty :: MultiTimeline a
 mtEmpty = MultiTimeline []
 
 -- | Lookup the fact at (i.e. intersecting) a TimeX.
-tlLookup :: TimeX -> Timeline initT pointT spanT -> Maybe (Fact' initT pointT spanT)
+tlLookup :: TimeX -> Timeline initT pointT spanT -> Maybe (VFact' initT pointT spanT)
 tlLookup tx (Timeline initAMay m) = case tx of
     X_NegInf -> Init <$> initAMay
     _ -> do
@@ -318,7 +318,7 @@ tlNull _ = False
 -- Map ix is lo time inclusive then hi time inclusive
 newtype MultiTimeline a = MultiTimeline { unMultiTimeline :: [a] } -- arbitrary order order
 
-insertFact :: Fact' id pd sd -> Timeline id pd sd -> Timeline id pd sd
+insertFact :: VFact' id pd sd -> Timeline id pd sd -> Timeline id pd sd
 insertFact f timelineB@(Timeline initAMay factMap)
     | not $ null $ lookupIntersecting timelineB $ toFactSpan f
         = error "insertFactB: overlapping fact."
@@ -327,10 +327,10 @@ insertFact f timelineB@(Timeline initAMay factMap)
         ChangePoint t _ -> Timeline initAMay (Map.insert (toTime t) f factMap)
         ChangeSpan tspan _ -> Timeline initAMay (Map.insert (spanExcMinT tspan) f factMap)
 
-lookupIntersecting :: Timeline id pd sd -> FactSpan -> [Fact' id pd sd]
+lookupIntersecting :: Timeline id pd sd -> FactSpan -> [VFact' id pd sd]
 lookupIntersecting timeline factSpan = fst (viewIntersecting timeline factSpan)
 
-viewIntersecting :: Timeline id pd sd -> FactSpan -> ([Fact' id pd sd], Timeline id pd sd)
+viewIntersecting :: Timeline id pd sd -> FactSpan -> ([VFact' id pd sd], Timeline id pd sd)
 viewIntersecting (Timeline initAMay m) factSpan = case factSpan of
     FS_Init -> ([Init a | Just a <- [initAMay]], Timeline Nothing m)
     _ -> let
@@ -372,12 +372,12 @@ rightNeighbors :: forall id pd sd
     .  Timeline id pd sd
     -> FactSpan
     -- ^ Current fact span. First neighbor start is just after the start of this fact span.
-    -> [Fact' id pd sd]
+    -> [VFact' id pd sd]
 rightNeighbors kBFactsB@(Timeline _ m) currFactSpan = case nextFactMay of
     Nothing -> []
     Just nextFact -> nextFact : rightNeighbors kBFactsB (toFactSpan nextFact)
     where
-    nextFactMay :: Maybe (Fact' id pd sd)
+    nextFactMay :: Maybe (VFact' id pd sd)
     nextFactMay = case currFactSpan of
         FS_Init -> Map.lookup X_NegInf m
         FS_Point t
@@ -392,12 +392,12 @@ leftNeighbors :: forall id pd sd
     .  Timeline id pd sd
     -> FactSpan
     -- ^ Current fact span. First neighbor end is just before the start of this fact span.
-    -> [Fact' id pd sd]
+    -> [VFact' id pd sd]
 leftNeighbors timeline@(Timeline initA m) currFactSpan = case prevCFactMay of
     Nothing -> []
     Just prevCFact -> prevCFact : leftNeighbors timeline (toFactSpan prevCFact)
     where
-    prevCFactMay :: Maybe (Fact' id pd sd)
+    prevCFactMay :: Maybe (VFact' id pd sd)
     prevCFactMay = case currFactSpan of
         FS_Init -> Nothing
         FS_Point t
@@ -453,16 +453,16 @@ mtCropView (MultiTimeline as) factSpan = (MultiTimeline ins, MultiTimeline outs)
         | a <- as
         ]
 
-instance ShiftFactSpanIntersecting (Fact' initT pointT spanT)
-  => CropView (Fact' initT pointT spanT) FactSpan (Maybe (Fact' initT pointT spanT)) [Fact' initT pointT spanT] where
+instance ShiftFactSpanIntersecting (VFact' initT pointT spanT)
+  => CropView (VFact' initT pointT spanT) FactSpan (Maybe (VFact' initT pointT spanT)) [VFact' initT pointT spanT] where
     cropView f cropSpan = let
         fSpan = toFactSpan f
         outsideSpans = cropSpan `difference` fSpan
         in if fSpan `intersects` cropSpan
             then (Just (shiftFactSpanIntersecting f cropSpan), shiftFactSpanIntersecting f <$> outsideSpans)
             else (Nothing, [f])
-instance ShiftFactSpanIntersecting (Fact' initT pointT spanT)
-  => CropView (Timeline initT pointT spanT) FactSpan [Fact' initT pointT spanT] (Timeline initT pointT spanT) where
+instance ShiftFactSpanIntersecting (VFact' initT pointT spanT)
+  => CropView (Timeline initT pointT spanT) FactSpan [VFact' initT pointT spanT] (Timeline initT pointT spanT) where
     cropView timeline factSpan = let
         -- Initial pass just extractts overlapping facts (without breaking them down)
         (intersectingFacts, timelineOut') = viewIntersecting timeline factSpan

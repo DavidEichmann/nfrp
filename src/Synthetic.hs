@@ -14,7 +14,7 @@ import Data.Maybe (catMaybes)
 
 import Time (Time)
 import TimeSpan
-import Theory (ValueM(Pure), MaybeOcc(..), pattern NoOcc, Inputs, InputEl(..), EIx(..), Fact(..), prevV, getE)
+import Theory (ValueM(Pure), MaybeOcc(..), pattern NoOcc, Inputs, InputEl(..), EIx(..), VFact(..), prevV, getE)
 
 -- | Synthetic inputs and EIx/times that should be sampled
 syntheticN :: Int -> Int -> ([EIx Int], [Time], Inputs)
@@ -26,8 +26,8 @@ syntheticN nE nT =
         -- Source Value
         then
           [ case ts of
-            Left t      -> Fact_Occ [] t (negate $ (i * timesN) + x)
-            Right tspan -> Fact_NoOcc [] (DS_SpanExc tspan)
+            Left t      -> VFact_Occ [] t (negate $ (i * timesN) + x)
+            Right tspan -> VFact_NoOcc [] (DS_SpanExc tspan)
           | (ts, x) <- zip times [0..]
           ]
         -- Derived Value

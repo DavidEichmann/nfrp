@@ -95,13 +95,23 @@ import Data.Kind (Type)
 
 -- | Facts about a single value.
 type ValueTimeline a = Timeline (DerivationTrace a) a
-newtype ValueTimelineW a = ValueTimeline { unVTW :: ValueTimeline a }
-  deriving newtype (Semigroup)
+data FactsEl a = FactsEl
+  { factsElTimeline             :: ValueTimeline a
+  -- ^ Timeline of the value.
+  , factsElDerivationClearances :: Map (Maybe Time) (DerivationTrace a, [SomeEIx], Maybe Time)
+  -- ^ Derivation clearances (keys are tLo, values are (trace, prevV deps, tHi)).
+  }
+
+instance Semigroup (FactsEl a) where
+  (FactsEl tlA csA) <> (FactsEl tlB csB)
+    = FactsEl
+        (tlA <> tlB)
+        (M.unionWith max csA csB) -- Take the higher clearance (I don't think we'll ever have duplicate keys though).
 
 -- | A bunch of facts about possibly many values.
-type Facts = DMap EIx ValueTimelineW
+type Facts = DMap EIx FactsEl
 
-listToFacts :: [Th.SomeValueFact] -> Facts
+listToFacts :: [Th.SomeFact] -> Facts
 listToFacts someValueFacts
   | not (null errs) = error $ unlines errs
   | otherwise = fs
@@ -109,23 +119,30 @@ listToFacts someValueFacts
   errs = concat
     [ ((show k ++ ": ") ++) <$> T.checkTimeline tl
     | DM.SomeIx k <- DM.keys fs
-    , let ValueTimeline tl = fs DM.! k
+    , let tl = factsElTimeline (fs DM.! k)
     ]
   fs = DM.fromListWith (<>)
     [ DM.El
         eix
-        (ValueTimeline $ case fact of
-          Th.Fact_NoOcc derT tts -> T.singletonNoOcc derT tts
-          Th.Fact_Occ   derT t a -> T.singletonOcc derT t a
+        (case fact of
+          Th.Fact_VFact vfact -> FactsEl
+            (case vfact of
+              Th.VFact_NoOcc derT tts -> T.singletonNoOcc derT tts
+              Th.VFact_Occ   derT t a -> T.singletonOcc   derT t a
+            )
+            M.empty
+          Th.Fact_DerivationClearance derT deps ts -> FactsEl
+            T.empty
+            (M.singleton (spanExcJustBefore ts) (derT, deps, spanExcJustAfter ts))
         )
-    | Th.SomeValueFact eix fact <- someValueFacts
+    | Th.SomeFact eix fact <- someValueFacts
     ]
 
 singletonFacts :: EIx a -> ValueTimeline a -> Facts
-singletonFacts eix vt = DM.singleton eix  (ValueTimeline vt)
+singletonFacts eix vt = DM.singleton eix  (FactsEl vt M.empty)
 
 valueFacts :: EIx a -> Facts -> ValueTimeline a
-valueFacts eix facts = maybe T.empty unVTW (DM.lookup eix facts)
+valueFacts eix facts = maybe T.empty factsElTimeline (DM.lookup eix facts)
 
 data KnowledgeBase = KnowledgeBase
   { kbFacts :: Facts
@@ -758,7 +775,7 @@ iterateWhileHot = do
         stepCompleteNoOccWithPrevDeps
           :: DerivationM (Maybe (ValueTimeline a, [Derivation a]))
           -- ^ Taking into account the PrevV deps, if progress can be made,
-          -- return the new Fact(s) and any new Derivation(s)
+          -- return the new VFact(s) and any new Derivation(s)
         stepCompleteNoOccWithPrevDeps = case ttspan of
 
           -- If the ttspan is a point time, then this is easy! Pure NoOcc means NoOcc.
@@ -867,8 +884,8 @@ iterateWhileHot = do
           -- by looking for a fact spanning the time just after tLo.
           --
           -- Nothing: No fact spanning the time.
-          -- Just Nothing: Fact found that goes to infinity
-          -- Just (Just t): Fact found that ends at time t (exclusive)
+          -- Just Nothing: VFact found that goes to infinity
+          -- Just (Just t): VFact found that ends at time t (exclusive)
           neighborsAndClearanceByFacts
             :: SomeEIx
             -> DerivationM (Maybe (Maybe Time))
@@ -1307,7 +1324,7 @@ instance Pretty Facts where
         ]
       ]
     | DM.SomeIx eix <- DM.keys fs
-    , Just (ValueTimeline tl) <- [DM.lookup eix fs]
+    , Just (FactsEl tl _) <- [DM.lookup eix fs]
     ]
 
 instance Pretty (Set SomeDerivationID) where

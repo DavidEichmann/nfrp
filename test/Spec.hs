@@ -30,7 +30,7 @@ import Theory
     ( EIx(..)
     , pattern Known
     , pattern Unknown
-    , Fact(..)
+    , VFact(..)
     , MaybeKnown(..)
     , MaybeOcc(..)
     , Inputs(..)
@@ -67,7 +67,7 @@ gTest
 
             kb :: gKnowledgeBase
             kb = mkKnowledgeBase
-                    [ InputEl eix1 [Fact_Occ   [] 1 "Hello"] Nothing
+                    [ InputEl eix1 [VFact_Occ   [] 1 "Hello"] Nothing
                     , InputEl eix2
                         []
                         (Just $ do
@@ -90,8 +90,8 @@ gTest
             kb :: gKnowledgeBase
             kb = mkKnowledgeBase
                     [ InputEl eix1
-                        [ Fact_Occ   [] 1 "Hello"
-                        , Fact_Occ   [] 5 "Goodbye"
+                        [ VFact_Occ   [] 1 "Hello"
+                        , VFact_Occ   [] 5 "Goodbye"
                         ]
                         Nothing
                     , InputEl eix2
@@ -125,9 +125,9 @@ gTest
             kb :: gKnowledgeBase
             kb = mkKnowledgeBase
                     [ InputEl eix1
-                        [ Fact_Occ   [] 1 "Hello"
-                        , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 1) (Just 5))
-                        , Fact_Occ   [] 5 "Goodbye"
+                        [ VFact_Occ   [] 1 "Hello"
+                        , VFact_NoOcc [] (DS_SpanExc $ spanExc (Just 1) (Just 5))
+                        , VFact_Occ   [] 5 "Goodbye"
                         ]
                         Nothing
                     , InputEl eix2
@@ -161,10 +161,10 @@ gTest
             kb :: gKnowledgeBase
             kb = mkKnowledgeBase
                     [ InputEl eix1
-                        [ Fact_NoOcc [] (DS_SpanExc $ spanExc Nothing (Just 1))
-                        , Fact_Occ   [] 1 "Hello"
-                        , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 1) (Just 5))
-                        , Fact_Occ   [] 5 "Goodbye"
+                        [ VFact_NoOcc [] (DS_SpanExc $ spanExc Nothing (Just 1))
+                        , VFact_Occ   [] 1 "Hello"
+                        , VFact_NoOcc [] (DS_SpanExc $ spanExc (Just 1) (Just 5))
+                        , VFact_Occ   [] 5 "Goodbye"
                         ]
                         Nothing
                     , InputEl eix2
@@ -210,91 +210,91 @@ gTest
                   -- time: --0--2--4--6--8--10-12-14-16---
                   -----------11-12-13-14-15-16-17-18-19---
                   [ InputEl a
-                      [ Fact_NoOcc [] (DS_SpanExc $ spanExc Nothing (Just 0))
-                            , Fact_Occ [] 0 11
-                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 0) (Just 2))
-                            , Fact_Occ [] 2 12
-                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 2) (Just 4))
-                            , Fact_Occ [] 4 13
-                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 4) (Just 6))
-                            , Fact_Occ [] 6 14
-                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 6) (Just 8))
-                            , Fact_Occ [] 8 15
-                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 8) (Just 10))
-                            , Fact_Occ [] 10 16
-                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 10) (Just 12))
-                            , Fact_Occ [] 12 17
-                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 12) (Just 14))
-                            , Fact_Occ [] 14 18
-                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 14) (Just 16))
-                            , Fact_Occ [] 16 19
-                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 16) Nothing)
+                      [ VFact_NoOcc [] (DS_SpanExc $ spanExc Nothing (Just 0))
+                            , VFact_Occ [] 0 11
+                            , VFact_NoOcc [] (DS_SpanExc $ spanExc (Just 0) (Just 2))
+                            , VFact_Occ [] 2 12
+                            , VFact_NoOcc [] (DS_SpanExc $ spanExc (Just 2) (Just 4))
+                            , VFact_Occ [] 4 13
+                            , VFact_NoOcc [] (DS_SpanExc $ spanExc (Just 4) (Just 6))
+                            , VFact_Occ [] 6 14
+                            , VFact_NoOcc [] (DS_SpanExc $ spanExc (Just 6) (Just 8))
+                            , VFact_Occ [] 8 15
+                            , VFact_NoOcc [] (DS_SpanExc $ spanExc (Just 8) (Just 10))
+                            , VFact_Occ [] 10 16
+                            , VFact_NoOcc [] (DS_SpanExc $ spanExc (Just 10) (Just 12))
+                            , VFact_Occ [] 12 17
+                            , VFact_NoOcc [] (DS_SpanExc $ spanExc (Just 12) (Just 14))
+                            , VFact_Occ [] 14 18
+                            , VFact_NoOcc [] (DS_SpanExc $ spanExc (Just 14) (Just 16))
+                            , VFact_Occ [] 16 19
+                            , VFact_NoOcc [] (DS_SpanExc $ spanExc (Just 16) Nothing)
                       ]
                       Nothing
                   -- time: --0--2--4--6--8--10-12-14-16---
                   -----------21-22-23-24-25-26-27-28-29---
                   ,  InputEl b
-                      [ Fact_NoOcc [] (DS_SpanExc $ spanExc Nothing (Just 0))
-                            , Fact_Occ [] 0 21
-                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 0) (Just 2))
-                            , Fact_Occ [] 2 22
-                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 2) (Just 4))
-                            , Fact_Occ [] 4 23
-                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 4) (Just 6))
-                            , Fact_Occ [] 6 24
-                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 6) (Just 8))
-                            , Fact_Occ [] 8 25
-                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 8) (Just 10))
-                            , Fact_Occ [] 10 26
-                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 10) (Just 12))
-                            , Fact_Occ [] 12 27
-                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 12) (Just 14))
-                            , Fact_Occ [] 14 28
-                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 14) (Just 16))
-                            , Fact_Occ [] 16 29
-                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 16) Nothing)
+                      [ VFact_NoOcc [] (DS_SpanExc $ spanExc Nothing (Just 0))
+                            , VFact_Occ [] 0 21
+                            , VFact_NoOcc [] (DS_SpanExc $ spanExc (Just 0) (Just 2))
+                            , VFact_Occ [] 2 22
+                            , VFact_NoOcc [] (DS_SpanExc $ spanExc (Just 2) (Just 4))
+                            , VFact_Occ [] 4 23
+                            , VFact_NoOcc [] (DS_SpanExc $ spanExc (Just 4) (Just 6))
+                            , VFact_Occ [] 6 24
+                            , VFact_NoOcc [] (DS_SpanExc $ spanExc (Just 6) (Just 8))
+                            , VFact_Occ [] 8 25
+                            , VFact_NoOcc [] (DS_SpanExc $ spanExc (Just 8) (Just 10))
+                            , VFact_Occ [] 10 26
+                            , VFact_NoOcc [] (DS_SpanExc $ spanExc (Just 10) (Just 12))
+                            , VFact_Occ [] 12 27
+                            , VFact_NoOcc [] (DS_SpanExc $ spanExc (Just 12) (Just 14))
+                            , VFact_Occ [] 14 28
+                            , VFact_NoOcc [] (DS_SpanExc $ spanExc (Just 14) (Just 16))
+                            , VFact_Occ [] 16 29
+                            , VFact_NoOcc [] (DS_SpanExc $ spanExc (Just 16) Nothing)
                       ]
                       Nothing
                   -- time: --0--2--4--6--8--10-12-14-16---
                   -----------31-32-33-34-35-36-37-38-39---
                   ,  InputEl c
-                      [ Fact_NoOcc [] (DS_SpanExc $ spanExc Nothing (Just 0))
-                            , Fact_Occ [] 0 31
-                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 0) (Just 2))
-                            , Fact_Occ [] 2 32
-                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 2) (Just 4))
-                            , Fact_Occ [] 4 33
-                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 4) (Just 6))
-                            , Fact_Occ [] 6 34
-                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 6) (Just 8))
-                            , Fact_Occ [] 8 35
-                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 8) (Just 10))
-                            , Fact_Occ [] 10 36
-                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 10) (Just 12))
-                            , Fact_Occ [] 12 37
-                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 12) (Just 14))
-                            , Fact_Occ [] 14 38
-                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 14) (Just 16))
-                            , Fact_Occ [] 16 39
-                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 16) Nothing)
+                      [ VFact_NoOcc [] (DS_SpanExc $ spanExc Nothing (Just 0))
+                            , VFact_Occ [] 0 31
+                            , VFact_NoOcc [] (DS_SpanExc $ spanExc (Just 0) (Just 2))
+                            , VFact_Occ [] 2 32
+                            , VFact_NoOcc [] (DS_SpanExc $ spanExc (Just 2) (Just 4))
+                            , VFact_Occ [] 4 33
+                            , VFact_NoOcc [] (DS_SpanExc $ spanExc (Just 4) (Just 6))
+                            , VFact_Occ [] 6 34
+                            , VFact_NoOcc [] (DS_SpanExc $ spanExc (Just 6) (Just 8))
+                            , VFact_Occ [] 8 35
+                            , VFact_NoOcc [] (DS_SpanExc $ spanExc (Just 8) (Just 10))
+                            , VFact_Occ [] 10 36
+                            , VFact_NoOcc [] (DS_SpanExc $ spanExc (Just 10) (Just 12))
+                            , VFact_Occ [] 12 37
+                            , VFact_NoOcc [] (DS_SpanExc $ spanExc (Just 12) (Just 14))
+                            , VFact_Occ [] 14 38
+                            , VFact_NoOcc [] (DS_SpanExc $ spanExc (Just 14) (Just 16))
+                            , VFact_Occ [] 16 39
+                            , VFact_NoOcc [] (DS_SpanExc $ spanExc (Just 16) Nothing)
                       ]
                       Nothing
                   -- time: --0--2--4--6--8--10-12-14-16---
                   -- (1) -------2-----3------1--_--2------
                   ,  InputEl switch
-                      [ Fact_NoOcc [] (DS_SpanExc $ spanExc Nothing (Just 0))
-                            , Fact_NoOcc [] (DS_Point 0)
-                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 0) (Just 2))
-                            , Fact_Occ [] 2 2
-                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 2) (Just 6))
-                            , Fact_Occ [] 6 3
-                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 6) (Just 10))
-                            , Fact_Occ [] 10 1
-                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 10) (Just 12))
+                      [ VFact_NoOcc [] (DS_SpanExc $ spanExc Nothing (Just 0))
+                            , VFact_NoOcc [] (DS_Point 0)
+                            , VFact_NoOcc [] (DS_SpanExc $ spanExc (Just 0) (Just 2))
+                            , VFact_Occ [] 2 2
+                            , VFact_NoOcc [] (DS_SpanExc $ spanExc (Just 2) (Just 6))
+                            , VFact_Occ [] 6 3
+                            , VFact_NoOcc [] (DS_SpanExc $ spanExc (Just 6) (Just 10))
+                            , VFact_Occ [] 10 1
+                            , VFact_NoOcc [] (DS_SpanExc $ spanExc (Just 10) (Just 12))
                             -- Unknown at t=12
-                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 12) (Just 14))
-                            , Fact_Occ [] 14 2
-                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 14) Nothing)
+                            , VFact_NoOcc [] (DS_SpanExc $ spanExc (Just 12) (Just 14))
+                            , VFact_Occ [] 14 2
+                            , VFact_NoOcc [] (DS_SpanExc $ spanExc (Just 14) Nothing)
                       ]
                       Nothing
                   -- time: --0--2--4--6--8--10-12---14-16---
@@ -345,13 +345,13 @@ gTest
                     -- time: --0--------5-----7--------------
                     --         2        4     6
                     [ InputEl eix1
-                        [ Fact_NoOcc [] (DS_SpanExc $ spanExc Nothing (Just 0))
-                            , Fact_Occ   [] 0 2
-                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 0) (Just 5))
-                            , Fact_Occ   [] 5 4
-                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 5) (Just 7))
-                            , Fact_Occ   [] 7 6
-                            , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 7) Nothing)
+                        [ VFact_NoOcc [] (DS_SpanExc $ spanExc Nothing (Just 0))
+                            , VFact_Occ   [] 0 2
+                            , VFact_NoOcc [] (DS_SpanExc $ spanExc (Just 0) (Just 5))
+                            , VFact_Occ   [] 5 4
+                            , VFact_NoOcc [] (DS_SpanExc $ spanExc (Just 5) (Just 7))
+                            , VFact_Occ   [] 7 6
+                            , VFact_NoOcc [] (DS_SpanExc $ spanExc (Just 7) Nothing)
                         ]
                         Nothing
                     -- time: --0--------5-----7--------------
@@ -433,16 +433,16 @@ tests = testGroup "NFRP"
 --                 -- time: --0--------5-----7--------------
 --                 --------------------------9______________
 --                 [ InputEl eix1
---                     (Left [ Fact_NoOcc [] (spanExc Nothing (Just 7)) NoOcc
---                           , Fact_Occ   [] 7 (Occ 9)
+--                     (Left [ VFact_NoOcc [] (spanExc Nothing (Just 7)) NoOcc
+--                           , VFact_Occ   [] 7 (Occ 9)
 --                           ]
 --                     )
 --                 -- time: --0--------5-----7--------------
 --                 -------------------90____80______________
 --                 , InputEl eix2
---                     (Left [ Fact_NoOcc [] (spanExc Nothing (Just 5)) NoOcc
---                           , Fact_Occ   [] 5 (Occ 90)
---                           , Fact_Occ   [] 7 (Occ 80)
+--                     (Left [ VFact_NoOcc [] (spanExc Nothing (Just 5)) NoOcc
+--                           , VFact_Occ   [] 5 (Occ 90)
+--                           , VFact_Occ   [] 7 (Occ 80)
 --                           ]
 --                     )
 --                 -- time: --0--------5-----7--------------
@@ -477,11 +477,11 @@ tests = testGroup "NFRP"
 --                 -- time: --0--------5-----7--------------
 --                 -----------7--------8_____9______________
 --                 [ InputEl eix1
---                     (Left [ Fact_NoOcc [] (spanExc Nothing (Just 0)) NoOcc
---                           , Fact_Occ   [] 0 (Occ 7)
---                           , Fact_NoOcc [] (spanExc (Just 0) (Just 5)) NoOcc
---                           , Fact_Occ   [] 5 (Occ 8)
---                           , Fact_Occ   [] 7 (Occ 9)
+--                     (Left [ VFact_NoOcc [] (spanExc Nothing (Just 0)) NoOcc
+--                           , VFact_Occ   [] 0 (Occ 7)
+--                           , VFact_NoOcc [] (spanExc (Just 0) (Just 5)) NoOcc
+--                           , VFact_Occ   [] 5 (Occ 8)
+--                           , VFact_Occ   [] 7 (Occ 9)
 --                           ]
 --                     )
 --                 -- time: --0--------5-----7--------------
@@ -516,20 +516,20 @@ tests = testGroup "NFRP"
 --                 -- time: --0--------5-----7-----9--------
 --                 --------------------3-----1----__________
 --                 [ InputEl eix1
---                     (Left [ Fact_NoOcc [] (spanExc Nothing (Just 5)) NoOcc
---                           , Fact_Occ   [] 5 (Occ 3)
---                           , Fact_NoOcc [] (spanExc (Just 5) (Just 7)) NoOcc
---                           , Fact_Occ   [] 7 (Occ 1)
---                           , Fact_NoOcc [] (spanExc (Just 7) (Just 9)) NoOcc
+--                     (Left [ VFact_NoOcc [] (spanExc Nothing (Just 5)) NoOcc
+--                           , VFact_Occ   [] 5 (Occ 3)
+--                           , VFact_NoOcc [] (spanExc (Just 5) (Just 7)) NoOcc
+--                           , VFact_Occ   [] 7 (Occ 1)
+--                           , VFact_NoOcc [] (spanExc (Just 7) (Just 9)) NoOcc
 --                           ]
 --                     )
 --                 -- time: --0--------5-----7-----9--------
 --                 -------------------90____80____70________
 --                 , InputEl eix2
---                     (Left [ Fact_NoOcc [] (spanExc Nothing (Just 5)) NoOcc
---                           , Fact_Occ   [] 5 (Occ 90)
---                           , Fact_Occ   [] 7 (Occ 80)
---                           , Fact_Occ   [] 9 (Occ 70)
+--                     (Left [ VFact_NoOcc [] (spanExc Nothing (Just 5)) NoOcc
+--                           , VFact_Occ   [] 5 (Occ 90)
+--                           , VFact_Occ   [] 7 (Occ 80)
+--                           , VFact_Occ   [] 9 (Occ 70)
 --                           ]
 --                     )
 --                 -- time: --0--------5-----7-----9--------
@@ -564,11 +564,11 @@ tests = testGroup "NFRP"
 --                 -- time: --0--------5-----7-----9--------
 --                 --------------------3-----1_____5____
 --                 [ InputEl eix1
---                     (Left [ Fact_NoOcc [] (spanExc Nothing (Just 5)) NoOcc
---                           , Fact_Occ   [] 5 (Occ 3)
---                           , Fact_NoOcc [] (spanExc (Just 5) (Just 7)) NoOcc
---                           , Fact_Occ   [] 7 (Occ 1)
---                           , Fact_Occ   [] 9 (Occ 5)
+--                     (Left [ VFact_NoOcc [] (spanExc Nothing (Just 5)) NoOcc
+--                           , VFact_Occ   [] 5 (Occ 3)
+--                           , VFact_NoOcc [] (spanExc (Just 5) (Just 7)) NoOcc
+--                           , VFact_Occ   [] 7 (Occ 1)
+--                           , VFact_Occ   [] 9 (Occ 5)
 --                           ]
 --                     )
 --                 -- time: --0--------5-----7-----9--------
@@ -604,11 +604,11 @@ tests = testGroup "NFRP"
 --                 -- time: -----------5-----7-----111--------
 --                 --------------------3-----1_____5____
 --                 [ InputEl eix1
---                     (Left [ Fact_NoOcc [] (spanExc Nothing (Just 5)) NoOcc
---                           , Fact_Occ   [] 5 (Occ 3)
---                           , Fact_NoOcc [] (spanExc (Just 5) (Just 7)) NoOcc
---                           , Fact_Occ   [] 7 (Occ 1)
---                           , Fact_Occ   [] 111 (Occ 5)
+--                     (Left [ VFact_NoOcc [] (spanExc Nothing (Just 5)) NoOcc
+--                           , VFact_Occ   [] 5 (Occ 3)
+--                           , VFact_NoOcc [] (spanExc (Just 5) (Just 7)) NoOcc
+--                           , VFact_Occ   [] 7 (Occ 1)
+--                           , VFact_Occ   [] 111 (Occ 5)
 --                           ]
 --                     )
 --                 -- time: -----------5-----7-----111--------
@@ -644,12 +644,12 @@ tests = testGroup "NFRP"
 --                 -- time: --0--------5-----7-----9--------
 --                 -----------_--------3-----1_____5____
 --                 [ InputEl eix1
---                     (Left [ Fact_NoOcc [] (spanExc Nothing (Just 0)) NoOcc
---                           , Fact_NoOcc [] (spanExc (Just 0) (Just 5)) NoOcc
---                           , Fact_Occ   [] 5 (Occ 3)
---                           , Fact_NoOcc [] (spanExc (Just 5) (Just 7)) NoOcc
---                           , Fact_Occ   [] 7 (Occ 1)
---                           , Fact_Occ   [] 9 (Occ 5)
+--                     (Left [ VFact_NoOcc [] (spanExc Nothing (Just 0)) NoOcc
+--                           , VFact_NoOcc [] (spanExc (Just 0) (Just 5)) NoOcc
+--                           , VFact_Occ   [] 5 (Occ 3)
+--                           , VFact_NoOcc [] (spanExc (Just 5) (Just 7)) NoOcc
+--                           , VFact_Occ   [] 7 (Occ 1)
+--                           , VFact_Occ   [] 9 (Occ 5)
 --                           ]
 --                     )
 --                 -- time: --0--------5-----7-----9--------
@@ -690,11 +690,11 @@ tests = testGroup "NFRP"
 --                 -- time: --0--------5-----7-----9--------
 --                 --------------------()----()____()_______
 --                 [ InputEl swapE
---                     (Left [ Fact_NoOcc [] (spanExc Nothing (Just 5)) NoOcc
---                           , Fact_Occ   [] 5 (Occ ())
---                           , Fact_NoOcc [] (spanExc (Just 5) (Just 7)) NoOcc
---                           , Fact_Occ   [] 7 (Occ ())
---                           , Fact_Occ   [] 9 (Occ ())
+--                     (Left [ VFact_NoOcc [] (spanExc Nothing (Just 5)) NoOcc
+--                           , VFact_Occ   [] 5 (Occ ())
+--                           , VFact_NoOcc [] (spanExc (Just 5) (Just 7)) NoOcc
+--                           , VFact_Occ   [] 7 (Occ ())
+--                           , VFact_Occ   [] 9 (Occ ())
 --                           ]
 --                     )
 --                 -- time: --0--------5-----7-----9--------
@@ -751,57 +751,57 @@ tests = testGroup "NFRP"
 --                 -- time:      0      10      20
 --                 --     <--0-> 1 <-2-> 3 <-4-> 5 <-6-->
 --                 [ InputEl a
---                     (Left [ Fact_NoOcc [] (spanExc Nothing (Just 0))    0
---                           , Fact_Occ   [] 0                             1
---                           , Fact_NoOcc [] (spanExc (Just 0) (Just 10))  2
---                           , Fact_Occ   [] 10                            3
---                           , Fact_NoOcc [] (spanExc (Just 10) (Just 20)) 4
---                           , Fact_Occ   [] 20                            5
---                           , Fact_NoOcc [] (spanExc (Just 20) Nothing)   6
+--                     (Left [ VFact_NoOcc [] (spanExc Nothing (Just 0))    0
+--                           , VFact_Occ   [] 0                             1
+--                           , VFact_NoOcc [] (spanExc (Just 0) (Just 10))  2
+--                           , VFact_Occ   [] 10                            3
+--                           , VFact_NoOcc [] (spanExc (Just 10) (Just 20)) 4
+--                           , VFact_Occ   [] 20                            5
+--                           , VFact_NoOcc [] (spanExc (Just 20) Nothing)   6
 --                           ]
 --                     )
 --                 -- time:        5        10        25
 --                 --     <--10-> 11 <-12-> 13 <-14-> 15 <-16-->
 --                 ,  InputEl b
---                     (Left [ Fact_NoOcc [] (spanExc Nothing (Just 5))    10
---                           , Fact_Occ   [] 5                             11
---                           , Fact_NoOcc [] (spanExc (Just 5) (Just 10))  12
---                           , Fact_Occ   [] 10                            13
---                           , Fact_NoOcc [] (spanExc (Just 10) (Just 25)) 14
---                           , Fact_Occ   [] 25                            15
---                           , Fact_NoOcc [] (spanExc (Just 25) Nothing)   16
+--                     (Left [ VFact_NoOcc [] (spanExc Nothing (Just 5))    10
+--                           , VFact_Occ   [] 5                             11
+--                           , VFact_NoOcc [] (spanExc (Just 5) (Just 10))  12
+--                           , VFact_Occ   [] 10                            13
+--                           , VFact_NoOcc [] (spanExc (Just 10) (Just 25)) 14
+--                           , VFact_Occ   [] 25                            15
+--                           , VFact_NoOcc [] (spanExc (Just 25) Nothing)   16
 --                           ]
 --                     )
 --                 -- time:        7        10        25
 --                 --     <--20-> 21 <-22-> 23 <-24-> 25 <-26-->
 --                 ,  InputEl c
---                     (Left [ Fact_NoOcc [] (spanExc Nothing (Just 7))    20
---                           , Fact_Occ   [] 7                             21
---                           , Fact_NoOcc [] (spanExc (Just 7) (Just 10))  22
---                           , Fact_Occ   [] 10                            23
---                           , Fact_NoOcc [] (spanExc (Just 10) (Just 25)) 24
---                           , Fact_Occ   [] 25                            25
---                           , Fact_NoOcc [] (spanExc (Just 25) Nothing)   26
+--                     (Left [ VFact_NoOcc [] (spanExc Nothing (Just 7))    20
+--                           , VFact_Occ   [] 7                             21
+--                           , VFact_NoOcc [] (spanExc (Just 7) (Just 10))  22
+--                           , VFact_Occ   [] 10                            23
+--                           , VFact_NoOcc [] (spanExc (Just 10) (Just 25)) 24
+--                           , VFact_Occ   [] 25                            25
+--                           , VFact_NoOcc [] (spanExc (Just 25) Nothing)   26
 --                           ]
 --                     )
 --                 -- time: --0--2-----6-----10-20-25---30--
 --                 -- (1) -------2-----3------1--_--2----1--
 --                 ,  InputEl switch
---                     (Left [ Fact_NoOcc [] (spanExc Nothing (Just 0))    NoOcc
---                           , Fact_Occ   [] 0                             NoOcc
---                           , Fact_NoOcc [] (spanExc (Just 0) (Just 2))   NoOcc
---                           , Fact_Occ   [] 2                             (Occ 2)
---                           , Fact_NoOcc [] (spanExc (Just 2) (Just 6))   NoOcc
---                           , Fact_Occ   [] 6                             (Occ 3)
---                           , Fact_NoOcc [] (spanExc (Just 6) (Just 10))  NoOcc
---                           , Fact_Occ   [] 10                            (Occ 1)
---                           , Fact_NoOcc [] (spanExc (Just 10) (Just 20)) NoOcc
+--                     (Left [ VFact_NoOcc [] (spanExc Nothing (Just 0))    NoOcc
+--                           , VFact_Occ   [] 0                             NoOcc
+--                           , VFact_NoOcc [] (spanExc (Just 0) (Just 2))   NoOcc
+--                           , VFact_Occ   [] 2                             (Occ 2)
+--                           , VFact_NoOcc [] (spanExc (Just 2) (Just 6))   NoOcc
+--                           , VFact_Occ   [] 6                             (Occ 3)
+--                           , VFact_NoOcc [] (spanExc (Just 6) (Just 10))  NoOcc
+--                           , VFact_Occ   [] 10                            (Occ 1)
+--                           , VFact_NoOcc [] (spanExc (Just 10) (Just 20)) NoOcc
 --                           -- Unknown at t=20
---                           , Fact_NoOcc [] (spanExc (Just 20) (Just 25)) NoOcc
---                           , Fact_Occ   [] 25                            (Occ 2)
---                           , Fact_NoOcc [] (spanExc (Just 25) (Just 30)) NoOcc
---                           , Fact_Occ   [] 30                            (Occ 1)
---                           , Fact_NoOcc [] (spanExc (Just 30) Nothing)   NoOcc
+--                           , VFact_NoOcc [] (spanExc (Just 20) (Just 25)) NoOcc
+--                           , VFact_Occ   [] 25                            (Occ 2)
+--                           , VFact_NoOcc [] (spanExc (Just 25) (Just 30)) NoOcc
+--                           , VFact_Occ   [] 30                            (Occ 1)
+--                           , VFact_NoOcc [] (spanExc (Just 30) Nothing)   NoOcc
 --                           ]
 --                     )
 --                 -- time:   0       2         5         6         7        10       20      25        30

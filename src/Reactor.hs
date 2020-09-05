@@ -35,7 +35,7 @@ import TimeSpan
 
 import Theory
   ( ValueFact(..)
-  , SomeValueFact(..)
+  , SomeFact(..)
   , VIx(..)
 --   , SomeVIx(..)
 
@@ -114,7 +114,7 @@ forkReaction fork = Fork fork (RPure ())
 mkReactor :: [Reaction ()] -> Reactor
 mkReactor = _
 
-insertFact :: SomeValueFact -> Reactor -> (Reactor, Diff)
+insertFact :: SomeFact -> Reactor -> (Reactor, Diff)
 insertFact = _
 
 -- | Given a VIx and a ValueM describing it for all time, this creates a Reaction.
@@ -164,7 +164,7 @@ mkKnowledgeBase :: Inputs -> KnowledgeBase
 mkKnowledgeBase inputs = iterateUntilChange initialKb
   where
   initialFacts = concat
-    [ SomeValueFact eix <$> eventFacts
+    [ SomeFact eix <$> eventFacts
     | InputEl eix (Left eventFacts) <- inputs
     ]
   initialDerivations =
@@ -198,7 +198,7 @@ mkKnowledgeBase inputs = iterateUntilChange initialKb
           , changed
           )
         Just (newFacts, newDerivations) ->
-          ( (SomeValueFact eix <$> newFacts) ++ facts'
+          ( (SomeFact eix <$> newFacts) ++ facts'
           , (SomeDerivation eix <$> newDerivations) ++ derivations'
           , True
           )
@@ -214,7 +214,7 @@ mkKnowledgeBase inputs = iterateUntilChange initialKb
     -- ^ Event index that the derivation corresponds to.
     -> [SomeDerivation]
     -- ^ Current derivations. Used to detect PrevV deadlock.
-    -> [SomeValueFact]
+    -> [SomeFact]
     -- ^ Current facts. Used to query for existing facts
     -> Derivation a
     -- ^ Derivation to step
@@ -505,8 +505,8 @@ mkKnowledgeBase inputs = iterateUntilChange initialKb
         -- by looking for a fact spanning the time just after tLo.
         --
         -- Nothing: No fact spanning the time.
-        -- Just Nothing: Fact found that goes to infinity
-        -- Just t: Fact found that ends at time t (exclusive)
+        -- Just Nothing: VFact found that goes to infinity
+        -- Just t: VFact found that ends at time t (exclusive)
         neighborsAndClearanceByFacts
           :: SomeVIx
           -> Maybe (Maybe Time)
@@ -515,7 +515,7 @@ mkKnowledgeBase inputs = iterateUntilChange initialKb
           findClearanceAfter :: Maybe Time -> Maybe (Maybe Time)
           findClearanceAfter t = listToMaybe
             [ spanExcJustAfter tspan
-            | SomeValueFact ix'' (Fact_SpanExc _ tspan _) <- facts
+            | SomeFact ix'' (Fact_SpanExc _ tspan _) <- facts
             , ix == SomeVIx ix''
             , case t of
                 Nothing -> spanExcJustBefore tspan == Nothing
@@ -622,7 +622,7 @@ searchForFirstChange
   -- ^ Time span to lookup
   -> VIx a
   -- ^ Event to lookup
-  -> [SomeValueFact]
+  -> [SomeFact]
   -- ^ All known facts.
   -> FirstValueChange
 searchForFirstChange tspan eix allFacts = let
@@ -658,7 +658,7 @@ lookupPrevV
   -- ^ Event to lookup.
   -> (a -> Maybe b)
   -- ^ predicate / projection.
-  -> [SomeValueFact]
+  -> [SomeFact]
   -- ^ Known facts.
   -> MaybeKnown (Maybe b)
   -- ^ Unknown: if unknown
@@ -706,7 +706,7 @@ lookupCurrV
   -- ^ Event to lookup.
   -> (a -> Maybe b)
   -- ^ predicate / projection.
-  -> [SomeValueFact]
+  -> [SomeFact]
   -- ^ Known facts.
   -> MaybeKnown (Maybe b)
   -- ^ Unknown: if unknown
@@ -735,7 +735,7 @@ spanLookupPrevV
   -- ^ Event to lookup
   -> (a -> Maybe b)
   -- ^ predicate / projection.
-  -> [SomeValueFact]
+  -> [SomeFact]
   -- ^ All known facts.
   -> ([(TimeSpan, Maybe b)], [TimeSpan])
   -- ^ ( Known values about the given VIx
@@ -761,7 +761,7 @@ prevVFacts
   -- ^ Event to lookup
   -> (a -> Maybe b)
   -- ^ predicate / projection.
-  -> [SomeValueFact]
+  -> [SomeFact]
   -- ^ All known facts.
   -> [(TimeSpan, Maybe b)]
   -- ^ All known previous event values (if one exists)
@@ -788,7 +788,7 @@ spanLookupVFacts
   -- ^ Time or span to lookup
   -> VIx a
   -- ^ Event to lookup
-  -> [SomeValueFact]
+  -> [SomeFact]
   -- ^ All known facts.
   -> ([ValueFact a], [TimeSpan])
   -- ^ ( Facts about the given VIx
