@@ -39,7 +39,6 @@ module Theory
 
   import Time
   import TimeSpan
-  import Control.Monad.Fail (MonadFail(..))
   import Data.Function (on)
 
   type DerivationTraceEl a = String
@@ -240,8 +239,8 @@ module Theory
 
   factsV' :: EIx a -> [SomeFact] -> [VFact a]
   factsV' (EIx eix) es
-    = [ unsafeCoerce fact
-      | SomeFact (EIx eix') fact <- es
+    = [ (unsafeCoerce :: VFact a' -> VFact a) fact
+      | SomeFact (EIx eix') (Fact_VFact fact) <- es
       , eix == eix'
       ]
 
