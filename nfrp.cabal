@@ -36,13 +36,12 @@ library
     default-language: Haskell2010
     ghc-options: -Wall -fignore-asserts
     build-depends:
-        base == 4.12.0.0,
+        base == 4.13.0.0,
         array,
         async -any,
         binary -any,
         bytestring -any,
         containers >= 0.5.9,
-        stm-containers,
         deepseq -any,
         -- dependent-map -any,
         generics-sop -any,
@@ -56,7 +55,7 @@ library
         safe -any,
         -- singletons -any,
         stm -any,
-        time == 1.8.0.2,
+        time == 1.9.3,
         transformers -any,
         vector -any
 
@@ -67,7 +66,7 @@ library
 --     default-language: Haskell2010
 --     ghc-options: -fprof-auto -Wall -threaded
 --     build-depends:
---         base == 4.12.0.0,
+--         base == 4.13.0.0,
 --         containers >=0.5.9,
 --         async -any,
 --         network -any,
@@ -75,7 +74,7 @@ library
 --         safe -any,
 --         generics-sop -any,
 --         -- gtk3 -any,
---         time == 1.8.0.2
+--         time == 1.9.3
 
 
 -- executable Main
@@ -84,7 +83,7 @@ library
 --     default-language: Haskell2010
 --     ghc-options: -fprof-auto -Wall -threaded
 --     build-depends:
---         base == 4.12.0.0,
+--         base == 4.13.0.0,
 --         containers >=0.5.9,
 --         async -any,
 --         network -any,
@@ -92,7 +91,7 @@ library
 --         safe -any,
 --         generics-sop -any,
 --         -- gtk3 -any,
---         time == 1.8.0.2
+--         time == 1.9.3
 
 -- executable Circles
 --     main-is: Circles.hs
@@ -102,7 +101,7 @@ library
 --     other-modules:
 --         Circles.Game
 --     build-depends:
---         base == 4.12.0.0,
+--         base == 4.13.0.0,
 --         async -any,
 --         binary -any,
 --         cmdargs -any,
@@ -115,7 +114,7 @@ library
 --         network -any,
 --         nfrp -any,
 --         safe -any,
---         time == 1.8.0.2
+--         time == 1.9.3
 
 executable Game01
     main-is: Game01.hs
@@ -125,7 +124,7 @@ executable Game01
     other-modules:
         -- Game01.Game
     build-depends:
-        base == 4.12.0.0,
+        base == 4.13.0.0,
         async -any,
         binary -any,
         cmdargs -any,
@@ -134,11 +133,10 @@ executable Game01
         gloss -any,
         generics-sop -any,
         -- gtk3 -any,
-        ncurses -any,
         network -any,
         nfrp -any,
         safe -any,
-        time == 1.8.0.2
+        time == 1.9.3
 
 -- executable bench
 --     main-is: Bench.hs
@@ -146,7 +144,7 @@ executable Game01
 --     default-language: Haskell2010
 --     ghc-options: -O2 -Wall -threaded
 --     build-depends:
---         base == 4.12.0.0,
+--         base == 4.13.0.0,
 --         async -any,
 --         binary -any,
 --         cmdargs -any,
@@ -159,7 +157,7 @@ executable Game01
 --         network -any,
 --         nfrp -any,
 --         safe -any,
---         time == 1.8.0.2
+--         time == 1.9.3
 
 
 test-suite nfrp-test
@@ -169,13 +167,13 @@ test-suite nfrp-test
     default-language: Haskell2010
     ghc-options: -fprof-auto -threaded -threaded
     build-depends:
-        base == 4.12.0.0,
+        base == 4.13.0.0,
         containers >=0.5.9,
         nfrp -any,
         binary -any,
         generics-sop -any,
         prettyprinter -any,
-        time == 1.8.0.2,
+        time == 1.9.3,
         tasty -any,
         tasty-hunit -any,
         tasty-quickcheck -any
