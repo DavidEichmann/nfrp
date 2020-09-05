@@ -67,9 +67,10 @@ gTest
 
             kb :: gKnowledgeBase
             kb = mkKnowledgeBase
-                    [ InputEl eix1 (Left [Fact_Occ   [] 1 "Hello"])
+                    [ InputEl eix1 [Fact_Occ   [] 1 "Hello"] Nothing
                     , InputEl eix2
-                        (Right $ do
+                        []
+                        (Just $ do
                             xs <- requireE eix1
                             return (xs ++ " World!")
                         )
@@ -88,17 +89,20 @@ gTest
 
             kb :: gKnowledgeBase
             kb = mkKnowledgeBase
-                    [ InputEl eix1 (Left
+                    [ InputEl eix1
                         [ Fact_Occ   [] 1 "Hello"
                         , Fact_Occ   [] 5 "Goodbye"
-                        ])
+                        ]
+                        Nothing
                     , InputEl eix2
-                        (Right $ do
+                        []
+                        (Just $ do
                             xs <- requireE eix3
                             return (xs ++ "!")
                         )
                     , InputEl eix3
-                        (Right $ do
+                        []
+                        (Just $ do
                             xs <- requireE eix1
                             return (xs ++ " World")
                         )
@@ -120,18 +124,21 @@ gTest
 
             kb :: gKnowledgeBase
             kb = mkKnowledgeBase
-                    [ InputEl eix1 (Left
+                    [ InputEl eix1
                         [ Fact_Occ   [] 1 "Hello"
                         , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 1) (Just 5))
                         , Fact_Occ   [] 5 "Goodbye"
-                        ])
+                        ]
+                        Nothing
                     , InputEl eix2
-                        (Right $ do
+                        []
+                        (Just $ do
                             xs <- requireE eix3
                             return (xs ++ "!")
                         )
                     , InputEl eix3
-                        (Right $ do
+                        []
+                        (Just $ do
                             xs <- requireE eix1
                             return (xs ++ " World")
                         )
@@ -153,20 +160,23 @@ gTest
 
             kb :: gKnowledgeBase
             kb = mkKnowledgeBase
-                    [ InputEl eix1 (Left
+                    [ InputEl eix1
                         [ Fact_NoOcc [] (DS_SpanExc $ spanExc Nothing (Just 1))
                         , Fact_Occ   [] 1 "Hello"
                         , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 1) (Just 5))
                         , Fact_Occ   [] 5 "Goodbye"
-                        ])
+                        ]
+                        Nothing
                     , InputEl eix2
-                        (Right $ do
+                        []
+                        (Just $ do
                             xs <- requireE eix3
                             old <- maybe "" (++ " >> ") <$> prevV eix2
                             return (old ++ xs ++ "!")
                         )
                     , InputEl eix3
-                        (Right $ do
+                        []
+                        (Just $ do
                             xs <- requireE eix1
                             return (xs ++ " World")
                         )
@@ -200,7 +210,7 @@ gTest
                   -- time: --0--2--4--6--8--10-12-14-16---
                   -----------11-12-13-14-15-16-17-18-19---
                   [ InputEl a
-                      (Left [ Fact_NoOcc [] (DS_SpanExc $ spanExc Nothing (Just 0))
+                      [ Fact_NoOcc [] (DS_SpanExc $ spanExc Nothing (Just 0))
                             , Fact_Occ [] 0 11
                             , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 0) (Just 2))
                             , Fact_Occ [] 2 12
@@ -219,12 +229,12 @@ gTest
                             , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 14) (Just 16))
                             , Fact_Occ [] 16 19
                             , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 16) Nothing)
-                            ]
-                      )
+                      ]
+                      Nothing
                   -- time: --0--2--4--6--8--10-12-14-16---
                   -----------21-22-23-24-25-26-27-28-29---
                   ,  InputEl b
-                      (Left [ Fact_NoOcc [] (DS_SpanExc $ spanExc Nothing (Just 0))
+                      [ Fact_NoOcc [] (DS_SpanExc $ spanExc Nothing (Just 0))
                             , Fact_Occ [] 0 21
                             , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 0) (Just 2))
                             , Fact_Occ [] 2 22
@@ -243,12 +253,12 @@ gTest
                             , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 14) (Just 16))
                             , Fact_Occ [] 16 29
                             , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 16) Nothing)
-                            ]
-                      )
+                      ]
+                      Nothing
                   -- time: --0--2--4--6--8--10-12-14-16---
                   -----------31-32-33-34-35-36-37-38-39---
                   ,  InputEl c
-                      (Left [ Fact_NoOcc [] (DS_SpanExc $ spanExc Nothing (Just 0))
+                      [ Fact_NoOcc [] (DS_SpanExc $ spanExc Nothing (Just 0))
                             , Fact_Occ [] 0 31
                             , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 0) (Just 2))
                             , Fact_Occ [] 2 32
@@ -267,12 +277,12 @@ gTest
                             , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 14) (Just 16))
                             , Fact_Occ [] 16 39
                             , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 16) Nothing)
-                            ]
-                      )
+                      ]
+                      Nothing
                   -- time: --0--2--4--6--8--10-12-14-16---
                   -- (1) -------2-----3------1--_--2------
                   ,  InputEl switch
-                      (Left [ Fact_NoOcc [] (DS_SpanExc $ spanExc Nothing (Just 0))
+                      [ Fact_NoOcc [] (DS_SpanExc $ spanExc Nothing (Just 0))
                             , Fact_NoOcc [] (DS_Point 0)
                             , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 0) (Just 2))
                             , Fact_Occ [] 2 2
@@ -285,12 +295,13 @@ gTest
                             , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 12) (Just 14))
                             , Fact_Occ [] 14 2
                             , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 14) Nothing)
-                            ]
-                      )
+                      ]
+                      Nothing
                   -- time: --0--2--4--6--8--10-12---14-16---
                   -----------11-22-23-34-35-16-_____28-29---
                   , InputEl out
-                      (Right $ do
+                      []
+                      (Just $ do
                           switchVal <- fromMaybe 1 <$> currV switch
                           requireE $ case switchVal of
                                   1 -> a
@@ -334,19 +345,20 @@ gTest
                     -- time: --0--------5-----7--------------
                     --         2        4     6
                     [ InputEl eix1
-                        (Left [ Fact_NoOcc [] (DS_SpanExc $ spanExc Nothing (Just 0))
+                        [ Fact_NoOcc [] (DS_SpanExc $ spanExc Nothing (Just 0))
                             , Fact_Occ   [] 0 2
                             , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 0) (Just 5))
                             , Fact_Occ   [] 5 4
                             , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 5) (Just 7))
                             , Fact_Occ   [] 7 6
                             , Fact_NoOcc [] (DS_SpanExc $ spanExc (Just 7) Nothing)
-                            ]
-                        )
+                        ]
+                        Nothing
                     -- time: --0--------5-----7--------------
                     --         2        8    18
                     , InputEl eix2
-                        (Right $ do
+                        []
+                        (Just $ do
                             xs <- catMaybes . fmap maybeOccToMaybe <$> mapM getE [eix1]
                             if null xs
                                 then Pure NoOcc
@@ -358,7 +370,8 @@ gTest
                     -- time: --0--------5-----7--------------
                     --         4       12    24
                     , InputEl eix3
-                        (Right $ do
+                        []
+                        (Just $ do
                             xs <- catMaybes . fmap maybeOccToMaybe <$> mapM getE [eix1, eix2]
                             if null xs
                                 then Pure NoOcc
