@@ -56,13 +56,11 @@ module ReactiveData
     where
 
 
-import           Control.Monad.Fail (MonadFail)
 import           Data.Coerce (coerce)
 import           Data.Foldable (Foldable(foldl'))
 import           Data.Kind
 import           Generics.SOP
 import           Generics.SOP.NP
-import           Generics.SOP.Universe
 
 import           Time
 import           TimeSpan

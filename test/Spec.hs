@@ -60,7 +60,121 @@ gTest
     mkKnowledgeBase
     lookupVKB
     = testGroup testGroupName
-      [ testCase "Simple 1" $ do
+      [ testCase "Swap values (transitive prevV self reference, end with NoOcc span)" $ do
+        let
+          swapE :: EIx ()
+          swapE = EIx 1
+
+          a, b :: EIx String
+          a = EIx 2
+          b = EIx 3
+
+          kb :: gKnowledgeBase
+          kb = mkKnowledgeBase
+                -- time: --0--------5-----7-----9--------
+                --------------------()----()----_________
+                [ InputEl swapE
+                    [ VFact_NoOcc [] (DS_SpanExc $ spanExc Nothing (Just 5))
+                    , VFact_Occ   [] 5 ()
+                    , VFact_NoOcc [] (DS_SpanExc $ spanExc (Just 5) (Just 7))
+                    , VFact_Occ   [] 7 ()
+                    , VFact_NoOcc [] (DS_SpanExc $ spanExc (Just 7) (Just 9))
+                    ]
+                    Nothing
+                -- time: --0--------5-----7-----9--------
+                --------------------y-----x-----_________
+                , InputEl a []
+                    (Just $ do
+                        bVal <- fromMaybe "y" <$> prevV b
+                        Occ () <- getE swapE
+                        return bVal
+                    )
+                -- time: --0--------5-----7-----9--------
+                --------------------x-----y-----__________
+                , InputEl b []
+                    (Just $ do
+                        bVal <- fromMaybe "x" <$> prevV a
+                        Occ () <- getE swapE
+                        return bVal
+                    )
+                ]
+
+        lookupVKB 0  a kb @?= Known NoOcc
+        lookupVKB 0  b kb @?= Known NoOcc
+        lookupVKB 1  a kb @?= Known NoOcc
+        lookupVKB 1  b kb @?= Known NoOcc
+        lookupVKB 5  a kb @?= Known (Occ "y")
+        lookupVKB 5  b kb @?= Known (Occ "x")
+        lookupVKB 6  a kb @?= Known NoOcc
+        lookupVKB 6  b kb @?= Known NoOcc
+        lookupVKB 7  a kb @?= Known (Occ "x")
+        lookupVKB 7  b kb @?= Known (Occ "y")
+        lookupVKB 8  a kb @?= Known NoOcc
+        lookupVKB 8  b kb @?= Known NoOcc
+        lookupVKB 9  a kb @?= Unknown
+        lookupVKB 9  b kb @?= Unknown
+        lookupVKB 10 a kb @?= Unknown
+        lookupVKB 10 b kb @?= Unknown
+
+
+      , testCase "Swap values (transitive prevV self reference)" $ do
+        let
+          swapE :: EIx ()
+          swapE = EIx 1
+
+          a, b :: EIx String
+          a = EIx 2
+          b = EIx 3
+
+          kb :: gKnowledgeBase
+          kb = mkKnowledgeBase
+                -- time: --0--------5-----7-----9--------
+                --------------------()----()____()_______
+                [ InputEl swapE
+                    [ VFact_NoOcc [] (DS_SpanExc $ spanExc Nothing (Just 5))
+                    , VFact_Occ   [] 5 ()
+                    , VFact_NoOcc [] (DS_SpanExc $ spanExc (Just 5) (Just 7))
+                    , VFact_Occ   [] 7 ()
+                    , VFact_Occ   [] 9 ()
+                    ]
+                    Nothing
+                -- time: --0--------5-----7-----9--------
+                --------------------y-----x_______________
+                , InputEl a []
+                    (Just $ do
+                        bVal <- fromMaybe "y" <$> prevV b
+                        Occ () <- getE swapE
+                        return bVal
+                    )
+                -- time: --0--------5-----7-----9--------
+                --------------------x-----y_______________
+                , InputEl b []
+                    (Just $ do
+                        bVal <- fromMaybe "x" <$> prevV a
+                        Occ () <- getE swapE
+                        return bVal
+                    )
+                ]
+
+        lookupVKB 0  a kb @?= Known NoOcc
+        lookupVKB 0  b kb @?= Known NoOcc
+        lookupVKB 1  a kb @?= Known NoOcc
+        lookupVKB 1  b kb @?= Known NoOcc
+        lookupVKB 5  a kb @?= Known (Occ "y")
+        lookupVKB 5  b kb @?= Known (Occ "x")
+        lookupVKB 6  a kb @?= Known NoOcc
+        lookupVKB 6  b kb @?= Known NoOcc
+        lookupVKB 7  a kb @?= Known (Occ "x")
+        lookupVKB 7  b kb @?= Known (Occ "y")
+        lookupVKB 8  a kb @?= Unknown
+        lookupVKB 8  b kb @?= Unknown
+        lookupVKB 9  a kb @?= Unknown
+        lookupVKB 9  b kb @?= Unknown
+        lookupVKB 10 a kb @?= Unknown
+        lookupVKB 10 b kb @?= Unknown
+
+
+      , testCase "Simple 1" $ do
         let eix1, eix2 :: EIx String
             eix1 = EIx 1
             eix2 = EIx 2
@@ -675,62 +789,6 @@ tests = testGroup "NFRP"
 --         T.lookupVKB 8 eix2 kb @?= Unknown
 --         T.lookupVKB 9 eix2 kb @?= Unknown
 --         T.lookupVKB 10 eix2 kb @?= Unknown
-
---     , testCase "Swap values (transitive self reference)" $ do
---         let
---           swapE :: EIx (MaybeOcc ())
---           swapE = EIx 1
-
---           a, b :: EIx (MaybeOcc String)
---           a = EIx 2
---           b = EIx 3
-
---           kb :: T.KnowledgeBase
---           kb = T.mkKnowledgeBase
---                 -- time: --0--------5-----7-----9--------
---                 --------------------()----()____()_______
---                 [ InputEl swapE
---                     (Left [ VFact_NoOcc [] (spanExc Nothing (Just 5)) NoOcc
---                           , VFact_Occ   [] 5 (Occ ())
---                           , VFact_NoOcc [] (spanExc (Just 5) (Just 7)) NoOcc
---                           , VFact_Occ   [] 7 (Occ ())
---                           , VFact_Occ   [] 9 (Occ ())
---                           ]
---                     )
---                 -- time: --0--------5-----7-----9--------
---                 --------------------y-----x_______________
---                 , InputEl a
---                     (Right $ do
---                         onEvent swapE $ \() -> do
---                             bVal <- prevV "y" b
---                             return bVal
---                     )
---                 -- time: --0--------5-----7-----9--------
---                 --------------------x-----y_______________
---                 , InputEl b
---                     (Right $ do
---                         onEvent swapE $ \() -> do
---                             aVal <- prevV "x" a
---                             return aVal
---                     )
---                 ]
-
---         T.lookupVKB 0  a kb @?= Known NoOcc
---         T.lookupVKB 0  b kb @?= Known NoOcc
---         T.lookupVKB 1  a kb @?= Known NoOcc
---         T.lookupVKB 1  b kb @?= Known NoOcc
---         T.lookupVKB 5  a kb @?= Known (Occ "y")
---         T.lookupVKB 5  b kb @?= Known (Occ "x")
---         T.lookupVKB 6  a kb @?= Known NoOcc
---         T.lookupVKB 6  b kb @?= Known NoOcc
---         T.lookupVKB 7  a kb @?= Known (Occ "x")
---         T.lookupVKB 7  b kb @?= Known (Occ "y")
---         T.lookupVKB 8  a kb @?= Unknown
---         T.lookupVKB 8  b kb @?= Unknown
---         T.lookupVKB 9  a kb @?= Unknown
---         T.lookupVKB 9  b kb @?= Unknown
---         T.lookupVKB 10 a kb @?= Unknown
---         T.lookupVKB 10 b kb @?= Unknown
 
 --   , testGroup "Model - Behavior"
 --     [ testCase "Switching" $ do
