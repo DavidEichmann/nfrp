@@ -342,7 +342,9 @@ module Theory
       -- ^ Derivation to step
       -> Maybe ([Fact a], [Derivation a])
       -- ^ Nothing if no progress. Else Just the new facts and new derivations.
-    stepDerivation eix allDerivations facts derivation = case derivation of
+    stepDerivation eix allDerivations facts derivation
+     = fmap appendClearanceFact
+     $ case derivation of
       Derivation dtrace ttspan prevDeps contDerivation seenOcc -> case contDerivation of
         Pure NoOcc -> if null prevDeps
           then let
@@ -693,6 +695,15 @@ module Theory
         -- We don't know any more info about the first occurrence so we
         -- cant make any more progress.
         Other -> Nothing
+     where
+      appendClearanceFact :: ([Fact a], [Derivation a]) -> ([Fact a], [Derivation a])
+      appendClearanceFact (fs, ds)
+        = ( [Fact_DerivationClearance ("To Clearance Fact":tr) prevDeps tspan
+              | Derivation tr (DS_SpanExc tspan) prevDeps (Pure _) _ <- ds
+              , not (null prevDeps)
+              ] ++ fs
+          , ds
+          )
 
   -- | Result of searching for the first change of a specific value and time
   -- span.
