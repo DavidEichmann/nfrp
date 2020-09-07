@@ -62,15 +62,15 @@ gTest
     = testGroup testGroupName
       [ testCase "Swap values (transitive prevV self reference, end with NoOcc span)" $ do
         let
-          swapE :: EIx ()
-          swapE = EIx 1
+            swapE :: EIx ()
+            swapE = EIx 1
 
-          a, b :: EIx String
-          a = EIx 2
-          b = EIx 3
+            a, b :: EIx String
+            a = EIx 2
+            b = EIx 3
 
-          kb :: gKnowledgeBase
-          kb = mkKnowledgeBase
+            kb :: gKnowledgeBase
+            kb = mkKnowledgeBase
                 -- time: --0--------5-----7-----9--------
                 --------------------()----()----_________
                 [ InputEl swapE
@@ -98,23 +98,24 @@ gTest
                         return bVal
                     )
                 ]
+            a @?== b = assertEqual (show $ pretty kb) b a
 
-        lookupVKB 0  a kb @?= Known NoOcc
-        lookupVKB 0  b kb @?= Known NoOcc
-        lookupVKB 1  a kb @?= Known NoOcc
-        lookupVKB 1  b kb @?= Known NoOcc
-        lookupVKB 5  a kb @?= Known (Occ "y")
-        lookupVKB 5  b kb @?= Known (Occ "x")
-        lookupVKB 6  a kb @?= Known NoOcc
-        lookupVKB 6  b kb @?= Known NoOcc
-        lookupVKB 7  a kb @?= Known (Occ "x")
-        lookupVKB 7  b kb @?= Known (Occ "y")
-        lookupVKB 8  a kb @?= Known NoOcc
-        lookupVKB 8  b kb @?= Known NoOcc
-        lookupVKB 9  a kb @?= Unknown
-        lookupVKB 9  b kb @?= Unknown
-        lookupVKB 10 a kb @?= Unknown
-        lookupVKB 10 b kb @?= Unknown
+        lookupVKB 0  a kb @?== Known NoOcc
+        lookupVKB 0  b kb @?== Known NoOcc
+        lookupVKB 1  a kb @?== Known NoOcc
+        lookupVKB 1  b kb @?== Known NoOcc
+        lookupVKB 5  a kb @?== Known (Occ "y")
+        lookupVKB 5  b kb @?== Known (Occ "x")
+        lookupVKB 6  a kb @?== Known NoOcc
+        lookupVKB 6  b kb @?== Known NoOcc
+        lookupVKB 7  a kb @?== Known (Occ "x")
+        lookupVKB 7  b kb @?== Known (Occ "y")
+        lookupVKB 8  a kb @?== Known NoOcc
+        lookupVKB 8  b kb @?== Known NoOcc
+        lookupVKB 9  a kb @?== Unknown
+        lookupVKB 9  b kb @?== Unknown
+        lookupVKB 10 a kb @?== Unknown
+        lookupVKB 10 b kb @?== Unknown
 
 
       , testCase "Swap values (transitive prevV self reference)" $ do

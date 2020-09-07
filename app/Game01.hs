@@ -24,6 +24,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeInType #-}
 
+import           Data.Proxy (Proxy(..))
 import qualified Graphics.Gloss.Interface.Pure.Game as Gloss
 import           Graphics.Gloss.Interface.Pure.Game hiding (Event)
 import Generics.SOP
