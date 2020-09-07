@@ -34,6 +34,7 @@ import Theory
     , MaybeKnown(..)
     , MaybeOcc(..)
     , Inputs(..)
+    , DerivationTrace
     , requireE
     , getE
     , currV
@@ -54,11 +55,13 @@ gTest :: forall gKnowledgeBase
     => String
     -> (Inputs -> gKnowledgeBase)
     -> (forall a . Time -> EIx a -> gKnowledgeBase -> MaybeKnown (MaybeOcc a))
+    -> (forall a . Time -> EIx a -> gKnowledgeBase -> MaybeKnown (DerivationTrace a))
     -> TestTree
 gTest
     testGroupName
     mkKnowledgeBase
     lookupVKB
+    lookupVKBTrace
     = testGroup testGroupName
       [ testCase "Swap values (transitive prevV self reference, end with NoOcc span)" $ do
         let
@@ -99,6 +102,9 @@ gTest
                     )
                 ]
             a @?== b = assertEqual (show $ pretty kb) b a
+
+        let Known tr = lookupVKBTrace 7 a kb
+        fail $ unlines $ tr
 
         lookupVKB 0  a kb @?== Known NoOcc
         lookupVKB 0  b kb @?== Known NoOcc
@@ -519,9 +525,9 @@ gTest
 tests :: TestTree
 tests = testGroup "NFRP"
   [ gTest "Theory"
-         T.mkKnowledgeBase  T.lookupVKB
+         T.mkKnowledgeBase  T.lookupVKB  T.lookupVKBTrace
   , gTest "TheoryFast"
-        TF.mkKnowledgeBase TF.lookupVKB
+        TF.mkKnowledgeBase TF.lookupVKB TF.lookupVKBTrace
   , testGroup "Model - Event based"
       [ let n = 5 in testCase ("TheoryFast vs Theory on Synthetic " ++ show n) $ do
         let (vixs, ts, ins) = syntheticN n 100

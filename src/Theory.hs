@@ -357,7 +357,10 @@ module Theory
           DS_Point t -> let
                   dtrace' = appendDerTrace dtrace $
                     "Jurisdiction is a point (t=" ++ show t ++ "), ValueM is `Pure a`."
-                  in Just ([Fact_VFact $ VFact_Occ dtrace' t a], [])
+                  in Just
+                      ( [Fact_VFact $ VFact_Occ dtrace' t a]
+                      , [] -- jurisdiction is a point, so we are done (even if solving chronologically).
+                      )
         GetE eixb cont -> let
           factsBAndUnknownsMay = if null prevDeps
             then Just (spanLookupVFacts ttspan eixb facts)
@@ -410,9 +413,15 @@ module Theory
                 ( []
                 , [ Derivation dtrace subTspan prevDeps contDerivation seenOcc
                     `withDerTrace`
-                    ("Split on GetE dep (" ++ show eixb ++ ") unknown point or span.")
+                    ("Split on GetE dep (" ++ show eixb ++ ") which has unknown value at " ++ show subTspan)
                   | subTspan <- unknowns
                   ]
+
+                I think this ^^^^^  is wrong! We're traversing to the rest of the jurisdiction even if
+                  we have prevV deps and we haven't yet shown that the prevV deps are not occuring.
+                  Perhas this needs to be wrapped in a new "if prevV deps not occuring" constructor
+                  for Derivation?
+
                 )
               )
 
@@ -980,7 +989,7 @@ module Theory
       DeriveAfterFirstChange{..} -> nest 2 $ vsep
         [ "DeriveAfterFirstChange"
         , "derTrace = " <> "_" -- pretty derTrace
-        , "derAfterTspan = " <> "_" -- pretty derAfterTspan
+        , "derAfterTspan = " <> pretty derAfterTspan
         , "derAfterDep = " <> pretty derAfterDep
         , "derAfterContDerivation = " <> "_" -- pretty derAfterContDerivation
         ]

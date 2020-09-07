@@ -95,11 +95,13 @@ import Data.Kind (Type)
 
 -- | Facts about a single value.
 type ValueTimeline a = Timeline (DerivationTrace a) a
+-- | Derivation clearances about a single value (keys are tLo, values are (trace, prevV deps, tHi)).
+type ValueDerivationClearances a = Map (Maybe Time) (DerivationTrace a, [SomeEIx], Maybe Time)
 data FactsEl a = FactsEl
   { factsElTimeline             :: ValueTimeline a
   -- ^ Timeline of the value.
-  , factsElDerivationClearances :: Map (Maybe Time) (DerivationTrace a, [SomeEIx], Maybe Time)
-  -- ^ Derivation clearances (keys are tLo, values are (trace, prevV deps, tHi)).
+  , factsElDerivationClearances :: ValueDerivationClearances a
+  -- ^ Derivation clearances.
   }
 
 instance Semigroup (FactsEl a) where
@@ -138,8 +140,8 @@ listToFacts someValueFacts
     | Th.SomeFact eix fact <- someValueFacts
     ]
 
-singletonFacts :: EIx a -> ValueTimeline a -> Facts
-singletonFacts eix vt = DM.singleton eix  (FactsEl vt M.empty)
+singletonFacts :: EIx a -> FactsEl a -> Facts
+singletonFacts eix el = DM.singleton eix el
 
 valueFacts :: EIx a -> Facts -> ValueTimeline a
 valueFacts eix facts = maybe T.empty factsElTimeline (DM.lookup eix facts)
@@ -557,10 +559,10 @@ iterateWhileHot = do
           modify (\kb -> kb { kbDerivations = dbdSetDeps derId deps (kbDerivations kb) })
           iterateWhileHot
         -- Else we made progress and should add the new facts and (hot) derivations.
-        Just (newFactsTl, newDers) -> do
+        Just (newFactsEl, newDers) -> do
           modify (\kb -> kb { kbDerivations = dbdDelete derId (kbDerivations kb) })
           let newSomeDers = SomeDerivation vix <$> newDers
-              newFacts = singletonFacts vix newFactsTl
+              newFacts = singletonFacts vix newFactsEl
           insertFactsAndDers newFacts newSomeDers
   where
   -- Try remove a derivation from kbHotDerivations
@@ -587,9 +589,10 @@ iterateWhileHot = do
 
     -> Derivation a
     -- ^ Derivation to step
-    -> DerivationM (Maybe (ValueTimeline a, [Derivation a]))
+    -> DerivationM (Maybe (FactsEl a, [Derivation a]))
     -- ^ Nothing if no progress. Else Just the new facts and new derivations.
-  pokeDerivation eix derivation = case derivation of
+  pokeDerivation eix derivation = do
+    steppedMay <- case derivation of
       Derivation dtrace ttspan prevDeps contDerivation seenOcc -> case contDerivation of
         Pure NoOcc -> if null prevDeps
           then let
@@ -659,7 +662,7 @@ iterateWhileHot = do
                 ( T.empty
                 , [ Derivation dtrace subTspan prevDeps contDerivation seenOcc
                     `withDerTrace`
-                    ("Split on GetE dep (" ++ show eixb ++ ") unknown point or span.")
+                    ("Split on GetE dep (" ++ show eixb ++ ") which has unknown value at " ++ show subTspan)
                   | subTspan <- unknowns
                   ]
                 )
@@ -732,12 +735,10 @@ iterateWhileHot = do
                       )
                     _ -> undefined
             case factsAndUnknownsMay of
-              -- TODO I think we don't necessarily need to detect deadlock, we
-              -- can always just assume there might be deadlock and derive
-              -- chronologically. We'd need to argue that that will not delay
-              -- the production of facts, but that seems intuitively true: with
-              -- a PrevV dependency, we must solve chronologically (at least
-              -- piecewise after known events occs).
+              -- Assume there might be deadlock and derive chronologically. This
+              -- will not delay the production of facts: with a PrevV
+              -- dependency, we must solve chronologically (at least piecewise
+              -- after known events occs).
 
               -- !! If there are no such facts, try to detect deadlock via
               -- !! eixB. This means that eix is reachable (transitively) via
@@ -972,6 +973,22 @@ iterateWhileHot = do
         -- We don't know any more info about the first occurrence so we
         -- cant make any more progress.
         Other -> Nothing
+
+    -- Append clearance fact if possible
+    return $ case steppedMay of
+      Nothing -> Nothing
+      Just (vt, ders) -> Just
+        ( FactsEl vt $ M.fromList
+            [ let
+              tLo = spanExcJustBefore tspan
+              tHi = spanExcJustAfter tspan
+              in (tLo, (tr, prevDeps, tHi))
+              | Derivation tr (DS_SpanExc tspan) prevDeps (Pure _) _ <- ders
+              , not (null prevDeps)
+              ]
+        , ders
+        )
+
 
 -- | Result of searching for the first change of a specific value and time
 -- span.
