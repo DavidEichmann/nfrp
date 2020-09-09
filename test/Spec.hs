@@ -555,7 +555,6 @@ gTest
 
         forM_ inFactsPerms $ \fs -> do
           kbEq refKb (apFacts fs) @? "KnowledgeBases Don't match"
-
       ]
 
 
@@ -568,6 +567,12 @@ tests = testGroup "NFRP"
         TF.mkKnowledgeBase TF.lookupVKB TF.lookupVKBTrace
         (TF.insertFacts . TF.listToFacts)
   , testGroup "Model - Event based"
+
+      -- TODO this passes even though the "swap" test cases are failing for just
+      -- the TheoryFastVersion. SyntheticN is supposed to be a good
+      -- representation of all possibilities. Perhaps we should improve
+      -- syntheticN.
+
       [ let n = 5 in testCase ("TheoryFast vs Theory on Synthetic " ++ show n) $ do
         let (vixs, ts, ins) = syntheticN n 100
             lookupT  = let kb =  T.mkKnowledgeBase ins in \t vix -> T.lookupVKB t vix kb
