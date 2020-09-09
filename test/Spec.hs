@@ -547,7 +547,9 @@ gTest
             -- Note that the total number of permutations is huge! So we take
             -- only a small subset.
             refInFacts : inFactsPerms
-              = take 10000
+              = factsOrig
+              : reverse factsOrig
+              : take 10000
                   [p | (p,100) <- zip (permutations factsOrig) (cycle [1..100])]
             apFacts :: [SomeFact] -> gKnowledgeBase
             apFacts fs = foldl' (\kb f -> insertFacts [f] kb) emptyKb fs
