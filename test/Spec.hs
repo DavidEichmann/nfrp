@@ -103,8 +103,8 @@ gTest
                 ]
             a @?== b = assertEqual (show $ pretty kb) b a
 
-        let Known tr = lookupVKBTrace 7 a kb
-        fail $ unlines $ tr
+        -- let Known tr = lookupVKBTrace 7 a kb
+        -- fail $ unlines $ tr
 
         lookupVKB 0  a kb @?== Known NoOcc
         lookupVKB 0  b kb @?== Known NoOcc

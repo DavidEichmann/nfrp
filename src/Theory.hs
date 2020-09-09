@@ -102,6 +102,10 @@ module Theory
   pattern NoOcc = MaybeOcc Nothing
   {-# COMPLETE Occ, NoOcc #-}
 
+  isNoOcc :: MaybeOcc a -> Bool
+  isNoOcc NoOcc = True
+  isNoOcc _ = False
+
   newtype EIx (a :: Type) = EIx { unEIx :: Int}     -- Index of an event
     deriving newtype (Eq, Ord, Hashable)
 
@@ -279,6 +283,11 @@ module Theory
       , derAfterContDerivation :: ValueM a
       }
 
+    -- if there is no event occurrences for any of the given `SomeEIx`s, then
+    -- the derivation applies, else the derivation is dropped (no new
+    -- facts/derivations are derived).
+    | IfNoOccAt Time [SomeEIx] (Derivation a)
+
     -- -- | DS_SpanExc tspan ⟹ t ∈ tspan
     -- DS_SpanExcInc SpanExcInc
 
@@ -362,16 +371,28 @@ module Theory
                       , [] -- jurisdiction is a point, so we are done (even if solving chronologically).
                       )
         GetE eixb cont -> let
-          factsBAndUnknownsMay = if null prevDeps
-            then Just (spanLookupVFacts ttspan eixb facts)
-            -- chronological version of the above with PrevV deps.
-            -- TODO this and the above "then" and also the PrevV cases
-            -- have very similar code (split on other facts). Try to DRY
-            -- it.
-
-            else case find isChronological (fst (spanLookupVFacts ttspan eixb facts)) of
-              Nothing -> Nothing
-              Just fact -> Just ([fact], ttspan `difference` factTSpan fact)
+          fromKnowns factsB = mconcat
+            [ case factB of
+              VFact_NoOcc _ subTspan -> let
+                newCont = cont NoOcc
+                newDer  = Derivation dtrace subTspan prevDeps newCont seenOcc
+                            `withDerTrace`
+                            ("Split on GetE dep (" ++ show eixb ++ ") VFact_NoOcc")
+                in fromMaybe
+                  -- Couldn't progress further: no new facts, but we've progressed the derivation up to newDer.
+                  ([], [newDer])
+                  -- Try to progress further.
+                  (stepDerivation eix allDerivations facts newDer)
+              VFact_Occ _ t valB -> let
+                  newCont = cont (Occ valB)
+                  newDer  = Derivation dtrace (DS_Point t) prevDeps newCont True
+                            `withDerTrace`
+                            ("Split on GetE dep (" ++ show eixb ++ ") VFact_Occ")
+                  in fromMaybe
+                    ([], [newDer])
+                    (stepDerivation eix allDerivations facts newDer)
+            | factB <- factsB
+            ]
 
           isChronological :: VFact b -> Bool
           isChronological fact = case ttspan of
@@ -380,50 +401,63 @@ module Theory
               DS_Point _ -> False
               DS_SpanExc tspan' -> spanExcSameLowerBound tspan tspan'
 
-         in case factsBAndUnknownsMay of
-            Nothing -> Nothing
-            Just ([], _) -> Nothing
-            Just (factsB, unknowns) -> Just $ (
-                -- For knowns, split and try to progress the derivation.
-                mconcat
-                  [ case factB of
-                    VFact_NoOcc _ subTspan -> let
-                      newCont = cont NoOcc
-                      newDer  = Derivation dtrace subTspan prevDeps newCont seenOcc
-                                  `withDerTrace`
-                                  ("Split on GetE dep (" ++ show eixb ++ ") VFact_NoOcc")
-                      in fromMaybe
-                        -- Couldn't progress further: no new facts, but we've progressed the derivation up to newDer.
-                        ([], [newDer])
-                        -- Try to progress further.
-                        (stepDerivation eix allDerivations facts newDer)
-                    VFact_Occ _ t valB -> let
-                        newCont = cont (Occ valB)
-                        newDer  = Derivation dtrace (DS_Point t) prevDeps newCont True
-                                  `withDerTrace`
-                                  ("Split on GetE dep (" ++ show eixb ++ ") VFact_Occ")
-                        in fromMaybe
-                          ([], [newDer])
-                          (stepDerivation eix allDerivations facts newDer)
-                  | factB <- factsB
-                  ]
-                <>
-                -- For unknowns, simply split the derivation into the
-                -- unknown subspans.
-                ( []
-                , [ Derivation dtrace subTspan prevDeps contDerivation seenOcc
-                    `withDerTrace`
-                    ("Split on GetE dep (" ++ show eixb ++ ") which has unknown value at " ++ show subTspan)
-                  | subTspan <- unknowns
-                  ]
+          vfactsB = spanLookupVFacts ttspan eixb facts
 
-                I think this ^^^^^  is wrong! We're traversing to the rest of the jurisdiction even if
-                  we have prevV deps and we haven't yet shown that the prevV deps are not occuring.
-                  Perhas this needs to be wrapped in a new "if prevV deps not occuring" constructor
-                  for Derivation?
-
+          in if null prevDeps
+            then case vfactsB of
+              ([], _) -> Nothing
+              (factsB, unknowns) -> Just $ (
+                  -- For knowns, split and try to progress the derivation.
+                  fromKnowns factsB
+                  <>
+                  -- For unknowns, simply split the derivation into the
+                  -- unknown subspans.
+                  ( []
+                  , [ Derivation dtrace subTspan prevDeps contDerivation seenOcc
+                        `withDerTrace`
+                        ("Split on GetE dep (" ++ show eixb ++ ") which has unknown value at " ++ show subTspan)
+                    | subTspan <- unknowns
+                    ]
+                  )
                 )
-              )
+
+            -- Solve chronologically
+            else case find isChronological (fst vfactsB) of
+              Nothing -> Nothing
+              Just fact -> let
+                -- The point and span covering the rest of the jurisdiction.
+                -- Nothing if `fact` already coverse the full jurisdiction.
+                nextPointMay :: Maybe (Time, SpanExc)
+                nextPointMay = case factTSpan fact of
+                  DS_Point _ -> Nothing
+                  DS_SpanExc factSpanExc -> case spanExcJustAfter factSpanExc of
+                    Nothing -> Nothing -- Fact already covers up until Inf
+                    Just factAfterT -> case ttspan of
+                      DS_Point _ -> error "Impossible! fact's ttspan must be a subset of ttspan"
+                      DS_SpanExc tspan -> tspan `difference` LeftSpaceExc factAfterT
+                in Just $ (
+                  -- For initial fact, split and try to progress the derivation.
+                  fromKnowns [fact]
+                  <>
+                  -- For unknowns, simply split the derivation into the
+                  -- unknown subspans.
+                  ( []
+                  , concat
+                    [ -- Derive at the next point. This is always safe to do so
+                      -- as the first occurrence of a PrevV dep is earliest at
+                      -- this point. The derivation has jurisdiction up to and
+                      -- _including_ such an occurrence.
+                      [ Derivation dtrace (DS_Point t) prevDeps contDerivation seenOcc
+                      -- Only if no prevV deps are occuring at time t, then we
+                      -- continue chronologically past that point.
+                      , IfNoOccAt t prevDeps
+                          $ Derivation dtrace (DS_SpanExc tspan) prevDeps contDerivation seenOcc
+                      ]
+                    | Just (t, tspan) <- [nextPointMay]
+                    ]
+                  )
+                )
+
 
         PrevV eixB mayPrevToCont -> case ttspan of
           DS_Point t -> case lookupPrevV t eixB facts of
@@ -704,6 +738,14 @@ module Theory
         -- We don't know any more info about the first occurrence so we
         -- cant make any more progress.
         Other -> Nothing
+
+      IfNoOccAt t deps der -> case sequence [isNoOcc <$> lookupV t depEIx facts | SomeEIx depEIx <- deps] of
+        Unknown -> Nothing
+        Known isNoOccs -> if and isNoOccs
+          -- No dep events are occurring. Continue with the derivation.
+          then Just ([], [der])
+          -- One or more dep events are occurring. Stop.
+          else Just ([], [])
      where
       appendClearanceFact :: ([Fact a], [Derivation a]) -> ([Fact a], [Derivation a])
       appendClearanceFact (fs, ds)
@@ -956,6 +998,8 @@ module Theory
                   ++ ": " ++ msg
           in DeriveAfterFirstChange (oldTrace `appendDerTrace` dMsg) tspan dep cont
 
+    IfNoOccAt t deps der -> IfNoOccAt t deps (withDerTrace der msg)
+
     where
     showTtspan (DS_Point t) = "t=" ++ show t
     showTtspan (DS_SpanExc tspan) = "t∈" ++ show tspan
@@ -992,6 +1036,12 @@ module Theory
         , "derAfterTspan = " <> pretty derAfterTspan
         , "derAfterDep = " <> pretty derAfterDep
         , "derAfterContDerivation = " <> "_" -- pretty derAfterContDerivation
+        ]
+      IfNoOccAt t deps der' -> nest 2 $ vsep
+        [ "IfNoOccAt"
+        , "t = " <> pretty t
+        , "deps = " <> pretty deps
+        , "der = " <> pretty der'
         ]
 
   instance Pretty KnowledgeBase where
