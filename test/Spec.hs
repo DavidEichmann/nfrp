@@ -14,12 +14,13 @@ import Test.Tasty.HUnit
 import Test.Tasty.QuickCheck
 
 import qualified GHC.Generics as GHC
-import Control.Monad (when)
-import Data.Kind (Type)
-import Data.Maybe (catMaybes, isJust, isNothing, fromMaybe)
+import           Control.Monad (forM_, when)
+import           Data.Kind (Type)
+import           Data.List (foldl', permutations)
+import           Data.Maybe (catMaybes, isJust, isNothing, fromMaybe)
+import           Data.Text.Prettyprint.Doc
 import qualified System.Timeout as Sys
-import Data.Text.Prettyprint.Doc
-import Generics.SOP
+import           Generics.SOP
 
 -- import NFRP
 -- import FRP
@@ -30,10 +31,12 @@ import Theory
     ( EIx(..)
     , pattern Known
     , pattern Unknown
+    , Fact(..)
     , VFact(..)
     , MaybeKnown(..)
     , MaybeOcc(..)
     , Inputs(..)
+    , SomeFact(..)
     , DerivationTrace
     , requireE
     , getE
@@ -56,12 +59,14 @@ gTest :: forall gKnowledgeBase
     -> (Inputs -> gKnowledgeBase)
     -> (forall a . Time -> EIx a -> gKnowledgeBase -> MaybeKnown (MaybeOcc a))
     -> (forall a . Time -> EIx a -> gKnowledgeBase -> MaybeKnown (DerivationTrace a))
+    -> ([SomeFact] -> gKnowledgeBase -> gKnowledgeBase)
     -> TestTree
 gTest
     testGroupName
     mkKnowledgeBase
     lookupVKB
     lookupVKBTrace
+    insertFacts
     = testGroup testGroupName
       [ testCase "Swap values (transitive prevV self reference, end with NoOcc span)" $ do
         let
@@ -519,6 +524,38 @@ gTest
         lookupVKB 6 eix3 kb @?== Known NoOcc
         lookupVKB 7 eix3 kb @?== Known (Occ 24)
         lookupVKB 8 eix3 kb @?== Known NoOcc
+
+      , testCase "Synthetic + Iterative (all permutation are the same)" $ do
+        -- Make a empty (of facts) KnowledgeBase and get all source facts.
+        let (eixs, testSampleTimes, inputs) = syntheticN 2 2
+            factsOrig :: [SomeFact]
+            factsOrig = concat
+              [ SomeFact eix . Fact_VFact <$> eventFacts
+              | InputEl eix eventFacts _ <- inputs
+              ]
+            emptyInputs = [ InputEl eix [] derMay | InputEl eix _ derMay <- inputs ]
+            emptyKb = mkKnowledgeBase emptyInputs
+
+            kbEq :: gKnowledgeBase -> gKnowledgeBase -> Bool
+            kbEq a b = and
+              [ lookupVKB t eix a == lookupVKB t eix b
+              | t <- testSampleTimes
+              , eix <- eixs
+              ]
+
+            -- use the first permutation of input facts as a reference
+            -- Note that the total number of permutations is huge! So we take
+            -- only a small subset.
+            refInFacts : inFactsPerms
+              = take 10000
+                  [p | (p,100) <- zip (permutations factsOrig) (cycle [1..100])]
+            apFacts :: [SomeFact] -> gKnowledgeBase
+            apFacts fs = foldl' (\kb f -> insertFacts [f] kb) emptyKb fs
+            refKb = apFacts refInFacts
+
+        forM_ inFactsPerms $ \fs -> do
+          kbEq refKb (apFacts fs) @? "KnowledgeBases Don't match"
+
       ]
 
 
@@ -526,8 +563,10 @@ tests :: TestTree
 tests = testGroup "NFRP"
   [ gTest "Theory"
          T.mkKnowledgeBase  T.lookupVKB  T.lookupVKBTrace
+         T.insertFacts
   , gTest "TheoryFast"
         TF.mkKnowledgeBase TF.lookupVKB TF.lookupVKBTrace
+        (TF.insertFacts . TF.listToFacts)
   , testGroup "Model - Event based"
       [ let n = 5 in testCase ("TheoryFast vs Theory on Synthetic " ++ show n) $ do
         let (vixs, ts, ins) = syntheticN n 100

@@ -17,7 +17,10 @@ import TimeSpan
 import Theory (ValueM(Pure), MaybeOcc(..), pattern NoOcc, Inputs, InputEl(..), EIx(..), VFact(..), prevV, getE)
 
 -- | Synthetic inputs and EIx/times that should be sampled
-syntheticN :: Int -> Int -> ([EIx Int], [Time], Inputs)
+syntheticN
+  :: Int -- ^ Number of EIx
+  -> Int -- ^ Number of source event occurrence times
+  -> ([EIx Int], [Time], Inputs)
 syntheticN nE nT =
   ( vixs
   , sampleTimes
