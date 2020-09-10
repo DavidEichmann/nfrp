@@ -138,26 +138,17 @@ executable Game01
         safe -any,
         time == 1.9.3
 
--- executable bench
---     main-is: Bench.hs
---     hs-source-dirs: app
---     default-language: Haskell2010
---     ghc-options: -O2 -Wall -threaded
---     build-depends:
---         base == 4.13.0.0,
---         async -any,
---         binary -any,
---         cmdargs -any,
---         containers >=0.5.9,
---         deepseq -any,
---         gloss -any,
---         generics-sop -any,
---         -- gtk3 -any,
---         ncurses -any,
---         network -any,
---         nfrp -any,
---         safe -any,
---         time == 1.9.3
+executable bench
+    main-is: Bench.hs
+    hs-source-dirs: app
+    default-language: Haskell2010
+    ghc-options: -O2 -Wall -threaded
+    build-depends:
+        base == 4.13.0.0,
+        cmdargs -any,
+        containers >=0.5.9,
+        nfrp -any,
+        safe -any
 
 
 test-suite nfrp-test
