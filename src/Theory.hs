@@ -439,8 +439,8 @@ module Theory
                   Just factAfterT -> case ttspan of
                     DS_Point _ -> error "Impossible! fact's ttspan must be a subset of ttspan"
                     DS_SpanExc tspan -> tspan `difference` LeftSpaceExc factAfterT
-              in Just $ (
-                -- For initial fact, split and try to progress the derivation.
+              in Just (
+                -- Split on chronological fact.
                 fromKnowns [fact]
                 <>
                 -- For unknowns, simply split the derivation into the

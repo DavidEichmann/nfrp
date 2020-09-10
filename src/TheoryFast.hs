@@ -55,7 +55,7 @@ import qualified Timeline as T
 
 import qualified Theory as Th
 import Theory
-  ( factTrace
+  (withDerTrace,  factTrace
   , EIx(..)
   , SomeEIx(..)
 
@@ -91,6 +91,7 @@ import Theory
 -- import Control.Monad (when)
 import Data.List (foldl')
 import Data.Kind (Type)
+import Control.Monad (forM)
 
 
 -- | Facts about a single value.
@@ -607,66 +608,78 @@ iterateWhileHot = do
                     "Jurisdiction is a point (t=" ++ show t ++ "), ValueM is `Pure a`."
                   in Just (T.singletonOcc dtrace' t a, [])
 
-        GetE eixb cont -> do
-          factsBAndUnknownsMay <- if null prevDeps
-                then Just <$> spanLookupVFacts ttspan eixb
+        GetE (eixb :: EIx b) cont -> do
+          let fromKnowns
+                :: ValueTimeline b
+                -> [Derivation a]
+              fromKnowns factsB =
+                [ case factIshB of
+                    Left bTs -> Derivation dtrace bTs prevDeps (cont NoOcc) seenOcc
+                          `withDerTrace`
+                          ("Split on GetE dep (" ++ show eixb ++ ") VFact_NoOcc")
+                    Right (bT, valB) -> Derivation dtrace (DS_Point bT) prevDeps (cont (Occ valB)) True
+                          `withDerTrace`
+                          ("Split on GetE dep (" ++ show eixb ++ ") VFact_Occ")
+                | (_, factIshB) <- T.elems factsB
+                ]
+          if null prevDeps
+          then do
+            (factsB, unknowns) <- spanLookupVFacts ttspan eixb
+            pure $ if T.null factsB
+              then Nothing
+              else Just
+                    -- For unknowns, simply split the derivation into the
+                    -- unknown subspans.
+                    ( T.empty
+                    , [ Derivation dtrace subTspan prevDeps contDerivation seenOcc
+                          `withDerTrace`
+                          ("Split on GetE dep (" ++ show eixb ++ ") which has unknown value at " ++ show subTspan)
+                      | subTspan <- unknowns
+                      ]
+                      -- For knowns, split and try to progress the derivation.
+                      ++ fromKnowns factsB
+                    )
 
-                -- chronological version of the above with PrevV deps.
-                -- TODO this and the above "then" and also the PrevV cases
-                -- have very similar code (split on other facts). Try to DRY
-                -- it.
-                else do
-                  valMay <- lookupAtStartOf' ttspan eixb
-                  pure $ case valMay of
-                    Nothing -> Nothing
-                    Just (tr, Left ttspanB) -> Just
-                      ( T.singletonNoOcc tr (fromJust $ ttspanB `intersect` ttspan)
-                      , ttspan `difference` ttspanB
-                      )
-                    -- ttspan is a point
-                    Just (tr, Right (t, occMay)) -> Just
-                      ( case occMay of
-                          NoOcc -> T.singletonNoOcc tr ttspan
-                          Occ a -> T.singletonOcc tr t a
-                      , ttspan `difference` t
-                      )
-
-          pure $ case factsBAndUnknownsMay of
-            Nothing -> Nothing
-            Just (factsB, unknowns)
-              | T.null factsB -> Nothing
-              | otherwise -> Just $ (
-                -- For knowns, split and try to progress the derivation.
-                mconcat
-                  [ case fact of
-                    -- NoOcc
-                    Left factTspan -> let
-                      newCont = cont NoOcc
-                      newDer  = Derivation dtrace factTspan prevDeps newCont seenOcc
-                                  `withDerTrace`
-                                  ("Split on GetE dep (" ++ show eixb ++ ") Fact_SpanExc")
-                      in (T.empty, [newDer])
-
-                    -- Occ
-                    Right (factT, b) -> let
-                      newCont = cont (Occ b)
-                      newDer  = Derivation dtrace (DS_Point factT) prevDeps newCont True
-                                `withDerTrace`
-                                ("Split on GetE dep (" ++ show eixb ++ ") Fact_Point")
-                      in (T.empty, [newDer])
-                  | (_, fact) <- T.elems factsB
-                  ]
-                <>
-                -- For unknowns, simply split the derivation into the
-                -- unknown subspans.
-                ( T.empty
-                , [ Derivation dtrace subTspan prevDeps contDerivation seenOcc
-                    `withDerTrace`
-                    ("Split on GetE dep (" ++ show eixb ++ ") which has unknown value at " ++ show subTspan)
-                  | subTspan <- unknowns
-                  ]
-                )
-              )
+          -- Solve chronologically
+          else do
+            valMay <- lookupAtStartOf' ttspan eixb
+            return $ case valMay of
+              Nothing -> Nothing
+              Just (tr, factIsh) -> let
+                -- The point and span covering the rest of the jurisdiction.
+                -- Nothing if `fact` already covers the full jurisdiction.
+                nextPointMay :: Maybe (Time, SpanExc)
+                nextPointMay = case factIsh of
+                  Right _ -> Nothing -- implies that ttspan is a point, hence we cover it all.
+                  Left factSpanExc -> case spanExcJustAfter factSpanExc of
+                    Nothing -> Nothing -- Fact already covers up until Inf
+                    Just factAfterT -> case ttspan of
+                      DS_Point _ -> Nothing -- ttspan is a point, hence we cover it all.
+                      DS_SpanExc tspan -> tspan `difference` LeftSpaceExc factAfterT
+                in Just
+                    ( T.empty
+                    , -- For unknowns, simply split the derivation into the
+                      -- unknown subspans.
+                      concat
+                        [ -- Derive at the next point. This is always safe to do so
+                          -- as the first occurrence of a PrevV dep is earliest at
+                          -- this point. The derivation has jurisdiction up to and
+                          -- _including_ such an occurrence.
+                          [ Derivation dtrace (DS_Point t) prevDeps contDerivation seenOcc
+                          -- Only if no prevV deps are occuring at time t, then we
+                          -- continue chronologically past that point.
+                          , IfNoOccAt t prevDeps
+                              $ Derivation dtrace (DS_SpanExc tspan) prevDeps contDerivation seenOcc
+                          ]
+                        | Just (t, tspan) <- [nextPointMay]
+                        ]
+                      -- Split on chronological fact.
+                      ++ fromKnowns (case factIsh of
+                          Left noOccSpan -> T.singletonNoOcc tr (DS_SpanExc noOccSpan)
+                          Right (t, NoOcc) -> T.singletonNoOcc tr (DS_Point t)
+                          Right (t, Occ b) -> T.singletonOcc tr t b
+                        )
+                    )
 
         PrevV eixB mayPrevToCont -> case ttspan of
           DS_Point t -> do
@@ -974,6 +987,20 @@ iterateWhileHot = do
         -- cant make any more progress.
         Other -> Nothing
 
+      IfNoOccAt t deps der -> do
+        mayKnownIsNoOccs <- forM deps $ \(SomeEIx depEIx) -> do
+          mayKnownMayOcc <- lookupM t depEIx
+          return $ case mayKnownMayOcc of
+            Unknown -> Unknown
+            Known mayOcc -> Known (Th.isNoOcc mayOcc)
+        return $ case sequence mayKnownIsNoOccs of
+          Unknown -> Nothing
+          Known isNoOccs -> if and isNoOccs
+            -- No dep events are occurring. Continue with the derivation.
+            then Just (T.empty, [der])
+            -- One or more dep events are occurring. Stop.
+            else Just (T.empty, [])
+
     -- Append clearance fact if possible
     return $ case steppedMay of
       Nothing -> Nothing
@@ -1236,6 +1263,20 @@ lookupM' t vix = do
   tellDep (Dep_FactSpan (DS_Point t) vix)
   T.lookup' t . valueFacts vix <$> untrackedAskFacts
 
+lookupM
+  :: Time
+  -- ^ Time t too look up
+  -> EIx a
+  -> DerivationM (MaybeKnown (MaybeOcc a))
+  -- ^ If known, Left is the NoOcc fact's time span spanning t and Right is the
+  -- Occ or NoOcc point fact at time t.
+lookupM t vix = do
+  x <- lookupM' t vix
+  return $ case x of
+    Nothing -> Unknown
+    Just (_, Left _) -> Known NoOcc
+    Just (_, Right occMay) -> Known occMay
+
 lookupNegInf'
   :: EIx a
   -> DerivationM (Maybe (DerivationTrace a, SpanExc))
@@ -1254,6 +1295,7 @@ lookupJustBefore' t vix = do
   tellDep (Dep_JustBefore t vix)
   T.lookupJustBefore' t . valueFacts vix <$> untrackedAskFacts
 
+-- Note: Doesn't crop the returned SpanExc
 lookupAtStartOf' :: TimeSpan -> EIx a -> DerivationM (Maybe (DerivationTrace a, Either SpanExc (Time, MaybeOcc a)))
 lookupAtStartOf' tts = case tts of
   DS_Point t -> (fmap . fmap . fmap . fmap) (t,) <$> lookupM' t
@@ -1280,41 +1322,6 @@ lookupAtStartOf' tts = case tts of
 
 
 {- APPENDIX -}
-
-
-withDerTrace
-  :: Derivation a
-  -- ^ Derivation (without a trace entry for the latest step) trace
-  -> String
-  -- ^ Msg describing most recent step taken in derivation.
-  -> Derivation a
-  -- ^ Derivation with added traced entry.
-withDerTrace d msg = case d of
-  Derivation oldTrace ttspan prevDeps cont seenOcc
-    -> let dMsg = "Derivation "
-                ++ showTtspan ttspan ++ " "
-                ++ (if null prevDeps
-                    then ""
-                    else "(t ≤ first occ of " ++ show prevDeps ++ ") ")
-                ++ "cont=" ++ showPeakValueM cont
-                ++ ": " ++ msg
-        in Derivation (oldTrace `appendDerTrace` dMsg) ttspan prevDeps cont seenOcc
-
-  DeriveAfterFirstChange oldTrace tspan dep cont
-    -> let dMsg = "After first occ of " ++ show dep
-                ++ " s.t. t∈" ++ show tspan ++ " "
-                ++ "cont=" ++ showPeakValueM cont
-                ++ ": " ++ msg
-        in DeriveAfterFirstChange (oldTrace `appendDerTrace` dMsg) tspan dep cont
-
-  where
-  showTtspan (DS_Point t) = "t=" ++ show t
-  showTtspan (DS_SpanExc tspan) = "t∈" ++ show tspan
-
-  showPeakValueM :: ValueM a -> String
-  showPeakValueM (Pure _) = "Pure{}"
-  showPeakValueM (GetE ix _) = "(GetE " ++ show ix ++ " _)"
-  showPeakValueM (PrevV ix _) = "(PrevV " ++ show ix ++ " _)"
 
 
 
