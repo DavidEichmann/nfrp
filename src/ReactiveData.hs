@@ -34,6 +34,7 @@ module ReactiveData
     , F (..)
     , Occ (ReactiveData.Occ, NoOcc)
     , foldOccs
+    , orOcc
     , ValueDef (..)
     , EventDef (..)
     , SourceEventDef (..)
@@ -43,6 +44,7 @@ module ReactiveData
     , event
     , sourceEvent
     , getE
+    , onTrueE
     , currV
     , prevV
     , changeE
@@ -216,6 +218,10 @@ type role SomeEventIsOccurring phantom
 
 deriving stock instance Functor (Occ t)
 
+orOcc :: Occ t a -> Occ t a -> Occ t a
+orOcc a@(Occ _) _ = a
+orOcc _ a = a
+
 class SomeEventIsOccurring (t :: Type)
 data KnownOccTime t
 instance SomeEventIsOccurring (KnownOccTime t)
@@ -243,7 +249,27 @@ changeE vixF = EventM $ do
   v <- TF.requireE eix
   return (unsafeOcc v)
 
-currV :: (FieldIx game, SomeEventIsOccurring t) => (game 'Index -> F game 'Value 'Index a) -> EventM game t a
+-- | Get an event that occurs when a condition becomes true. prevV of the event
+-- on an emitted event will always be false. Initial value will cause an event
+-- if condition holds.
+onTrueE :: (FieldIx game)
+  => (game 'Index -> F game 'Value 'Index a)
+  -> (a -> Bool)
+  -> EventM game t (Occ t a)
+onTrueE vixF condition = EventM $ do
+  let VIx eix = vIx (unF . vixF)
+  TF.Occ a <- TF.getE eix
+  if condition a
+    then do
+      prevAMay <- TF.prevV eix
+      return $ case prevAMay of
+        Nothing -> (unsafeOcc a) -- initial value so emit event
+        Just prevA | not (condition prevA) -> (unsafeOcc a)
+                   | otherwise -> NoOcc
+    else return NoOcc
+
+
+currV :: (FieldIx game) => (game 'Index -> F game 'Value 'Index a) -> EventM game t a
 currV vixF = EventM $ do
   let VIx eix = vIx (unF . vixF)
   vMay <- TF.currV eix
@@ -251,7 +277,7 @@ currV vixF = EventM $ do
     Nothing -> error "Value doesn't have an initial value."
     Just v -> return v
 
-prevV :: forall game t a . (FieldIx game, SomeEventIsOccurring t) => (game 'Index -> F game 'Value 'Index a) -> EventM game t a
+prevV :: forall game t a . (FieldIx game) => (game 'Index -> F game 'Value 'Index a) -> EventM game t a
 prevV vixF = EventM $ do
   let VIx eix = vIx (unF . vixF)
   vMay <- TF.prevV eix
@@ -280,6 +306,8 @@ data Tag
     | Values
 
 newtype F game fieldType tag a = F { unF :: Field game fieldType tag a }
+
+deriving instance Show (Field game fieldType tag a) => Show (F game fieldType tag a)
 
 type family Field_Game field where
   Field_Game (F game fieldType tag a) = game

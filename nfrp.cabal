@@ -121,8 +121,26 @@ executable Game01
     hs-source-dirs: app
     default-language: Haskell2010
     ghc-options: -fprof-auto -Wall -threaded
-    other-modules:
-        -- Game01.Game
+    build-depends:
+        base == 4.13.0.0,
+        async -any,
+        binary -any,
+        cmdargs -any,
+        containers >=0.5.9,
+        deepseq -any,
+        gloss -any,
+        generics-sop -any,
+        -- gtk3 -any,
+        network -any,
+        nfrp -any,
+        safe -any,
+        time == 1.9.3
+
+executable GameBlockReloadShoot
+    main-is: GameBlockReloadShoot.hs
+    hs-source-dirs: app
+    default-language: Haskell2010
+    ghc-options: -fprof-auto -Wall -threaded
     build-depends:
         base == 4.13.0.0,
         async -any,
@@ -146,9 +164,7 @@ executable bench
     build-depends:
         base == 4.13.0.0,
         cmdargs -any,
-        containers >=0.5.9,
-        nfrp -any,
-        safe -any
+        nfrp -any
 
 
 test-suite nfrp-test

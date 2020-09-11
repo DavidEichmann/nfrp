@@ -95,7 +95,7 @@ module Theory
       ]
 
   newtype MaybeOcc a = MaybeOcc { maybeOccToMaybe :: Maybe a }
-    deriving newtype (Eq, Ord, Show, Read, Functor, Applicative, Monad)
+    deriving newtype (Eq, Ord, Show, Read, Functor, Applicative, Alternative, Monad)
   pattern Occ :: a -> MaybeOcc a
   pattern Occ a = MaybeOcc (Just a)
   pattern NoOcc :: MaybeOcc a
